@@ -119,6 +119,15 @@ def acquire_lease(conn: sqlite3.Connection, holder: str, seconds: float) -> bool
         return True
 
 
+def renew_lease(conn: sqlite3.Connection, holder: str, seconds: float) -> bool:
+    """Extends the lease this holder already has; False if it no longer has it."""
+    with transaction(conn):
+        cursor = conn.execute(
+            "UPDATE sync_lease SET expires_at = ? WHERE id = 1 AND holder = ?", (time.time() + seconds, holder)
+        )
+        return cursor.rowcount == 1
+
+
 def release_lease(conn: sqlite3.Connection, holder: str) -> None:
     with transaction(conn):
         conn.execute("DELETE FROM sync_lease WHERE holder = ?", (holder,))
@@ -164,7 +173,7 @@ def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> None:
         conn.execute(
             "UPDATE syncs SET status = ?, error = ?, finished_at = ?, stage_counts = ? WHERE id = ?",
             (
-                "failed" if error else "done",
+                "done" if error is None else "failed",
                 error,
                 now_iso(),
                 json.dumps(videos.stage_counts(conn, row["channel_id"])),

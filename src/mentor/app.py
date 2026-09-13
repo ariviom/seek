@@ -46,10 +46,12 @@ def create_app(
         # Fail at startup, not on first request, if the knowledge base can't be opened.
         app.state.database_info = await asyncio.to_thread(db.initialize, config.database_path)
         worker_task = asyncio.create_task(worker.run())
-        yield
-        worker_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await worker_task
+        try:
+            yield
+        finally:
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
 
     app = FastAPI(title="mentor", lifespan=lifespan)
     for exception in ERROR_STATUS:

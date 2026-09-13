@@ -50,13 +50,16 @@ export function Syncs() {
                 <span>
                   {sync.channel_name} <span className="text-stone-500">({sync.mentor_name})</span>
                 </span>
-                <span className={statusClass[sync.status]}>{sync.status}</span>
+                <span className={`capitalize ${statusClass[sync.status]}`}>{sync.status}</span>
               </div>
               <div className="text-xs text-stone-500">
-                {sync.new_videos > 0 && `${sync.new_videos} new · `}
-                {countsSummary(sync.stage_counts)}
-                {" · "}
-                {new Date(sync.finished_at ?? sync.started_at ?? sync.queued_at).toLocaleString()}
+                {[
+                  sync.new_videos > 0 ? `${sync.new_videos} new` : "",
+                  countsSummary(sync.stage_counts),
+                  new Date(sync.finished_at ?? sync.started_at ?? sync.queued_at).toLocaleString(),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </div>
               {sync.error && <div className="text-xs text-red-700">{sync.error}</div>}
             </li>

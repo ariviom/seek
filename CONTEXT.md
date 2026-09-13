@@ -29,7 +29,7 @@ A link back to a Video at a specific timestamp, attached to a Segment so advice 
 A run of the ingestion pipeline for one Channel. Discovers new Videos and advances every unfinished Video through its pipeline stages. Re-running a Sync resumes where the last one stopped. Syncs run one at a time.
 
 **Pipeline stage**
-Where a Video sits in ingestion: discovered, transcript fetched, segmented, embedded, done, or failed with a reason. Failed Videos can be retried.
+Where a Video sits in ingestion: discovered, transcript fetched, segmented, embedded, done, or failed with a reason. Failed Videos can be retried. A Video can also be excluded with a reason (too short, or outside the Channel's filters); excluded Videos are not processed and are not failures.
 
 **Conversation**
 A saved chat thread with one Mentor Group. Resumable.

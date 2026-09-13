@@ -53,9 +53,13 @@ def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
         raise NotFound(f"Channel {channel_id} not found")
 
 
+def _too_short(min_duration_seconds: int) -> str:
+    return f"Shorter than the {min_duration_seconds} second minimum"
+
+
 def _exclusion(duration_seconds: int | None, min_duration_seconds: int) -> str | None:
     if duration_seconds is not None and duration_seconds < min_duration_seconds:
-        return f"Shorter than the {min_duration_seconds} second minimum"
+        return _too_short(min_duration_seconds)
     return None
 
 
@@ -97,11 +101,14 @@ def stage_counts(conn: sqlite3.Connection, channel_id: int) -> dict[str, int]:
 
 
 def record_discovery(
-    conn: sqlite3.Connection, channel_id: int, listings: Sequence[VideoListing], min_duration_seconds: int
+    conn: sqlite3.Connection, sync_id: int, channel_id: int, listings: Sequence[VideoListing], min_duration_seconds: int
 ) -> int | None:
-    """Upserts the listing by YouTube video id; returns how many Videos are new, or None if the Channel is gone."""
+    """Upserts the listing by YouTube video id; returns how many Videos are new, or None if the Sync is gone.
+
+    Checking the Sync rather than the Channel matters: a deleted Channel's id can be reused by a new Channel.
+    """
     with transaction(conn):
-        if conn.execute("SELECT 1 FROM channels WHERE id = ?", (channel_id,)).fetchone() is None:
+        if conn.execute("SELECT 1 FROM syncs WHERE id = ? AND channel_id = ?", (sync_id, channel_id)).fetchone() is None:
             return None
         count = "SELECT count(*) FROM videos WHERE channel_id = ?"
         (before,) = conn.execute(count, (channel_id,)).fetchone()
@@ -117,13 +124,10 @@ def record_discovery(
             [(channel_id, v.video_id, v.title, v.duration_seconds, discovered_at) for v in listings],
         )
         (after,) = conn.execute(count, (channel_id,)).fetchone()
-        for video_id, duration in conn.execute(
-            "SELECT id, duration_seconds FROM videos WHERE channel_id = ?", (channel_id,)
-        ).fetchall():
-            conn.execute(
-                "UPDATE videos SET excluded_reason = ? WHERE id = ?",
-                (_exclusion(duration, min_duration_seconds), video_id),
-            )
+        conn.execute(
+            "UPDATE videos SET excluded_reason = CASE WHEN duration_seconds < ?1 THEN ?2 END WHERE channel_id = ?3",
+            (min_duration_seconds, _too_short(min_duration_seconds), channel_id),
+        )
         return int(after - before)
 
 

@@ -2,6 +2,7 @@ import asyncio
 import sqlite3
 import threading
 import time
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -182,6 +183,67 @@ async def test_unavailable_videos_fail_with_a_reason_and_the_sync_carries_on(
     assert videos["Sharpening chisels"]["stage"] == "transcript_fetched"
     assert sync["status"] == "done"
     assert sync["stage_counts"] == NO_COUNTS | {"transcript_fetched": 1, "failed": 5}
+
+
+async def test_a_misbehaving_or_non_english_video_fails_alone_and_transient_failures_are_retried(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    def crash() -> None:
+        raise RuntimeError("unexpected extractor output")
+
+    upcoming = fake_video("v-live", "Live Q&A", failure=VideoUnavailable("Premieres in 3 days", permanent=False))
+    broken = fake_video("v-broken", "Broken page", before_fetch=crash)
+    fake_channel(transcripts, "UC-wright").videos += [
+        upcoming,
+        broken,
+        fake_video("v-german", "Holzverbindungen", language="de"),
+        fake_video("v-ok", "Sharpening chisels"),
+    ]
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+
+    await start_sync(client, channel_id)
+    [first] = await wait_for_syncs(client)
+    after_first = await list_videos(client, channel_id)
+    upcoming.failure = None
+    broken.before_fetch = None
+    await start_sync(client, channel_id)
+    second, _ = await wait_for_syncs(client)
+    after_second = await list_videos(client, channel_id)
+
+    assert first["status"] == "done"
+    assert (after_first["Broken page"]["stage"], after_first["Broken page"]["permanent_failure"]) == ("failed", False)
+    assert "unexpected extractor output" in after_first["Broken page"]["reason"]
+    german = after_first["Holzverbindungen"]
+    assert (german["stage"], german["permanent_failure"], german["language"]) == ("failed", True, "de")
+    assert {title: (v["stage"], v["reason"]) for title, v in after_second.items()} == {
+        "Live Q&A": ("transcript_fetched", None),
+        "Broken page": ("transcript_fetched", None),
+        "Holzverbindungen": ("failed", german["reason"]),
+        "Sharpening chisels": ("transcript_fetched", None),
+    }
+    assert second["stage_counts"] == NO_COUNTS | {"transcript_fetched": 3, "failed": 1}
+    assert fetched(transcripts).count("v-german") == 1
+    assert fetched(transcripts).count("v-ok") == 1
+
+
+async def test_the_minimum_duration_is_configurable(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-short", "Short", listed_duration=20, duration=20),
+        fake_video("v-medium", "Medium", listed_duration=90, duration=90),
+    ]
+    app = create_app(replace(config, min_duration_seconds=30), transcripts, static_dir=tmp_path / "no-bundle")
+
+    async with running(app) as client:
+        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        await start_sync(client, mentor["channels"][0]["id"])
+        await wait_for_syncs(client)
+        videos = await list_videos(client, mentor["channels"][0]["id"])
+
+    assert {title: v["stage"] for title, v in videos.items()} == {"Short": "excluded", "Medium": "transcript_fetched"}
+    assert "30" in videos["Short"]["reason"]
 
 
 async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(

@@ -44,8 +44,10 @@ MIGRATIONS = [
     """
     -- pipeline_stage is the last completed stage. A failed Video keeps it and records the stage it
     -- attempted in failure_stage; an excluded Video keeps it too, so lifting the exclusion loses no work.
+    -- AUTOINCREMENT on videos and syncs: the Sync worker holds these ids across awaits, and a row deleted
+    -- meanwhile must not be replaced by a new one with the same id.
     CREATE TABLE videos (
-        id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
         youtube_video_id TEXT NOT NULL UNIQUE,
         title TEXT NOT NULL,
@@ -56,7 +58,7 @@ MIGRATIONS = [
         language TEXT,
         pipeline_stage TEXT NOT NULL DEFAULT 'discovered'
             CHECK (pipeline_stage IN ('discovered', 'transcript_fetched', 'segmented', 'embedded', 'done')),
-        failure_stage TEXT,
+        failure_stage TEXT CHECK (failure_stage IN ('transcript_fetched', 'segmented', 'embedded', 'done')),
         failure_reason TEXT,
         failure_permanent INTEGER CHECK (failure_permanent IN (0, 1)),
         excluded_reason TEXT,

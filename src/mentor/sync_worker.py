@@ -11,7 +11,8 @@ from mentor.videos import PendingVideo
 
 log = logging.getLogger(__name__)
 
-LEASE_SECONDS = 60.0
+# Short enough that a crashed server's Syncs resume soon after restart; renewed every quarter of it.
+LEASE_SECONDS = 20.0
 
 
 class SyncWorker:
@@ -58,12 +59,21 @@ class SyncWorker:
                 await self._run_sync(claimed)
         finally:
             heartbeat.cancel()
-            await self._database.run(lambda conn: syncs.release_lease(conn, self._holder))
+            # Logged rather than raised, so a failing release can't replace a shutdown's CancelledError.
+            try:
+                await self._database.run(lambda conn: syncs.release_lease(conn, self._holder))
+            except Exception:
+                log.exception("Could not release the Sync lease; it expires on its own")
 
     async def _heartbeat(self) -> None:
         while True:
             await asyncio.sleep(LEASE_SECONDS / 4)
-            if not await self._database.run(lambda conn: syncs.acquire_lease(conn, self._holder, LEASE_SECONDS)):
+            try:
+                renewed = await self._database.run(lambda conn: syncs.renew_lease(conn, self._holder, LEASE_SECONDS))
+            except Exception:
+                log.exception("Could not renew the Sync lease")
+                renewed = False
+            if not renewed:
                 self._lease_lost = True
                 return
 
@@ -73,12 +83,16 @@ class SyncWorker:
         try:
             listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id)
             new_videos = await self._database.run(
-                lambda conn: videos.record_discovery(conn, sync.channel_id, listings, self._min_duration_seconds)
+                lambda conn: videos.record_discovery(
+                    conn, sync.id, sync.channel_id, listings, self._min_duration_seconds
+                )
             )
             if new_videos is None or not await self._progress(sync, new_videos):
                 return
             for video in await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id)):
-                if self._lease_lost or not await self._advance(video) or not await self._progress(sync):
+                if video.pipeline_stage != "discovered":
+                    continue
+                if self._lease_lost or not await self._fetch_transcript(video) or not await self._progress(sync):
                     return
         except (ChannelNotFound, SourceUnavailable) as e:
             error: str | None = str(e)
@@ -92,16 +106,32 @@ class SyncWorker:
     async def _progress(self, sync: ClaimedSync, new_videos: int | None = None) -> bool:
         return await self._database.run(lambda conn: syncs.update_progress(conn, sync.id, new_videos))
 
-    async def _advance(self, video: PendingVideo) -> bool:
-        """Runs the Video's next stage; False if the Video is gone."""
-        if video.pipeline_stage != "discovered":
-            return True
+    async def _fetch_transcript(self, video: PendingVideo) -> bool:
+        """False if the Video is gone."""
+        failure: VideoUnavailable | None = None
         try:
             details, transcript = await asyncio.to_thread(self._transcripts.fetch_video, video.youtube_video_id)
-        except VideoUnavailable as failure:
+        except VideoUnavailable as e:
+            failure = e
+        except SourceUnavailable:
+            raise
+        except Exception as e:
+            # One misbehaving Video must not stop its Channel's Syncs for good; it is retried next Sync.
+            log.exception("Fetching Video %s failed", video.youtube_video_id)
+            failure = VideoUnavailable(f"Unexpected error: {e}", permanent=False)
+        else:
+            if transcript.language != "en":
+                failure = VideoUnavailable(
+                    f"Captions are in {transcript.language!r}; only English is ingested",
+                    permanent=True,
+                    language=transcript.language,
+                    details=details,
+                )
+        if failure is not None:
+            unavailable = failure
             return await self._database.run(
                 lambda conn: videos.record_failure(
-                    conn, video.id, "transcript_fetched", failure, self._min_duration_seconds
+                    conn, video.id, "transcript_fetched", unavailable, self._min_duration_seconds
                 )
             )
         return await self._database.run(

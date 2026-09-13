@@ -10,3 +10,5 @@
 - [ ] `mentor sync` detects a running server and enqueues through its API; otherwise it runs the pipeline in-process, respecting the worker lease
 - [ ] `mentor install-service --timer` installs a systemd user timer running `mentor sync --all`, with a configurable schedule
 - [ ] Tests: delegation when the server is up, direct run when down, and no double worker when both happen
+
+From ticket 04 review: `SyncWorker.run()` loops forever; `mentor sync` needs a public drain-once entry (today `_drain`) that respects the lease and returns when the queue is empty.

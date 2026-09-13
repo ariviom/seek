@@ -42,6 +42,7 @@ def fake_video(
     published_on: date = date(2025, 3, 1),
     chapters: Sequence[Chapter] = (),
     source: Literal["youtube_auto", "youtube_manual"] = "youtube_manual",
+    language: str = "en",
     failure: VideoUnavailable | None = None,
     before_fetch: Callable[[], None] | None = None,
 ) -> FakeVideo:
@@ -57,7 +58,7 @@ def fake_video(
         ),
         transcript=Transcript(
             source=source,
-            language="en",
+            language=language,
             cues=[Cue(start=0.0, end=4.0, text=f"Welcome to {title}"), Cue(start=4.0, end=9.5, text="Let's begin")],
         ),
         failure=failure,

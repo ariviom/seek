@@ -25,7 +25,7 @@ export type Video = {
   chapters: { title: string; start: number; end: number }[];
   stage: Stage;
   reason: string | null;
-  failure_stage: Stage | null;
+  failure_stage: Exclude<Stage, "discovered" | "failed" | "excluded"> | null;
   permanent_failure: boolean | null;
   language: string | null;
   transcript_source: "youtube_auto" | "youtube_manual" | null;

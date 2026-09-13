@@ -11,3 +11,5 @@
 - [ ] Streaming continues while the worker is doing blocking work (no event-loop stalls)
 - [ ] UI progress view subscribes and updates live
 - [ ] API test observes stage counts over SSE during a fake Sync
+
+From ticket 04 review: `syncs.stage_counts` are Channel-wide counts by current stage (updated after each Video), and `new_videos` counts Videos this Sync discovered. `web/src/Syncs.tsx` and `Videos.tsx` poll every 2 s via `usePolling`; replace that with the SSE stream.

@@ -1,6 +1,6 @@
 # Handoff — Mentor
 
-State as of 2026-09-13: tickets 01 (walking skeleton), 02 (Mentors and Channels), and 03 (Mentor Groups) are done, reviewed, and merged to `main`. Next up: ticket 04 (Sync: discovery and transcripts).
+State as of 2026-09-13: tickets 01–04 (walking skeleton, Mentors and Channels, Mentor Groups, Sync discovery and transcripts) are done, reviewed, and merged to `main`. Next up: ticket 05 (Sync: segmentation and embedding), then 06 and 07.
 
 Read in this order:
 1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Mentor").
@@ -9,10 +9,11 @@ Read in this order:
 4. `.scratch/mentor-v1/issues/` — 18 tickets. Read the "From ticket NN review" notes appended to the ticket you pick up; they carry deferred findings.
 
 ## Codebase conventions so far
-- `create_app(config, transcripts, static_dir)`: each port is its own argument, added when its first consumer lands. `mentor serve` wires `YouTubeTranscriptSource`, a placeholder that answers 503 until ticket 08.
+- `create_app(config, transcripts, static_dir, sync_poll_seconds)`: each port is its own argument, added when its first consumer lands. Lifespan starts the `SyncWorker` task (`sync_worker.py`), which is woken on enqueue and polls; it runs Syncs only while holding the `sync_lease` row. `mentor serve` wires `YouTubeTranscriptSource`, a placeholder that answers 503 until ticket 08.
 - Store: `db.Database.run(fn)` runs blocking work on a thread with a fresh connection. Writes go through `db.transaction(conn)` (`BEGIN IMMEDIATE`, guarded rollback). Do read-backs inside the transaction. Migrations are appended to `db.MIGRATIONS`: additive only, never edit a shipped entry.
-- Errors: domain code raises `errors.NotFound` / `errors.Conflict`; ports raise `ChannelNotFound` / `SourceUnavailable`. All messages are user-facing and mapped to statuses in `app.ERROR_STATUS`.
-- Tests: HTTP API seam through `tests/harness.running(app)`, which runs lifespan; `harness.add_mentor` creates a Mentor. The `client` fixture uses a seeded `FakeTranscriptSource`; it supports `unavailable="..."` for 503 cases. Pure-function tests only for intricate logic.
+- Sync pipeline: `videos.pipeline_stage` is the last completed stage; failure (`failure_stage` = stage attempted) and exclusion are separate columns, and the API derives a single `stage`. Pipeline store functions return False/None when their row vanished mid-Sync (Channel deleted) rather than raising.
+- Errors: domain code raises `errors.NotFound` / `errors.Conflict`; ports raise `ChannelNotFound` / `SourceUnavailable`, and `VideoUnavailable` for one Video (reason, permanent, language, partial details). All messages are user-facing and mapped to statuses in `app.ERROR_STATUS`.
+- Tests: HTTP API seam through `tests/harness.running(app)`, which runs lifespan; `harness` also has `add_mentor`, `fake_video`, `start_sync`, and `wait_for_syncs`. The `client` fixture uses a seeded `FakeTranscriptSource`; it supports `unavailable="..."` for 503 cases. Pure-function tests only for intricate logic.
 - UI: `web/src/api.ts` has typed calls and `errorText`. Components use Tailwind v4; shared classes and `useChanges` (a per-section busy lock that serialises changes and refreshes) live in `web/src/ui.ts`. App lifts the Mentor list from `Mentors` into `Groups`. Run `pnpm --dir web run build` before testing the served UI.
 - Checks: `uv run pytest -q`, `uv run mypy`, `pnpm --dir web run typecheck`.
 

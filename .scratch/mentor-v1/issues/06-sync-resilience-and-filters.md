@@ -15,3 +15,5 @@
 From ticket 01 review: VideoListing has no publish date and there is no playlist listing; both are needed to apply filters at discovery.
 
 From ticket 02 review: PATCH /api/channels/{id} currently requires `indexed`; make fields optional when adding filters.
+
+From ticket 04 review: `failure_stage` holds the stage attempted, and `pipeline_stage` still holds the last completed stage. So "retry failed" means clearing the failure columns, not setting `pipeline_stage` to `failure_stage`. Transient retry on a normal Sync already exists and is tested; add the filter exclusions into `videos.record_discovery` next to the duration rule.

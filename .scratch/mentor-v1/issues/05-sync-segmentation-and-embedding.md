@@ -12,3 +12,5 @@
 - [ ] Embedding model name and dimension are stored; starting with a config whose dimension or model differs refuses with a clear message
 - [ ] Deleting a Mentor or Channel cascades into the FTS5 and vec0 tables; tests assert those indexes' row counts go to zero
 - [ ] Videos reach `done`; stage counts reflect it
+
+From ticket 04 review: `tests/test_sync.py` asserts that a finished Sync leaves Videos at `transcript_fetched` (stage and `stage_counts`). Once segmentation and embedding run, the terminal stage becomes `done`; update those expectations as part of this ticket's behaviour change. The worker currently skips Videos whose `pipeline_stage` isn't `discovered`; add the later stages there (`sync_worker._run_sync`).

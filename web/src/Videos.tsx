@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { api, errorText, type Video } from "./api";
 import { stageLabels, usePolling } from "./ui";
 
-export function formatDuration(seconds: number | null): string {
+function formatDuration(seconds: number | null): string {
   if (seconds === null) return "";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -61,7 +61,7 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
                 {video.reason && (
                   <span className="block text-stone-500">
                     {video.reason}
-                    {video.permanent_failure === false && " (will retry)"}
+                    {video.stage === "failed" && video.permanent_failure === false && " (retried on the next Sync)"}
                   </span>
                 )}
               </td>
