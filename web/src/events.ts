@@ -64,7 +64,10 @@ export function useLiveList<T>(load: () => Promise<T[]>, react: (event: ServerEv
   const [error, setError] = useState<unknown>(null);
   const inFlight = useRef<((items: T[]) => T[])[] | null>(null);
 
+  const retryTimer = useRef<number | undefined>(undefined);
+
   const reload = useCallback(async () => {
+    window.clearTimeout(retryTimer.current);
     const updates: ((items: T[]) => T[])[] = [];
     inFlight.current = updates;
     try {
@@ -73,7 +76,10 @@ export function useLiveList<T>(load: () => Promise<T[]>, react: (event: ServerEv
       setItems(updates.reduce((current, update) => update(current), loaded));
       setError(null);
     } catch (e) {
-      if (inFlight.current === updates) setError(e);
+      if (inFlight.current !== updates) return;
+      setError(e);
+      // A stream that stays connected sends no "ready" to reload on.
+      retryTimer.current = window.setTimeout(() => void reload(), 5000);
     } finally {
       if (inFlight.current === updates) inFlight.current = null;
     }
@@ -81,6 +87,7 @@ export function useLiveList<T>(load: () => Promise<T[]>, react: (event: ServerEv
 
   useEffect(() => {
     void reload();
+    return () => window.clearTimeout(retryTimer.current);
   }, [reload]);
 
   useServerEvents((event) => {

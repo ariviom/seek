@@ -29,7 +29,7 @@ class Config:
     # A knowledge base keeps the model it was embedded with; starting with another one is refused.
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_dimension: int = DEFAULT_EMBEDDING_DIMENSION
-    # The least time between YouTube requests a Sync makes.
+    # The least time between a Sync's YouTube calls: each listing, and each Video with its captions.
     youtube_delay_seconds: int = DEFAULT_YOUTUBE_DELAY_SECONDS
     # Retries after YouTube rate limits a request or can't be reached, waiting youtube_backoff_seconds and doubling.
     youtube_retries: int = DEFAULT_YOUTUBE_RETRIES

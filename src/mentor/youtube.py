@@ -33,26 +33,26 @@ from mentor.ports import (
 
 log = logging.getLogger(__name__)
 
-YOUTUBE = "https://www.youtube.com"
+_YOUTUBE = "https://www.youtube.com"
 _HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _CHANNEL_ID = re.compile(r"UC[A-Za-z0-9_-]{22}")
 _HANDLE = re.compile(r"@[\w.-]{3,30}")
 # Legacy /c/ and /user/ channel names.
 _LEGACY_NAME = re.compile(r"[\w.-]{1,100}")
-_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
-_PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{2,64}")
 
-NOT_A_CHANNEL = "Enter a YouTube channel URL (youtube.com/@handle or youtube.com/channel/UC…), an @handle, or a channel id"
-PO_TOKEN_FIX = (
-    "YouTube wants a PO token: install the bgutil-ytdlp-pot-provider plugin "
-    "(https://github.com/Brainicism/bgutil-ytdlp-pot-provider), then retry failed Videos"
+_NOT_A_CHANNEL = "Enter a YouTube channel URL (youtube.com/@handle or youtube.com/channel/UC…), an @handle, or a channel id"
+_PO_TOKEN_FIX = (
+    "YouTube wants a PO token; install the bgutil-ytdlp-pot-provider plugin "
+    "(https://github.com/Brainicism/bgutil-ytdlp-pot-provider)"
 )
 _NO_VIDEOS_TAB = "does not have a videos tab"
+# Between the requests within one Sync call: a listing's pages, or a Video's page, player, and captions.
+_REQUEST_PAUSE_SECONDS = 1
 
 
 @dataclass(frozen=True)
 class YouTubeSettings:
-    # The least time between requests a Sync makes; resolving a channel for the web UI doesn't wait.
+    # The least time between a Sync's calls: each listing, and each Video with its captions.
     delay_seconds: float
     # Retries while YouTube rate limits or can't be reached, after backoff_seconds and doubling each time.
     retries: int
@@ -61,19 +61,24 @@ class YouTubeSettings:
 
 
 class _Log:
-    """yt-dlp's logger. Warnings are kept: they are where yt-dlp reports captions withheld for a PO token."""
+    """yt-dlp's logger. Keeps its messages about PO tokens, which is how it reports captions it withheld."""
 
     def __init__(self) -> None:
-        self.warnings: list[str] = []
+        self.po_token_messages: list[str] = []
+
+    def _keep(self, message: str) -> None:
+        if "po token" in message.lower():
+            self.po_token_messages.append(message)
 
     def debug(self, message: str) -> None:
+        self._keep(message)
         log.debug("yt-dlp: %s", message)
 
     def info(self, message: str) -> None:
         log.debug("yt-dlp: %s", message)
 
     def warning(self, message: str) -> None:
-        self.warnings.append(message)
+        self._keep(message)
         log.info("yt-dlp: %s", message)
 
     def error(self, message: str) -> None:
@@ -88,120 +93,120 @@ class _Failed(Exception):
 
 
 class YouTubeTranscriptSource:
-    """Blocking, and safe to call from several threads; Sync requests are spaced out across all of them."""
+    """Blocking. Sync calls come from one worker thread at a time; web UI calls may run alongside them."""
 
     def __init__(self, settings: YouTubeSettings) -> None:
         self._settings = settings
-        self._turn = threading.Lock()
-        self._next_request = 0.0
+        # One yt-dlp session at a time: each rewrites the cookie file when it closes.
+        self._session = threading.Lock()
+        self._next_sync_call = 0.0
 
     def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
         url = channel_url(url_or_handle)
         try:
-            info = self._playlist(f"{url}/videos", polite=False, playlistend=1)
+            # process=False reads the channel's own metadata without listing a tab, so a Shorts-only Channel resolves.
+            info = self._call(lambda ydl, _: ydl.extract_info(url, download=False, process=False), sync=False)
         except _Failed as failed:
-            if _NO_VIDEOS_TAB in failed.error.message:
-                raise ChannelNotFound(f"{url_or_handle} has no videos tab, so there is nothing to ingest") from None
             raise _channel_error(failed.error, url_or_handle) from None
-        channel_id = info.get("channel_id") or info.get("id")
+        channel_id = info.get("channel_id")
         if not isinstance(channel_id, str) or not _CHANNEL_ID.fullmatch(channel_id):
             raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
-        name = info.get("channel") or info.get("uploader") or channel_id
-        return ChannelInfo(channel_id=channel_id, name=str(name))
+        return ChannelInfo(channel_id=channel_id, name=str(info.get("channel") or info.get("uploader") or channel_id))
 
     def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
-        if not _CHANNEL_ID.fullmatch(channel_id):
-            raise ChannelNotFound(f"No YouTube channel found for {channel_id}")
         try:
-            info = self._playlist(f"{YOUTUBE}/channel/{channel_id}/videos", polite=True)
+            entries = self._call(_flat_entries(f"{_YOUTUBE}/channel/{channel_id}/videos"), sync=True)
         except _Failed as failed:
             if _NO_VIDEOS_TAB in failed.error.message:
                 return []
             raise _channel_error(failed.error, channel_id) from None
-        return listings(info.get("entries") or [])
+        return listings(entries)
 
     def list_playlist(self, playlist_id: str) -> Sequence[str]:
-        if not _PLAYLIST_ID.fullmatch(playlist_id):
-            raise PlaylistNotFound(f"No YouTube playlist found for {playlist_id}")
         try:
-            info = self._playlist(f"{YOUTUBE}/playlist?list={playlist_id}", polite=True)
+            entries = self._call(_flat_entries(f"{_YOUTUBE}/playlist?list={playlist_id}"), sync=True)
         except _Failed as failed:
-            if failed.error.kind in ("not_found", "unavailable"):
-                raise PlaylistNotFound(f"No YouTube playlist found for {playlist_id}") from None
+            if _is_missing(failed.error):
+                raise PlaylistNotFound(f"YouTube playlist {playlist_id} can't be listed: {failed.error.message}") from None
             raise SourceUnavailable(failed.error.message) from None
-        return [entry["id"] for entry in info.get("entries") or [] if entry.get("id")]
+        return [entry["id"] for entry in entries if entry.get("id")]
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
-        if not _VIDEO_ID.fullmatch(video_id):
-            raise VideoUnavailable(f"{video_id!r} is not a YouTube video id", permanent=True)
-        url = f"{YOUTUBE}/watch?v={video_id}"
-        try:
+        url = f"{_YOUTUBE}/watch?v={video_id}"
+
+        def fetch(ydl: Any, logger: _Log) -> tuple[VideoDetails, Transcript]:
             # process=False: without format selection, formats YouTube withholds can't fail the extraction.
-            info, warnings = self._call(
-                lambda ydl: ydl.sanitize_info(ydl.extract_info(url, download=False, process=False)), polite=True
-            )
-        except _Failed as failed:
-            raise _video_error(failed.error, None) from None
-        details = video_details(info)
-        track = caption_track(info, warnings, details)
+            info = ydl.sanitize_info(ydl.extract_info(url, download=False, process=False))
+            details = video_details(info)
+            track = caption_track(info, logger.po_token_messages, details)
+            time.sleep(_REQUEST_PAUSE_SECONDS)
+            try:
+                data = json.load(ydl.urlopen(track.url))
+            except Exception as e:
+                error = classify_error(str(e), _http_status(e))
+                if error.kind in ("throttled", "unreachable"):
+                    raise
+                raise VideoUnavailable(error.message, permanent=error.permanent, details=details) from e
+            return details, Transcript(source=track.source, language="en", cues=parse_json3(data))
+
         try:
-            data, _ = self._call(lambda ydl: json.load(ydl.urlopen(track.url)), polite=False)
+            return self._call(fetch, sync=True)
         except _Failed as failed:
-            raise _video_error(failed.error, details) from None
-        return details, Transcript(source=track.source, language="en", cues=parse_json3(data))
+            if failed.error.kind in ("throttled", "unreachable"):
+                raise SourceUnavailable(failed.error.message) from None
+            raise VideoUnavailable(failed.error.message, permanent=failed.error.permanent) from None
 
-    def _playlist(self, url: str, polite: bool, **options: object) -> Mapping[str, Any]:
-        def extract(ydl: Any) -> Mapping[str, Any]:
-            info = ydl.sanitize_info(ydl.extract_info(url, download=False))
-            return {**info, "entries": list(info.get("entries") or [])}
+    def _call[T](self, work: Callable[[Any, _Log], T], sync: bool) -> T:
+        """Runs `work` in a fresh yt-dlp session.
 
-        info, _ = self._call(extract, polite, extract_flat="in_playlist", **options)
-        return info
-
-    def _wait_turn(self) -> None:
-        with self._turn:
-            wait = self._next_request - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-
-    def _finished_request(self) -> None:
-        with self._turn:
-            self._next_request = time.monotonic() + self._settings.delay_seconds
-
-    def _call[T](self, work: Callable[[Any], T], polite: bool, **options: object) -> tuple[T, list[str]]:
-        """Runs `work` with a fresh YoutubeDL, and its warnings; retries with backoff while throttled or unreachable.
-
-        Raises _Failed with the classified error.
+        A Sync call waits its turn, and retries with backoff while YouTube throttles or can't be reached; a web UI
+        call does neither, so it answers promptly. Raises _Failed with the classified error, or VideoUnavailable.
         """
         attempt = 0
         while True:
-            if polite:
-                self._wait_turn()
+            if sync:
+                wait = self._next_sync_call - time.monotonic()
+                if wait > 0:
+                    time.sleep(wait)
             logger = _Log()
             params: dict[str, object] = {
                 "quiet": True,
+                # yt-dlp reports captions withheld for a PO token only in its verbose output.
+                "verbose": True,
                 "logger": logger,
                 "skip_download": True,
+                "extract_flat": "in_playlist",
                 "socket_timeout": 30,
                 # Stream manifests aren't needed for metadata and captions, and cost requests.
                 "extractor_args": {"youtube": {"skip": ["hls", "dash"]}},
-                **options,
             }
+            if sync:
+                params["sleep_interval_requests"] = _REQUEST_PAUSE_SECONDS
             if self._settings.cookie_file is not None:
                 params["cookiefile"] = str(self._settings.cookie_file)
             try:
-                with yt_dlp.YoutubeDL(params) as ydl:
-                    return work(ydl), logger.warnings
+                with self._session, yt_dlp.YoutubeDL(params) as ydl:
+                    return work(ydl, logger)
+            except VideoUnavailable:
+                raise
             except Exception as e:
                 error = classify_error(str(e), _http_status(e))
             finally:
-                self._finished_request()
-            if error.kind not in ("throttled", "unreachable") or attempt >= self._settings.retries:
+                if sync:
+                    self._next_sync_call = time.monotonic() + self._settings.delay_seconds
+            if not sync or error.kind not in ("throttled", "unreachable") or attempt >= self._settings.retries:
                 raise _Failed(error)
             wait = self._settings.backoff_seconds * 2**attempt
             log.warning("%s; retrying in %s s", error.message, wait)
             time.sleep(wait)
             attempt += 1
+
+
+def _flat_entries(url: str) -> Callable[[Any, _Log], list[Mapping[str, Any]]]:
+    def extract(ydl: Any, _: _Log) -> list[Mapping[str, Any]]:
+        return list(ydl.sanitize_info(ydl.extract_info(url, download=False)).get("entries") or [])
+
+    return extract
 
 
 def _http_status(error: BaseException) -> int | None:
@@ -214,16 +219,14 @@ def _http_status(error: BaseException) -> int | None:
     return None
 
 
+def _is_missing(error: "YouTubeError") -> bool:
+    return error.kind == "not_found" or (error.kind == "unavailable" and error.permanent)
+
+
 def _channel_error(error: "YouTubeError", channel: str) -> Exception:
-    if error.kind in ("not_found", "unavailable"):
+    if _is_missing(error):
         return ChannelNotFound(f"No YouTube channel found for {channel}")
     return SourceUnavailable(error.message)
-
-
-def _video_error(error: "YouTubeError", details: VideoDetails | None) -> Exception:
-    if error.kind in ("throttled", "unreachable"):
-        return SourceUnavailable(error.message)
-    return VideoUnavailable(error.message, permanent=error.permanent, details=details)
 
 
 def channel_url(text: str) -> str:
@@ -233,22 +236,22 @@ def channel_url(text: str) -> str:
     """
     text = text.strip()
     if _HANDLE.fullmatch(text):
-        return f"{YOUTUBE}/{urllib.parse.quote(text, safe='@')}"
+        return f"{_YOUTUBE}/{urllib.parse.quote(text, safe='@')}"
     if _CHANNEL_ID.fullmatch(text):
-        return f"{YOUTUBE}/channel/{text}"
-    if re.match(r"(?:www\.|m\.)?youtube\.com/", text):
+        return f"{_YOUTUBE}/channel/{text}"
+    if re.match(r"(?:www\.|m\.)?youtube\.com/", text, flags=re.IGNORECASE):
         text = f"https://{text}"
     parts = urllib.parse.urlsplit(text)
     segments = [urllib.parse.unquote(s) for s in parts.path.split("/") if s]
     if parts.scheme in ("http", "https") and parts.hostname in _HOSTS and segments:
         first = segments[0]
         if _HANDLE.fullmatch(first):
-            return f"{YOUTUBE}/{urllib.parse.quote(first, safe='@')}"
+            return f"{_YOUTUBE}/{urllib.parse.quote(first, safe='@')}"
         if len(segments) > 1 and first == "channel" and _CHANNEL_ID.fullmatch(segments[1]):
-            return f"{YOUTUBE}/channel/{segments[1]}"
+            return f"{_YOUTUBE}/channel/{segments[1]}"
         if len(segments) > 1 and first in ("c", "user") and _LEGACY_NAME.fullmatch(segments[1]):
-            return f"{YOUTUBE}/{first}/{urllib.parse.quote(segments[1])}"
-    raise ChannelNotFound(NOT_A_CHANNEL)
+            return f"{_YOUTUBE}/{first}/{urllib.parse.quote(segments[1])}"
+    raise ChannelNotFound(_NOT_A_CHANNEL)
 
 
 def _integer(value: object) -> int | None:
@@ -293,7 +296,7 @@ def video_details(info: Mapping[str, Any]) -> VideoDetails:
     """A Video's full metadata; raises VideoUnavailable for live and upcoming Videos, which may work later."""
     live = _LIVE.get(info.get("live_status") or "")
     if live is not None:
-        raise VideoUnavailable(f"{live}; retried on the next Sync", permanent=False)
+        raise VideoUnavailable(live, permanent=False)
     published_on = _published_on(info)
     duration = _integer(info.get("duration"))
     if published_on is None or duration is None:
@@ -330,21 +333,22 @@ def _json3_url(formats: Sequence[Mapping[str, Any]]) -> str | None:
     return next((f["url"] for f in formats if f.get("ext") == "json3" and f.get("url")), None)
 
 
-def caption_track(info: Mapping[str, Any], warnings: Sequence[str], details: VideoDetails) -> CaptionTrack:
+def caption_track(info: Mapping[str, Any], po_token_messages: Sequence[str], details: VideoDetails) -> CaptionTrack:
     """The English captions to ingest: manual subtitles first, else automatic captions of English speech.
 
-    Automatic captions come in every language by translation; the "-orig" track is the spoken language.
+    Automatic captions come in every language by translation; the "-orig" track is the spoken language. Without one,
+    only a lone automatic track (a language YouTube doesn't translate) can be trusted to be what was spoken.
     """
     manual = {key: formats for key, formats in (info.get("subtitles") or {}).items() if key != "live_chat"}
     automatic = info.get("automatic_captions") or {}
     for key in sorted(manual, key=lambda k: k != "en"):
         if _language(key) == "en" and (url := _json3_url(manual[key])):
             return CaptionTrack(source="youtube_manual", url=url)
-    spoken_tracks = [key for key in automatic if key.endswith("-orig")] or list(automatic)
+    spoken_tracks = [key for key in automatic if key.endswith("-orig")] or (list(automatic) if len(automatic) == 1 else [])
     for key in spoken_tracks:
         if _language(key) == "en" and (url := _json3_url(automatic[key])):
             return CaptionTrack(source="youtube_auto", url=url)
-    languages = [_language(key) for key in spoken_tracks] or [_language(key) for key in manual]
+    languages = [_language(key) for key in [*spoken_tracks, *manual] if _language(key) != "en"]
     if languages:
         raise VideoUnavailable(
             f"Captions are in {languages[0]!r}; only English is ingested",
@@ -352,8 +356,9 @@ def caption_track(info: Mapping[str, Any], warnings: Sequence[str], details: Vid
             language=languages[0],
             details=details,
         )
-    if any("po token" in warning.lower() for warning in warnings):
-        raise VideoUnavailable(f"No captions: {PO_TOKEN_FIX}", permanent=False, details=details)
+    # Formats withheld for a PO token are reported too; only the subtitle reports explain missing captions.
+    if any("subtitles" in m.lower() and "not provided" in m.lower() for m in po_token_messages):
+        raise VideoUnavailable(f"No captions: {_PO_TOKEN_FIX}", permanent=False, details=details)
     raise VideoUnavailable("No captions", permanent=True, details=details)
 
 
@@ -394,8 +399,11 @@ def classify_error(message: str, http_status: int | None) -> YouTubeError:
         return any(needle in lower for needle in needles)
 
     if mentions("po token"):
-        return YouTubeError("unavailable", f"{text}. {PO_TOKEN_FIX}", permanent=False)
-    if http_status == 429 or mentions("too many requests", "not a bot", "captcha", "rate-limited", "try again later"):
+        return YouTubeError("unavailable", f"{text}. {_PO_TOKEN_FIX}", permanent=False)
+    # YouTube answers 403 to an address it has started blocking.
+    if http_status in (403, 429) or mentions(
+        "too many requests", "not a bot", "captcha", "rate-limited", "try again later"
+    ):
         return YouTubeError(
             "throttled",
             f"YouTube is rate limiting requests ({text}); try again later, or configure youtube_cookie_file",
@@ -403,7 +411,7 @@ def classify_error(message: str, http_status: int | None) -> YouTubeError:
         )
     if (http_status is not None and http_status >= 500) or (
         http_status is None
-        and mentions("unable to download", "timed out", "connection", "name resolution", "network is unreachable")
+        and mentions("unable to download", "timed out", "connection", "name resolution", "network is unreachable", "ssl")
     ):
         return YouTubeError("unreachable", f"Could not reach YouTube: {text}", permanent=False)
     if http_status == 404 or mentions("does not exist", "not found"):
@@ -417,11 +425,11 @@ def classify_error(message: str, http_status: int | None) -> YouTubeError:
             permanent=True,
         )
     if mentions("will begin", "premiere"):
-        return YouTubeError("unavailable", f"Upcoming live stream or premiere ({text}); retried on the next Sync", False)
+        return YouTubeError("unavailable", f"Upcoming live stream or premiere ({text})", permanent=False)
     if mentions("private video"):
         return YouTubeError("unavailable", "Private Video", permanent=True)
     if mentions("available in your country"):
         return YouTubeError("unavailable", "Not available in this country", permanent=True)
-    if mentions("unavailable", "removed", "terminated", "no longer available", "not available"):
+    if mentions("private", "unavailable", "removed", "terminated", "no longer available", "not available"):
         return YouTubeError("unavailable", text, permanent=True)
     return YouTubeError("other", f"YouTube error: {text}", permanent=False)

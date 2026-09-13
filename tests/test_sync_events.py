@@ -118,7 +118,7 @@ async def test_the_event_stream_is_proxy_safe(
 
     assert stream.status == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
-    assert stream.headers["cache-control"] == "no-cache"
+    assert stream.headers["cache-control"] == "no-cache, no-transform"
     assert stream.headers["x-accel-buffering"] == "no"
 
 

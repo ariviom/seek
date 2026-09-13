@@ -25,8 +25,9 @@ def events_router(events: Events, keepalive_seconds: float) -> APIRouter:
                     else:
                         yield f"data: {data}\n\n"
 
-        # X-Accel-Buffering: nginx-style proxies otherwise hold events back until a buffer fills.
-        headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        # Proxies otherwise hold events back until a buffer fills: nginx-style ones for X-Accel-Buffering, and
+        # compressing ones for no-transform.
+        headers = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
         return StreamingResponse(stream(), media_type="text/event-stream", headers=headers)
 
     return router

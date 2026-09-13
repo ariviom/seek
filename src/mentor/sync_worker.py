@@ -38,10 +38,10 @@ class SyncWorker:
         events: Events,
     ) -> None:
         self._database = database
-        self._events = events
         self._transcripts = transcripts
         self._embedder = embedder
         self._min_duration_seconds = min_duration_seconds
+        self._events = events
         # Polling picks up Syncs queued by other processes and leases they give up.
         self._poll_seconds = poll_seconds
         self._holder = uuid.uuid4().hex
@@ -68,6 +68,8 @@ class SyncWorker:
         if not await self._database.run(lambda conn: syncs.acquire_lease(conn, self._holder, LEASE_SECONDS)):
             return
         self._lease_lost = False
+        # Taking the lease may have requeued or failed Syncs a stopped worker left running.
+        self._events.syncs()
         heartbeat = asyncio.create_task(self._heartbeat())
         try:
             while not self._lease_lost:
@@ -77,6 +79,9 @@ class SyncWorker:
                 await self._run_sync(claimed)
         finally:
             heartbeat.cancel()
+            if self._lease_lost:
+                # The Sync stopped without finishing; the next holder requeues it.
+                self._events.syncs()
             # Logged rather than raised, so a failing release can't replace a shutdown's CancelledError.
             try:
                 await self._database.run(lambda conn: syncs.release_lease(conn, self._holder))

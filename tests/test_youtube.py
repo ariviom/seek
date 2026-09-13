@@ -134,9 +134,24 @@ def test_videos_spoken_in_another_language_fail_permanently_with_the_language(
     assert "English" in raised.value.reason
 
 
+@pytest.mark.parametrize(
+    "info",
+    [
+        # Translations of speech in an unknown language, with no "-orig" track to say which was spoken.
+        {"subtitles": {}, "automatic_captions": tracks("de", "en", "fr")},
+        {"subtitles": {"en": [track("vtt", "en.vtt")]}, "automatic_captions": {}},
+    ],
+)
+def test_captions_that_cant_be_trusted_or_read_count_as_none(info: dict[str, Any]) -> None:
+    with pytest.raises(VideoUnavailable) as raised:
+        caption_track(info, [], DETAILS)
+
+    assert (raised.value.reason, raised.value.language) == ("No captions", None)
+
+
 def test_videos_without_captions_fail_permanently_unless_youtube_withheld_them_for_a_po_token() -> None:
     info: dict[str, Any] = {"subtitles": {}, "automatic_captions": {}}
-    warning = "[youtube] x: There are missing subtitles languages because a PO token was not provided."
+    warning = "[debug] [youtube] x: There are missing subtitles languages because a PO token was not provided."
 
     with pytest.raises(VideoUnavailable) as no_captions:
         caption_track(info, [], DETAILS)
@@ -194,6 +209,9 @@ LOGIN_HINT = (
         (f"ERROR: [youtube] x: Sign in to confirm you’re not a bot.{LOGIN_HINT}", None, "throttled", False, "bot"),
         ("ERROR: [youtube] x: Unable to download webpage: HTTP Error 429: Too Many Requests", 429, "throttled",
          False, "429"),
+        ("ERROR: [youtube] x: Unable to download API page: HTTP Error 403: Forbidden", 403, "throttled", False, "403"),
+        ("ERROR: [youtube:tab] PLaaaa: YouTube said: This playlist is private.", None, "unavailable", True,
+         "private"),
         ("ERROR: [youtube:tab] @nope/videos: Unable to download API page: HTTP Error 404: Not Found", 404,
          "not_found", True, "404"),
         ("ERROR: [youtube:tab] UCaaaaaaaaaaaaaaaaaaaaaa: YouTube said: This channel does not exist.", None,

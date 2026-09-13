@@ -14,3 +14,5 @@
 - [ ] Tests with locally generated signing keys: valid, invalid, missing, expired JWT; the loopback cases; prefix URLs
 
 From ticket 01 review: Health returns the absolute database path; decide whether that is acceptable once published. Relative fetch URLs need the prefix root to end in a slash; the static mount has no SPA fallback for client-side routes.
+
+From ticket 07 review: behind Cloudflare Access, an expired session answers the EventSource with an HTML redirect; `web/src/events.ts` then reopens every 5 s with no sign in the UI that live updates stopped.
