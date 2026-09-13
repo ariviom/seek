@@ -18,7 +18,7 @@ type StageOutcome = Literal["advanced", "stopped", "gone"]
 
 PIPELINE: tuple[PipelineStage, ...] = ("discovered", "transcript_fetched", "segmented", "embedded", "done")
 
-STAGES: tuple[Stage, ...] = ("discovered", "transcript_fetched", "segmented", "embedded", "done", "failed", "excluded")
+STAGES: tuple[Stage, ...] = (*PIPELINE, "failed", "excluded")
 
 # The stage a Video shows: exclusion wins over failure, which wins over the last completed stage.
 _STAGE_SQL = """
@@ -204,10 +204,22 @@ def record_transcript(
         return "advanced"
 
 
+def complete_stage(conn: sqlite3.Connection, video_id: int, stage: PipelineStage) -> bool:
+    """Within a transaction: records the Video's last completed stage and clears any failure; False if it's gone."""
+    cursor = conn.execute(
+        """
+        UPDATE videos SET pipeline_stage = ?, failure_stage = NULL, failure_reason = NULL, failure_permanent = NULL
+        WHERE id = ?
+        """,
+        (stage, video_id),
+    )
+    return cursor.rowcount == 1
+
+
 def record_done(conn: sqlite3.Connection, video_id: int) -> bool:
     """Marks the Video done; False if the Video is gone."""
     with transaction(conn):
-        return conn.execute("UPDATE videos SET pipeline_stage = 'done' WHERE id = ?", (video_id,)).rowcount == 1
+        return complete_stage(conn, video_id, "done")
 
 
 def record_failure(

@@ -62,6 +62,10 @@ class SourceUnavailable(Exception):
     """The transcript source cannot be reached or is not usable right now."""
 
 
+class ModelUnavailable(Exception):
+    """The embedding or reranking model cannot be used right now."""
+
+
 class VideoUnavailable(Exception):
     """One Video cannot be ingested: members-only, age-restricted, live or upcoming, no captions, not in English.
 
@@ -94,10 +98,6 @@ class TranscriptSource(Protocol):
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         """Full metadata and English captions. Raises VideoUnavailable otherwise, including for an unknown id."""
         ...
-
-
-class ModelUnavailable(Exception):
-    """The embedding or reranking model cannot be used right now."""
 
 
 class Embedder(Protocol):

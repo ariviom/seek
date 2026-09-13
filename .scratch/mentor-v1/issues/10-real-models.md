@@ -13,3 +13,8 @@
 - [ ] Opt-in `real_models` test (skipped by default) ranks a planted Segment first for a known query
 
 From ticket 01 review: GPU work needs its own single-thread executor rather than the default thread pool; take the embedding dimension from config so the startup mismatch check does not wait for model load.
+
+From ticket 05 review:
+- The Embedder port promises `model_name` and `dimension` before loading; the stub `embeddings.SentenceTransformerEmbedder` takes them from config. If the adapter falls back to another model, it must report the fallback's name and dimension (and the startup check must see them), or refuse rather than silently store vectors under the primary's stamp. Nothing ties `embedding_dimension` to the model: validate it on load and raise a clear `ModelUnavailable`.
+- Map GPU OOM to `ModelUnavailable` so it stops the Sync; other embedder exceptions currently fail one Video transiently.
+- Startup refusals (model mismatch, newer schema) raise `RuntimeError` inside the lifespan, which uvicorn prints as a traceback. Consider surfacing them as a one-line `mentor: ...` exit like config errors.

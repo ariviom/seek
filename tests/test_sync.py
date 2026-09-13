@@ -7,11 +7,11 @@ from datetime import date
 from pathlib import Path
 
 import httpx
-from harness import Json, add_mentor, fake_video, running, start_sync, wait_for_syncs
+from harness import Json, add_mentor, fake_channel, fake_video, running, start_sync, wait_for_syncs
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeEmbedder, FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeTranscriptSource
 from mentor.ports import Chapter, VideoDetails, VideoUnavailable
 
 NO_COUNTS = {
@@ -23,11 +23,6 @@ NO_COUNTS = {
     "failed": 0,
     "excluded": 0,
 }
-
-
-def fake_channel(transcripts: FakeTranscriptSource, youtube_channel_id: str) -> FakeChannel:
-    [channel] = [c for c in transcripts.channels if c.info.channel_id == youtube_channel_id]
-    return channel
 
 
 async def list_videos(client: httpx.AsyncClient, channel_id: int) -> dict[str, Json]:

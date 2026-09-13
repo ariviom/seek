@@ -49,7 +49,7 @@ def _integer(key: str, value: object, source: str, low: int, high: int) -> int:
 def _text(key: str, value: object, source: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{source}: {key} must be a non-empty string")
-    return value
+    return value.strip()
 
 
 def _data_dir(value: object, source: str) -> Path:

@@ -92,9 +92,11 @@ class FakeEmbedder:
     # When set, every call raises ModelUnavailable with this message.
     unavailable: str | None = None
 
-    def _embed(self, text: str) -> list[float]:
+    def _check(self) -> None:
         if self.unavailable is not None:
             raise ModelUnavailable(self.unavailable)
+
+    def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
         for token in _tokens(text):
             digest = hashlib.sha256(token.encode()).digest()
@@ -103,9 +105,11 @@ class FakeEmbedder:
         return [x / norm for x in vector]
 
     def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        self._check()
         return [self._embed(t) for t in texts]
 
     def embed_query(self, text: str) -> list[float]:
+        self._check()
         return self._embed(text)
 
 

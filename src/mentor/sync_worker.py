@@ -133,17 +133,34 @@ class SyncWorker:
         """Runs one stage after discovery, which the whole Channel completes at once."""
         if stage == "transcript_fetched":
             return await self._fetch_transcript(video)
-        if stage == "segmented":
-            advanced = await self._database.run(lambda conn: segments.record_segments(conn, video.id))
-        elif stage == "embedded":
-            advanced = await self._embed(video)
-        else:
-            advanced = await self._database.run(lambda conn: videos.record_done(conn, video.id))
+        try:
+            if stage == "segmented":
+                advanced = await self._database.run(lambda conn: segments.record_segments(conn, video.id))
+            elif stage == "embedded":
+                advanced = await self._embed(video)
+            else:
+                advanced = await self._database.run(lambda conn: videos.record_done(conn, video.id))
+        except ModelUnavailable:
+            # Not about this Video: the Sync stops, and the Video resumes from its last stage next time.
+            raise
+        except Exception as e:
+            # As when fetching, one Video that can't be processed must not block its Channel's Syncs.
+            log.exception("Stage %s failed for Video %s", stage, video.youtube_video_id)
+            return await self._record_failure(video, stage, VideoUnavailable(f"Unexpected error: {e}", permanent=False))
         return "advanced" if advanced else "gone"
 
+    async def _record_failure(
+        self, video: PendingVideo, attempted: PipelineStage, failure: VideoUnavailable
+    ) -> StageOutcome:
+        recorded = await self._database.run(
+            lambda conn: videos.record_failure(conn, video.id, attempted, failure, self._min_duration_seconds)
+        )
+        return "stopped" if recorded else "gone"
+
     async def _embed(self, video: PendingVideo) -> bool:
-        """False if the Video is gone. Embedder failures stop the Sync: they are not about one Video."""
+        """False if the Video is gone."""
         texts = await self._database.run(lambda conn: segments.segment_texts(conn, video.id))
+        # A Video with no spoken text has no Segments; the model isn't needed for it.
         vectors = await asyncio.to_thread(self._embedder.embed_passages, [text for _, text in texts]) if texts else []
         pairs = [(segment_id, vector) for (segment_id, _), vector in zip(texts, vectors, strict=True)]
         return await self._database.run(lambda conn: segments.record_embeddings(conn, video.id, pairs))
@@ -169,13 +186,7 @@ class SyncWorker:
                     details=details,
                 )
         if failure is not None:
-            unavailable = failure
-            recorded = await self._database.run(
-                lambda conn: videos.record_failure(
-                    conn, video.id, "transcript_fetched", unavailable, self._min_duration_seconds
-                )
-            )
-            return "stopped" if recorded else "gone"
+            return await self._record_failure(video, "transcript_fetched", failure)
         return await self._database.run(
             lambda conn: videos.record_transcript(conn, video.id, details, transcript, self._min_duration_seconds)
         )

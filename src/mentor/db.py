@@ -96,7 +96,7 @@ MIGRATIONS = [
     """
     -- Segments are replaced, never updated; the triggers keep the external-content FTS5 index in step.
     -- AUTOINCREMENT: the Sync worker holds Segment ids while embedding, and ids key the FTS5 and vector rows.
-    -- The vector table is not here: its dimension comes from the embedding model (see create_vector_index).
+    -- The vector table is not here: its dimension comes from the embedding model (see ensure_embedding_model).
     CREATE TABLE segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -176,28 +176,35 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.executescript(f"{script}; PRAGMA user_version = {number};")
 
 
-def create_vector_index(conn: sqlite3.Connection, model_name: str, dimension: int) -> None:
-    """Creates the Segment vector table for this embedding model, or refuses a knowledge base built with another."""
+def ensure_embedding_model(conn: sqlite3.Connection, model_name: str, dimension: int) -> None:
+    """Creates the Segment vector table for this embedding model.
+
+    The model can change only while no vectors are stored; after that, starting with another model is refused.
+    """
     with transaction(conn):
         row = conn.execute("SELECT name, dimension FROM embedding_model").fetchone()
         if row is not None:
-            if (row["name"], row["dimension"]) != (model_name, dimension):
+            if (row["name"], row["dimension"]) == (model_name, dimension):
+                return
+            if conn.execute("SELECT 1 FROM segment_vectors LIMIT 1").fetchone() is not None:
                 raise RuntimeError(
                     f"The knowledge base was embedded with {row['name']} ({row['dimension']} dimensions), but "
                     f"the configured embedding model is {model_name} ({dimension} dimensions); configure the "
                     "original model again, or use a new data_dir"
                 )
-            return
-        conn.execute("INSERT INTO embedding_model (id, name, dimension) VALUES (1, ?, ?)", (model_name, dimension))
+            conn.execute("DROP TABLE segment_vectors")
+        conn.execute(
+            "INSERT OR REPLACE INTO embedding_model (id, name, dimension) VALUES (1, ?, ?)", (model_name, dimension)
+        )
         # channel_id is a metadata column so KNN can be scoped to Channels before taking the top k.
         conn.executescript(
             f"""
             CREATE VIRTUAL TABLE segment_vectors USING vec0(
                 segment_id INTEGER PRIMARY KEY,
                 channel_id INTEGER,
-                embedding float[{int(dimension)}] distance_metric=cosine
+                embedding float[{dimension}] distance_metric=cosine
             );
-            CREATE TRIGGER segment_vectors_delete AFTER DELETE ON segments BEGIN
+            CREATE TRIGGER IF NOT EXISTS segment_vectors_delete AFTER DELETE ON segments BEGIN
                 DELETE FROM segment_vectors WHERE segment_id = old.id;
             END;
             """
@@ -209,7 +216,7 @@ def initialize(path: Path, embedding_model: str, embedding_dimension: int) -> di
     conn = connect(path)
     try:
         migrate(conn)
-        create_vector_index(conn, embedding_model, embedding_dimension)
+        ensure_embedding_model(conn, embedding_model, embedding_dimension)
         conn.execute("CREATE VIRTUAL TABLE temp.fts5_probe USING fts5(text)")
         conn.execute("DROP TABLE temp.fts5_probe")
         return {

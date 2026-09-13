@@ -1,21 +1,29 @@
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import FastAPI
 import sqlite_vec
-from harness import Json, add_mentor, fake_video, query, row_counts, running, start_sync, wait_for_syncs
+from harness import (
+    Json,
+    add_mentor,
+    fake_channel,
+    fake_video,
+    query,
+    row_counts,
+    running,
+    start_sync,
+    wait_for_syncs,
+)
 
 from mentor import db
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeEmbedder, FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeTranscriptSource
 from mentor.ports import Chapter, Cue
-
-
-def fake_channel(transcripts: FakeTranscriptSource, youtube_channel_id: str) -> FakeChannel:
-    [channel] = [c for c in transcripts.channels if c.info.channel_id == youtube_channel_id]
-    return channel
 
 
 def spoken(topic: str, until: float) -> list[Cue]:
@@ -71,12 +79,14 @@ async def test_a_sync_segments_and_embeds_videos_into_indexes_that_knn_can_scope
     }
     [lexical] = query(config, "SELECT rowid FROM segments_fts WHERE segments_fts MATCH 'sheath'")
     assert lexical["rowid"] == segments[4]["id"]
-    nearest = sqlite_vec.serialize_float32(embedder.embed_query("Leather sheath"))
-    knn = "SELECT segment_id FROM segment_vectors WHERE embedding MATCH ? AND k = 10 AND channel_id = ?"
-    assert {r["segment_id"] for r in query(config, knn, (nearest, wright["channels"][0]["id"]))} == {
-        s["id"] for s in segments[:4]
-    }
-    assert [r["segment_id"] for r in query(config, knn, (nearest, rex["channels"][0]["id"]))] == [segments[4]["id"]]
+    # The query is nearest Rex's Segment, so only filtering before taking the top k finds Wright's.
+    nearest_rex = sqlite_vec.serialize_float32(embedder.embed_query("Welcome to Leather sheath"))
+    knn = "SELECT segment_id FROM segment_vectors WHERE embedding MATCH ? AND k = 2 AND channel_id = ?"
+    wright_hits = [r["segment_id"] for r in query(config, knn, (nearest_rex, wright["channels"][0]["id"]))]
+    assert len(wright_hits) == 2 and set(wright_hits) <= {s["id"] for s in segments[:4]}
+    assert [r["segment_id"] for r in query(config, knn, (nearest_rex, rex["channels"][0]["id"]))] == [
+        segments[4]["id"]
+    ]
 
 
 async def test_an_embedding_failure_stops_the_sync_and_the_rerun_embeds_without_duplicates(
@@ -130,7 +140,10 @@ async def test_rerunning_a_stage_for_a_video_replaces_its_segments_and_vectors(
     assert rerun["stage_counts"]["done"] == 1
     second_ids = {r["id"] for r in query(config, "SELECT id FROM segments")}
     assert len(second_ids) == len(first_ids) == 4
-    assert first_ids.isdisjoint(second_ids) if completed == "transcript_fetched" else first_ids == second_ids
+    if completed == "transcript_fetched":
+        assert first_ids.isdisjoint(second_ids)
+    else:
+        assert first_ids == second_ids
     vectors = query(config, "SELECT segment_id FROM segment_vectors ORDER BY segment_id")
     assert [r["segment_id"] for r in vectors] == sorted(second_ids)
     assert row_counts(config)["segments_fts_docsize"] == 4
@@ -143,7 +156,9 @@ async def test_deleting_a_channel_or_mentor_removes_its_videos_transcripts_segme
     fake_channel(transcripts, "UC-wright-vlog").videos.append(fake_video("v-vlog", "Vlog"))
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex", cues=spoken("rex", until=150)))
     wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
+    attached = await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})
+    assert attached.status_code == 201, attached.text
+    vlog = attached.json()
     rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
     await sync_all(client, wright["channels"][0]["id"], vlog["id"], rex["channels"][0]["id"])
     synced = row_counts(config)
@@ -162,19 +177,73 @@ async def test_deleting_a_channel_or_mentor_removes_its_videos_transcripts_segme
         "segment_vectors": 5,
     }
     assert row_counts(config) == dict.fromkeys(synced, 0)
+    # Raises if the FTS5 index still holds terms for deleted Segments.
+    query(config, "INSERT INTO segments_fts (segments_fts) VALUES ('integrity-check')")
+
+
+@dataclass
+class BrokenOnGarbledText(FakeEmbedder):
+    broken: bool = True
+
+    def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        if self.broken and any("garbled" in t for t in texts):
+            raise ValueError("token sequence too long")
+        return super().embed_passages(texts)
+
+
+async def test_a_video_that_cannot_be_embedded_fails_alone_and_is_retried_on_the_next_sync(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    embedder = BrokenOnGarbledText()
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-garbled", "Garbled", cues=spoken("garbled", until=100)),
+        fake_video("v-ok", "Fine"),
+    ]
+    app = create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")
+
+    async with running(app) as client:
+        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        channel_id = mentor["channels"][0]["id"]
+        [first] = await sync_all(client, channel_id)
+        after_first = (await client.get(f"/api/channels/{channel_id}/videos")).json()
+        embedder.broken = False
+        second, _ = await sync_all(client, channel_id)
+        after_second = (await client.get(f"/api/channels/{channel_id}/videos")).json()
+
+    [garbled] = [v for v in after_first if v["title"] == "Garbled"]
+    assert first["status"] == "done"
+    assert (first["stage_counts"]["done"], first["stage_counts"]["failed"]) == (1, 1)
+    assert (garbled["stage"], garbled["failure_stage"], garbled["permanent_failure"]) == ("failed", "embedded", False)
+    assert "token sequence too long" in garbled["reason"]
+    assert second["stage_counts"]["done"] == 2
+    assert {v["title"]: (v["stage"], v["reason"]) for v in after_second} == {
+        "Garbled": ("done", None),
+        "Fine": ("done", None),
+    }
+    assert row_counts(config)["segment_vectors"] == row_counts(config)["segments"] == 3
 
 
 @pytest.mark.parametrize(
     "changed", [FakeEmbedder(dimension=32), FakeEmbedder(model_name="other-embedder")], ids=["dimension", "model"]
 )
-async def test_server_refuses_a_knowledge_base_embedded_with_a_different_model(
-    config: Config, tmp_path: Path, changed: FakeEmbedder
+async def test_the_embedding_model_can_change_until_vectors_are_stored_then_other_models_are_refused(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path, changed: FakeEmbedder
 ) -> None:
-    async with running(create_app(config, FakeTranscriptSource(), FakeEmbedder(), static_dir=tmp_path / "none")):
-        pass
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
 
-    with pytest.raises(RuntimeError, match="embedded with fake-embedder \\(64 dimensions\\)"):
-        async with running(create_app(config, FakeTranscriptSource(), changed, static_dir=tmp_path / "none")):
+    def app(embedder: FakeEmbedder) -> FastAPI:
+        return create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")
+
+    async with running(app(FakeEmbedder())):
+        pass
+    async with running(app(changed)) as client:
+        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        [synced] = await sync_all(client, mentor["channels"][0]["id"])
+
+    assert synced["status"] == "done"
+    refusal = rf"embedded with {changed.model_name} \({changed.dimension} dimensions\)"
+    with pytest.raises(RuntimeError, match=refusal):
+        async with running(app(FakeEmbedder())):
             pass
-    async with running(create_app(config, FakeTranscriptSource(), FakeEmbedder(), static_dir=tmp_path / "none")):
+    async with running(app(changed)):
         pass

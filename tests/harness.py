@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from mentor import db
 from mentor.config import Config
-from mentor.fakes import FakeVideo
+from mentor.fakes import FakeChannel, FakeTranscriptSource, FakeVideo
 from mentor.ports import Chapter, Cue, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
@@ -27,6 +27,11 @@ async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 type Json = dict[str, Any]
+
+
+def fake_channel(transcripts: FakeTranscriptSource, youtube_channel_id: str) -> FakeChannel:
+    [channel] = [c for c in transcripts.channels if c.info.channel_id == youtube_channel_id]
+    return channel
 
 
 async def add_mentor(client: httpx.AsyncClient, name: str, channel: str) -> Json:
@@ -63,8 +68,9 @@ def fake_video(
         transcript=Transcript(
             source=source,
             language=language,
-            cues=cues
-            or [Cue(start=0.0, end=4.0, text=f"Welcome to {title}"), Cue(start=4.0, end=9.5, text="Let's begin")],
+            cues=[Cue(start=0.0, end=4.0, text=f"Welcome to {title}"), Cue(start=4.0, end=9.5, text="Let's begin")]
+            if cues is None
+            else cues,
         ),
         failure=failure,
         before_fetch=before_fetch,

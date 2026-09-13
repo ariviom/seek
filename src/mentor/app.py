@@ -13,7 +13,7 @@ from mentor.config import Config
 from mentor.errors import Conflict, NotFound
 from mentor.groups_api import groups_router
 from mentor.mentors_api import mentors_router
-from mentor.ports import ChannelNotFound, Embedder, SourceUnavailable, TranscriptSource
+from mentor.ports import ChannelNotFound, Embedder, ModelUnavailable, SourceUnavailable, TranscriptSource
 from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
 
@@ -25,6 +25,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     NotFound: 404,
     Conflict: 409,
     SourceUnavailable: 503,
+    ModelUnavailable: 503,
 }
 
 
