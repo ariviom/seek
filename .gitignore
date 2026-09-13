@@ -10,3 +10,4 @@ web/dist/
 src/mentor/static/
 *.egg-info/
 .claude/worktrees/
+.playwright-mcp/
