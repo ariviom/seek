@@ -26,6 +26,18 @@ MIGRATIONS = [
     );
     CREATE INDEX channels_mentor_id ON channels(mentor_id);
     """,
+    """
+    CREATE TABLE mentor_groups (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE
+    );
+    CREATE TABLE mentor_group_members (
+        group_id INTEGER NOT NULL REFERENCES mentor_groups(id) ON DELETE CASCADE,
+        mentor_id INTEGER NOT NULL REFERENCES mentors(id) ON DELETE CASCADE,
+        PRIMARY KEY (group_id, mentor_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX mentor_group_members_mentor_id ON mentor_group_members(mentor_id);
+    """,
 ]
 
 

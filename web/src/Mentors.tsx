@@ -1,44 +1,23 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type ChannelProposal, type Mentor } from "./api";
+import { buttonClass, inputClass, quietButtonClass, useChanges, type Act } from "./ui";
 
-const inputClass = "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-stone-500 focus:outline-none";
-const buttonClass =
-  "rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50";
-const quietButtonClass =
-  "rounded-md px-2 py-1 text-sm text-stone-600 hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50";
-
-// Runs one change at a time; resolves true when the change itself succeeded.
-type Act = (change: () => Promise<unknown>) => Promise<boolean>;
-
-export function Mentors() {
+export function Mentors({ onLoaded }: { onLoaded: (mentors: Mentor[]) => void }) {
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      setMentors(await api.listMentors());
+      const listed = await api.listMentors();
+      setMentors(listed);
+      onLoaded(listed);
     } catch (e) {
       setMentors((current) => current ?? []);
       setError(`Could not load Mentors: ${errorText(e)}`);
     }
-  }, []);
+  }, [onLoaded]);
 
-  // Controls are disabled while busy, so changes and their refreshes never interleave.
-  const act: Act = async (change) => {
-    setError(null);
-    setBusy(true);
-    try {
-      await change();
-    } catch (e) {
-      setError(errorText(e));
-      return false;
-    } finally {
-      await refresh();
-      setBusy(false);
-    }
-    return true;
-  };
+  const { act, busy } = useChanges(refresh, setError);
 
   useEffect(() => {
     void refresh();

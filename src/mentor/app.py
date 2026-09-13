@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from mentor import db
 from mentor.config import Config
 from mentor.errors import Conflict, NotFound
+from mentor.groups_api import groups_router
 from mentor.mentors_api import mentors_router
 from mentor.ports import ChannelNotFound, SourceUnavailable, TranscriptSource
 
@@ -48,6 +49,7 @@ def create_app(
         return {"status": "ok", "database": app.state.database_info}
 
     app.include_router(mentors_router(database, transcripts), prefix="/api")
+    app.include_router(groups_router(database), prefix="/api")
 
     # Mounted last: a catch-all at "/" would shadow routes registered after it.
     if static_dir.is_dir():
