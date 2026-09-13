@@ -124,11 +124,15 @@ MIGRATIONS = [
     );
     """,
     """
-    -- Optional per-Channel filters, re-applied by every Sync. Dates are inclusive.
+    -- Optional per-Channel filters, re-applied by every Sync. Dates are inclusive. An excluded Video now
+    -- steps back to transcript_fetched and loses its Segments, so it stays out of the search indexes.
     ALTER TABLE channels ADD COLUMN published_after TEXT;
     ALTER TABLE channels ADD COLUMN published_before TEXT;
     ALTER TABLE channels ADD COLUMN playlist_id TEXT;
     ALTER TABLE channels ADD COLUMN most_recent INTEGER CHECK (most_recent > 0);
+    -- A retry-failed Sync clears its Channel's failures when it starts, including any recorded by a Sync
+    -- still running when the retry was asked for.
+    ALTER TABLE syncs ADD COLUMN retry_failed INTEGER NOT NULL DEFAULT 0 CHECK (retry_failed IN (0, 1));
     """,
 ]
 

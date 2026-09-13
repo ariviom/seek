@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import date
@@ -27,6 +28,21 @@ async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 type Json = dict[str, Any]
+
+
+class Gate:
+    """Holds a fake fetch on its worker thread until released."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.released = threading.Event()
+
+    def __call__(self) -> None:
+        self.entered.set()
+        self.released.wait(timeout=5)
+
+    async def wait_entered(self) -> None:
+        assert await asyncio.to_thread(self.entered.wait, 5)
 
 
 def fake_channel(transcripts: FakeTranscriptSource, youtube_channel_id: str) -> FakeChannel:

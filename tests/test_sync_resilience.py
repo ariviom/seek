@@ -2,8 +2,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
 import pytest
 from harness import (
+    Gate,
     add_mentor,
     fake_channel,
     fake_video,
@@ -143,4 +145,27 @@ async def test_a_normal_sync_skips_permanent_failures_and_retry_failed_recovers_
     assert [fetched(transcripts).count(v) for v in ("v-members", "v-live", "v-garbled", "v-ok")] == [2, 2, 1, 1]
     assert [embeds_of(embedder, title) for title in ("Members stream", "Garbled", "Fine")] == [1, 1, 1]
     assert unknown.status_code == 404
+
+
+async def test_retry_failed_during_a_sync_also_retries_failures_that_sync_records_afterwards(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    gate = Gate()
+    members_only = VideoUnavailable("Members-only video", permanent=True)
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-members", "Members stream", before_fetch=gate, failure=members_only)
+    )
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+
+    await start_sync(client, channel_id)
+    await gate.wait_entered()
+    response = await client.post(f"/api/channels/{channel_id}/retry-failed")
+    gate.released.set()
+    retried, running_during_retry = await wait_for_syncs(client)
+
+    assert response.status_code == 202
+    assert retried["id"] == response.json()["id"]
+    assert (running_during_retry["status"], retried["status"]) == ("done", "done")
+    assert fetched(transcripts) == ["v-members", "v-members"]
 

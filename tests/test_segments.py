@@ -1,7 +1,6 @@
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 import httpx
@@ -20,6 +19,7 @@ from harness import (
     wait_for_syncs,
 )
 
+from mentor import db
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeEmbedder, FakeTranscriptSource
@@ -120,32 +120,22 @@ async def test_an_embedding_failure_stops_the_sync_and_the_rerun_embeds_without_
 
 
 @pytest.mark.parametrize("completed", ["transcript_fetched", "segmented"])
-async def test_sending_a_video_back_through_a_stage_replaces_its_segments_and_vectors(
-    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path, completed: str
+async def test_rerunning_a_stage_for_a_video_replaces_its_segments_and_vectors(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config, completed: str
 ) -> None:
-    embedder = BrokenOnGarbledText(broken=completed == "segmented")
-    fake_channel(transcripts, "UC-wright").videos.append(
-        fake_video("v-one", "One", cues=spoken("garbled", until=300), published_on=date(2020, 1, 1))
-    )
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", cues=spoken("one", until=300)))
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+    await sync_all(client, channel_id)
+    first_ids = {r["id"] for r in query(config, "SELECT id FROM segments")}
 
-    async with running(create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
-        await sync_all(client, channel_id)
-        first_ids = {r["id"] for r in query(config, "SELECT id FROM segments")}
-        if completed == "segmented":
-            # Failed at embedding: retrying resumes from its last completed stage, segmented.
-            embedder.broken = False
-            response = await client.post(f"/api/channels/{channel_id}/retry-failed")
-            assert response.status_code == 202, response.text
-            rerun, *_ = await wait_for_syncs(client)
-        else:
-            # Excluding a done Video returns it to transcript_fetched; lifting the exclusion re-segments it.
-            filters = {"published_after": "2024-01-01", "published_before": None, "playlist_id": None, "most_recent": None}
-            await client.patch(f"/api/channels/{channel_id}", json={"filters": filters})
-            await sync_all(client, channel_id)
-            await client.patch(f"/api/channels/{channel_id}", json={"filters": filters | {"published_after": None}})
-            rerun, *_ = await sync_all(client, channel_id)
+    # Stands in for a retry that sends a finished Video back through a stage.
+    conn = db.connect(config.database_path)
+    try:
+        conn.execute("UPDATE videos SET pipeline_stage = ?", (completed,))
+    finally:
+        conn.close()
+    [rerun, _] = await sync_all(client, channel_id)
 
     assert rerun["stage_counts"]["done"] == 1
     second_ids = {r["id"] for r in query(config, "SELECT id FROM segments")}

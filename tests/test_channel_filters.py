@@ -218,3 +218,53 @@ async def test_every_sync_reapplies_the_current_filters_and_lifting_an_exclusion
     assert after_lifting == {"New": "done", "Old": "done"}
     assert fetched(transcripts) == ["v-new", "v-old"]
     assert row_counts(config) == indexed_both
+
+
+async def test_most_recent_n_keeps_its_videos_when_a_listing_comes_back_short(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    videos_tab = fake_channel(transcripts, "UC-wright").videos
+    videos_tab += [fake_video(f"v-{i}", f"Episode {4 - i}", published_on=date(2025 - i, 1, 1)) for i in range(4)]
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+    await set_filters(client, channel_id, most_recent=2)
+    await sync(client, channel_id)
+    first = stages(await list_videos(client, channel_id))
+
+    del videos_tab[1:]
+    await sync(client, channel_id)
+    videos_tab.clear()
+    await sync(client, channel_id)
+
+    assert first == {"Episode 4": "done", "Episode 3": "done", "Episode 2": "excluded", "Episode 1": "excluded"}
+    assert stages(await list_videos(client, channel_id)) == first
+    assert fetched(transcripts) == ["v-0", "v-1"]
+
+
+async def test_most_recent_n_fills_up_in_one_sync_when_details_exclude_a_video_and_keeps_its_transcript(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(f"v-{year}", f"From {year}", published_on=date(year, 1, 1), date_listed=False)
+        for year in (2025, 2024, 2021, 2020)
+    ]
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+
+    await set_filters(client, channel_id, published_before="2022-06-01", most_recent=2)
+    filtered = await sync(client, channel_id)
+    after_filtered = stages(await list_videos(client, channel_id))
+    transcripts_kept = row_counts(config)["transcripts"]
+    await set_filters(client, channel_id, most_recent=2)
+    await sync(client, channel_id)
+
+    assert filtered["stage_counts"]["done"] == 2
+    assert after_filtered == {"From 2025": "excluded", "From 2024": "excluded", "From 2021": "done", "From 2020": "done"}
+    assert transcripts_kept == 4
+    assert stages(await list_videos(client, channel_id)) == {
+        "From 2025": "done",
+        "From 2024": "done",
+        "From 2021": "excluded",
+        "From 2020": "excluded",
+    }
+    assert sorted(fetched(transcripts)) == ["v-2020", "v-2021", "v-2024", "v-2025"]

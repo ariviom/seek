@@ -17,6 +17,6 @@
 From ticket 03 review: Group names may be all digits (e.g. "12"), so `group` accepting "id or name" is ambiguous when a Group named "12" and a Group with id 12 both exist. Decide the rule here (e.g. JSON number = id, string = name) and document it.
 
 From ticket 05 review:
-- Scope KNN with `segment_vectors.channel_id = ?` or `IN (...)` in the MATCH query itself; sqlite-vec 0.1.9 filters metadata before k (checked). Mind excluded Videos (see ticket 06 note).
+- Scope KNN with `segment_vectors.channel_id = ?` or `IN (...)` in the MATCH query itself; sqlite-vec 0.1.9 filters metadata before k (checked). Excluded Videos have no Segments or vectors (ticket 06 deletes them on exclusion), so Channel scoping is enough.
 - Matched cue: split `segments.text` at the stored cue offsets (`segments.cues` JSON, `[{start, offset}]`) to score each cue.
 - `ModelUnavailable` is already mapped to 503 in `app.ERROR_STATUS`.

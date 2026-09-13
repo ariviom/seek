@@ -17,3 +17,7 @@ From ticket 02:
 - `resolve_channel` must accept a bare channel id: the web create flow re-resolves the proposal's id server-side.
 - Map every yt-dlp failure to ChannelNotFound or SourceUnavailable with a user-facing message; anything else surfaces as an opaque 500.
 - Accept only YouTube URLs, @handles, and channel ids before calling yt-dlp, whose generic extractor would fetch arbitrary URLs.
+
+From ticket 06 review:
+- The port grew: `list_videos` returns the videos tab newest first (`most_recent` ranks by position), with `VideoListing.published_on` when known and None otherwise; `list_playlist(playlist_id)` returns the playlist's video ids or raises `PlaylistNotFound`.
+- A listing date is kept until full details overwrite it, and a Video excluded by a date filter at discovery is never fetched. Pass yt-dlp's approximate ("2 years ago") dates only if they're trustworthy near a filter boundary; None is safe, since the Video is then fetched and judged on its real date.

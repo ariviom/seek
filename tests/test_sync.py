@@ -1,13 +1,22 @@
 import asyncio
 import sqlite3
-import threading
 import time
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 import httpx
-from harness import add_mentor, fake_channel, fake_video, fetched, list_videos, running, start_sync, wait_for_syncs
+from harness import (
+    Gate,
+    add_mentor,
+    fake_channel,
+    fake_video,
+    fetched,
+    list_videos,
+    running,
+    start_sync,
+    wait_for_syncs,
+)
 
 from mentor.app import create_app
 from mentor.config import Config
@@ -23,21 +32,6 @@ NO_COUNTS = {
     "failed": 0,
     "excluded": 0,
 }
-
-
-class Gate:
-    """Holds a fake fetch on its worker thread until released."""
-
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.released = threading.Event()
-
-    def __call__(self) -> None:
-        self.entered.set()
-        self.released.wait(timeout=5)
-
-    async def wait_entered(self) -> None:
-        assert await asyncio.to_thread(self.entered.wait, 5)
 
 
 async def test_a_sync_discovers_videos_and_fetches_their_transcripts_and_metadata(
@@ -251,7 +245,7 @@ async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(
     assert latest["stage_counts"] == NO_COUNTS | {"done": 2}
     assert sorted(await list_videos(client, channel_id)) == ["First video", "Second video"]
     assert fetched(transcripts) == ["v-first", "v-second"]
-    assert [p for p in embedder.passages if "video" in p] == ["Welcome to First video Let's begin", "Welcome to Second video Let's begin"]
+    assert embedder.passages == ["Welcome to First video Let's begin", "Welcome to Second video Let's begin"]
 
 
 async def test_syncs_run_one_at_a_time_in_queue_order_and_a_queued_channel_is_queued_once(

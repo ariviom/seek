@@ -96,17 +96,37 @@ class SyncWorker:
         # it), or the lease was lost (the next holder requeues the Sync).
         rules = ExclusionRules(self._min_duration_seconds, sync.filters)
         try:
-            listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id)
-            playlist = None
+            playlist_video_ids = None
             if sync.filters.playlist_id is not None:
-                playlist = set(await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id))
+                playlist_video_ids = set(
+                    await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id)
+                )
+            listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id)
             new_videos = await self._database.run(
-                lambda conn: videos.record_discovery(conn, sync.id, sync.channel_id, listings, playlist, rules)
+                lambda conn: videos.record_discovery(
+                    conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules
+                )
             )
             if new_videos is None or not await self._progress(sync, new_videos):
                 return
-            for video in await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id)):
-                if not await self._advance(sync, rules, video):
+            attempted: set[int] = set()
+            while True:
+                pending = await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id))
+                pending = [video for video in pending if video.id not in attempted]
+                if not pending:
+                    break
+                for video in pending:
+                    attempted.add(video.id)
+                    if not await self._advance(sync, rules, video):
+                        return
+                if sync.filters.most_recent is None:
+                    break
+                # A Video excluded only once its details arrived frees a place among the most recent N.
+                if not await self._database.run(
+                    lambda conn: videos.reapply_exclusions(
+                        conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules
+                    )
+                ):
                     return
         except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
             error: str | None = str(e)

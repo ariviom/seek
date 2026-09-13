@@ -73,14 +73,19 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
 def enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
     """Queues a Sync for the Channel, or returns the one already queued for it."""
     with transaction(conn):
-        return _enqueue(conn, channel_id)
+        return _enqueue(conn, channel_id, retry_failed=False)
 
 
 def retry_failed(conn: sqlite3.Connection, channel_id: int) -> Sync:
-    """Clears every failure on the Channel's Videos, permanent ones too, and queues a Sync to retry them."""
+    """Queues a Sync that retries every failed Video of the Channel, permanent failures too.
+
+    Failures are cleared now, so the Videos stop showing as failed, and again when the Sync starts, in case a
+    Sync still running records more meanwhile.
+    """
     with transaction(conn):
+        _require_channel(conn, channel_id)
         videos.clear_failures(conn, channel_id)
-        return _enqueue(conn, channel_id)
+        return _enqueue(conn, channel_id, retry_failed=True)
 
 
 def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
@@ -88,18 +93,24 @@ def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
         raise NotFound(f"Channel {channel_id} not found")
 
 
-def _enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
+def _enqueue(conn: sqlite3.Connection, channel_id: int, retry_failed: bool) -> Sync:
     _require_channel(conn, channel_id)
     counts = json.dumps(videos.stage_counts(conn, channel_id))
     row = conn.execute("SELECT id FROM syncs WHERE channel_id = ? AND status = 'queued'", (channel_id,)).fetchone()
     if row is None:
         row = conn.execute(
-            "INSERT INTO syncs (channel_id, status, queued_at, stage_counts) VALUES (?, 'queued', ?, ?) RETURNING id",
-            (channel_id, now_iso(), counts),
+            """
+            INSERT INTO syncs (channel_id, status, queued_at, stage_counts, retry_failed) VALUES (?, 'queued', ?, ?, ?)
+            RETURNING id
+            """,
+            (channel_id, now_iso(), counts, retry_failed),
         ).fetchone()
     else:
-        # Refreshed, since a retry may have just cleared failures.
-        conn.execute("UPDATE syncs SET stage_counts = ? WHERE id = ?", (counts, row["id"]))
+        # The Sync already queued takes on the current counts and any retry request.
+        conn.execute(
+            "UPDATE syncs SET stage_counts = ?, retry_failed = max(retry_failed, ?) WHERE id = ?",
+            (counts, retry_failed, row["id"]),
+        )
     [sync] = _select(conn, "WHERE syncs.id = ?", (row["id"],))
     return sync
 
@@ -163,7 +174,7 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
             return None
         row = conn.execute(
             """
-            SELECT syncs.id AS sync_id, channels.*
+            SELECT syncs.id AS sync_id, syncs.retry_failed, channels.*
             FROM syncs JOIN channels ON channels.id = syncs.channel_id
             WHERE syncs.status = 'queued' ORDER BY syncs.id LIMIT 1
             """
@@ -171,6 +182,8 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         if row is None:
             return None
         conn.execute("UPDATE syncs SET status = 'running', started_at = ? WHERE id = ?", (now_iso(), row["sync_id"]))
+        if row["retry_failed"]:
+            videos.clear_failures(conn, row["id"])
         return ClaimedSync(
             id=row["sync_id"],
             channel_id=row["id"],

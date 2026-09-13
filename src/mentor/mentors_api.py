@@ -42,7 +42,7 @@ class FiltersBody(BaseModel):
     @model_validator(mode="after")
     def dates_in_order(self) -> Self:
         if self.published_after and self.published_before and self.published_after > self.published_before:
-            raise ValueError("published_after must not be later than published_before")
+            raise ValueError("The earliest publish date must not be later than the latest")
         return self
 
 
