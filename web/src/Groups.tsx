@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorText, type Mentor, type MentorGroup } from "./api";
-import { buttonClass, inputClass, quietButtonClass, useChanges, type Act } from "./ui";
+import {
+  alertClass,
+  buttonClass,
+  dangerButtonClass,
+  hintClass,
+  inputClass,
+  quietButtonClass,
+  sectionHeadingClass,
+  useChanges,
+  type Act,
+} from "./ui";
 
 // `mentors` is null until the Mentors section has loaded.
 export function Groups({ mentors }: { mentors: Mentor[] | null }) {
@@ -30,21 +40,24 @@ export function Groups({ mentors }: { mentors: Mentor[] | null }) {
   }, [refresh, mentorNames]);
 
   return (
-    <section className="mt-10">
-      <h2 className="text-lg font-semibold">Mentor Groups</h2>
+    <section aria-labelledby="groups-heading">
+      <h2 id="groups-heading" className={sectionHeadingClass}>
+        Mentor Groups
+      </h2>
+      <p className={`mt-2 ${hintClass}`}>A Group is a set of Mentors you consult together on one discipline.</p>
       {error && (
-        <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p role="alert" className={alertClass}>
           {error}
         </p>
       )}
-      <fieldset disabled={busy}>
+      <fieldset disabled={busy} className="min-w-0">
         <AddGroup act={act} />
         {groups === null ? (
-          <p className="mt-4 text-sm text-stone-500">Loading…</p>
+          <p className={`mt-5 ${hintClass}`}>Loading…</p>
         ) : groups.length === 0 ? (
-          <p className="mt-4 text-sm text-stone-500">No Mentor Groups yet. Name one above, then pick its Mentors.</p>
+          <p className={`mt-5 ${hintClass}`}>No Mentor Groups yet. Name one above, then pick its Mentors.</p>
         ) : (
-          <ul className="mt-4 space-y-4">
+          <ul className="mt-5 space-y-4">
             {groups.map((group) => (
               <GroupCard key={group.id} group={group} mentors={mentors ?? group.mentors} act={act} />
             ))}
@@ -64,9 +77,9 @@ function AddGroup({ act }: { act: Act }) {
   }
 
   return (
-    <form onSubmit={create} className="mt-3 flex gap-2">
+    <form onSubmit={create} className="mt-4 flex flex-wrap gap-2">
       <input
-        className={`${inputClass} flex-1`}
+        className={`${inputClass} min-w-56 flex-1`}
         placeholder="New Mentor Group name, e.g. Woodworking"
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -95,12 +108,17 @@ function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: Mento
   }
 
   return (
-    <li className="rounded-lg border border-stone-200 p-4">
-      <div className="flex items-center justify-between gap-2">
+    <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {renaming === null ? (
-          <h3 className="font-medium">{group.name}</h3>
+          <h3 className="font-condensed text-[1.375rem] leading-tight font-semibold">
+            {group.name}{" "}
+            <span className="font-sans text-sm font-normal text-pencil">
+              {group.mentors.length} {group.mentors.length === 1 ? "Mentor" : "Mentors"}
+            </span>
+          </h3>
         ) : (
-          <form onSubmit={rename} className="flex gap-2">
+          <form onSubmit={rename} className="flex flex-wrap gap-2">
             <input
               className={inputClass}
               value={renaming}
@@ -117,7 +135,7 @@ function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: Mento
             {renaming === null ? "Rename" : "Cancel"}
           </button>
           <button
-            className={`${quietButtonClass} text-red-700 hover:text-red-900`}
+            className={dangerButtonClass}
             onClick={() => {
               if (confirm(`Delete the Mentor Group ${group.name}? Its Mentors are kept.`)) {
                 void act(() => api.deleteGroup(group.id));
@@ -129,12 +147,12 @@ function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: Mento
         </div>
       </div>
       {mentors.length === 0 ? (
-        <p className="mt-3 text-sm text-stone-500">Add a Mentor above to include it in this Group.</p>
+        <p className={`mt-3 ${hintClass}`}>Add a Mentor above to include it in this Group.</p>
       ) : (
-        <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+        <ul className="mt-3 flex flex-wrap gap-2" aria-label={`Mentors in ${group.name}`}>
           {mentors.map((mentor) => (
             <li key={mentor.id}>
-              <label className="flex items-center gap-1.5 text-sm text-stone-700">
+              <label className="flex cursor-pointer items-center gap-2 rounded-full border border-rule bg-white px-3 py-1 text-[15px] text-pencil hover:border-machine/60 has-checked:border-machine has-checked:bg-machine/10 has-checked:text-ink">
                 <input
                   type="checkbox"
                   checked={memberIds.includes(mentor.id)}

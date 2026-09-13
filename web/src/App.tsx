@@ -25,22 +25,48 @@ export function App() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-2xl p-8 font-sans text-stone-900">
-      <h1 className="text-2xl font-semibold">mentor</h1>
-      <Mentors onLoaded={setMentors} />
-      <Groups mentors={mentors} />
-      <Syncs />
-      <footer className="mt-12 border-t border-stone-200 pt-3 text-xs text-stone-500">
-        {state.kind === "loading" && "Checking server…"}
-        {state.kind === "error" && <span className="text-red-700">Server unavailable: {state.message}</span>}
+    <div className="min-h-screen">
+      <header className="border-b border-rule bg-panel">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
+          <h1 className="font-condensed text-3xl leading-none font-semibold">mentor</h1>
+          {state.kind === "error" && (
+            <p role="alert" className="text-sm text-oxide">
+              Server unavailable: {state.message}
+            </p>
+          )}
+        </div>
+      </header>
+      <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
+        <main className="min-w-0 space-y-12">
+          <Mentors onLoaded={setMentors} />
+          <Groups mentors={mentors} />
+        </main>
+        <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
+          <Syncs />
+        </aside>
+      </div>
+      <footer className="mx-auto max-w-6xl px-5 pb-8 sm:px-8">
         {state.kind === "ok" && (
-          <span>
-            Server {state.health.status} · sqlite-vec {state.health.database.sqlite_vec} · FTS5{" "}
-            {state.health.database.fts5 ? "available" : "missing"} ·{" "}
-            <span className="font-mono">{state.health.database.path}</span>
-          </span>
+          <dl className="flex flex-wrap gap-x-6 gap-y-1 border-t border-rule pt-3 text-[13px] text-pencil">
+            <div className="flex gap-1.5">
+              <dt>Server</dt>
+              <dd className="text-ink">{state.health.status}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt>sqlite-vec</dt>
+              <dd className="text-ink">{state.health.database.sqlite_vec}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt>FTS5</dt>
+              <dd className="text-ink">{state.health.database.fts5 ? "available" : "missing"}</dd>
+            </div>
+            <div className="flex min-w-0 gap-1.5">
+              <dt>Knowledge base</dt>
+              <dd className="truncate text-ink">{state.health.database.path}</dd>
+            </div>
+          </dl>
         )}
       </footer>
-    </main>
+    </div>
   );
 }

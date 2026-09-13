@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { api, errorText, type Video } from "./api";
 import { useLiveList, type Reaction, type ServerEvent } from "./events";
-import { stageLabels } from "./ui";
+import { stageFill, stageLabels } from "./ui";
 
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return "";
@@ -30,27 +30,28 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
   };
   const { items: videos, error } = useLiveList(load, react);
 
-  if (error !== null) return <p className="mt-2 text-sm text-red-800">Could not load Videos: {errorText(error)}</p>;
-  if (videos === null) return <p className="mt-2 text-sm text-stone-500">Loading Videos…</p>;
-  if (videos.length === 0) return <p className="mt-2 text-sm text-stone-500">No Videos yet. Sync this Channel to discover them.</p>;
+  const note = "mt-3 border-t border-rule pt-3 text-sm";
+  if (error !== null) return <p className={`${note} text-oxide`}>Could not load Videos: {errorText(error)}</p>;
+  if (videos === null) return <p className={`${note} text-pencil`}>Loading Videos…</p>;
+  if (videos.length === 0) return <p className={`${note} text-pencil`}>No Videos yet. Sync this Channel to find them.</p>;
 
   return (
-    <div className="mt-2 max-h-96 overflow-y-auto rounded-md border border-stone-100">
-      <table className="w-full text-left text-xs">
-        <thead className="sticky top-0 bg-stone-50 text-stone-500">
+    <div className="mt-3 max-h-[28rem] overflow-y-auto border-t border-rule">
+      <table className="w-full text-left text-[13px]">
+        <thead className="sticky top-0 bg-panel text-pencil">
           <tr>
-            <th className="px-2 py-1 font-medium">Video</th>
-            <th className="px-2 py-1 font-medium">Published</th>
-            <th className="px-2 py-1 text-right font-medium">Length</th>
-            <th className="px-2 py-1 font-medium">Stage</th>
+            <th className="py-1.5 pr-3 font-medium">Video</th>
+            <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Published</th>
+            <th className="py-1.5 pr-3 text-right font-medium">Length</th>
+            <th className="py-1.5 font-medium">Stage</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-stone-100">
+        <tbody>
           {videos.map((video) => (
-            <tr key={video.id} className="align-top">
-              <td className="px-2 py-1">
+            <tr key={video.id} className="border-t border-rule/60 align-top">
+              <td className="py-1.5 pr-3">
                 <a
-                  className="hover:underline"
+                  className="text-ink decoration-machine/50 underline-offset-2 hover:underline"
                   href={`https://www.youtube.com/watch?v=${video.youtube_video_id}`}
                   target="_blank"
                   rel="noreferrer"
@@ -58,14 +59,19 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
                   {video.title}
                 </a>
               </td>
-              <td className="whitespace-nowrap px-2 py-1 text-stone-500">{video.published_on ?? ""}</td>
-              <td className="px-2 py-1 text-right tabular-nums text-stone-500">{formatDuration(video.duration_seconds)}</td>
-              <td className="px-2 py-1">
-                <span className={video.stage === "failed" ? "text-red-700" : video.stage === "excluded" ? "text-stone-400" : ""}>
-                  {stageLabels[video.stage]}
+              <td className="py-1.5 pr-3 whitespace-nowrap text-pencil tabular-nums">{video.published_on ?? ""}</td>
+              <td className="py-1.5 pr-3 text-right whitespace-nowrap text-pencil tabular-nums">
+                {formatDuration(video.duration_seconds)}
+              </td>
+              <td className="min-w-40 py-1.5">
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden className={`size-2.5 shrink-0 rounded-[1px] ${stageFill[video.stage]}`} />
+                  <span className={video.stage === "failed" ? "text-oxide" : video.stage === "excluded" ? "text-pencil" : ""}>
+                    {stageLabels[video.stage]}
+                  </span>
                 </span>
                 {video.reason && (
-                  <span className="block text-stone-500">
+                  <span className="mt-0.5 block text-pencil">
                     {video.reason}
                     {video.stage === "failed" && video.permanent_failure === false && " (retried on the next Sync)"}
                   </span>

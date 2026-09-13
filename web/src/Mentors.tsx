@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorText, type ChannelProposal, type Mentor } from "./api";
-import { buttonClass, inputClass, quietButtonClass, useChanges, type Act } from "./ui";
+import { api, errorText, type Channel, type ChannelProposal, type Mentor } from "./api";
+import {
+  alertClass,
+  buttonClass,
+  dangerButtonClass,
+  hintClass,
+  inputClass,
+  outlineButtonClass,
+  quietButtonClass,
+  sectionHeadingClass,
+  useChanges,
+  type Act,
+} from "./ui";
 import { ChannelFiltersForm, filtersSummary } from "./ChannelFilters";
 import { ChannelVideos } from "./Videos";
 
@@ -26,21 +37,25 @@ export function Mentors({ onLoaded }: { onLoaded: (mentors: Mentor[]) => void })
   }, [refresh]);
 
   return (
-    <section className="mt-8">
-      <h2 className="text-lg font-semibold">Mentors</h2>
+    <section aria-labelledby="mentors-heading">
+      <h2 id="mentors-heading" className={sectionHeadingClass}>
+        Mentors
+      </h2>
       {error && (
-        <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p role="alert" className={alertClass}>
           {error}
         </p>
       )}
-      <fieldset disabled={busy}>
+      <fieldset disabled={busy} className="min-w-0">
         <AddMentor act={act} onError={setError} />
         {mentors === null ? (
-          <p className="mt-4 text-sm text-stone-500">Loading…</p>
+          <p className={`mt-5 ${hintClass}`}>Loading…</p>
         ) : mentors.length === 0 ? (
-          <p className="mt-4 text-sm text-stone-500">No Mentors yet. Paste a YouTube Channel above.</p>
+          <p className={`mt-5 ${hintClass}`}>
+            No Mentors yet. Paste a creator's YouTube channel above to add the first one.
+          </p>
         ) : (
-          <ul className="mt-4 space-y-4">
+          <ul className="mt-5 space-y-4">
             {mentors.map((mentor) => (
               <MentorCard key={mentor.id} mentor={mentor} act={act} />
             ))}
@@ -83,26 +98,34 @@ function AddMentor({ act, onError }: { act: Act; onError: (message: string | nul
 
   if (proposal) {
     return (
-      <form onSubmit={create} className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-sm text-stone-600">
-          Channel <strong>{proposal.name}</strong> → Mentor name
-        </span>
-        <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} aria-label="Mentor name" />
-        <button className={buttonClass} type="submit" disabled={!name.trim()}>
-          Add Mentor
-        </button>
-        <button className={quietButtonClass} type="button" onClick={() => setProposal(null)}>
-          Cancel
-        </button>
+      <form onSubmit={create} className="mt-4 rounded-md border border-machine/40 bg-panel p-4">
+        <p className="text-[15px]">
+          Found the channel <strong className="font-semibold">{proposal.name}</strong>. Name the Mentor who teaches
+          on it:
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            className={`${inputClass} min-w-48 flex-1`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-label="Mentor name"
+          />
+          <button className={buttonClass} type="submit" disabled={!name.trim()}>
+            Add Mentor
+          </button>
+          <button className={quietButtonClass} type="button" onClick={() => setProposal(null)}>
+            Cancel
+          </button>
+        </div>
       </form>
     );
   }
 
   return (
-    <form onSubmit={lookUp} className="mt-3 flex gap-2">
+    <form onSubmit={lookUp} className="mt-4 flex flex-wrap gap-2">
       <input
-        className={`${inputClass} flex-1`}
-        placeholder="YouTube Channel URL or @handle"
+        className={`${inputClass} min-w-56 flex-1`}
+        placeholder="YouTube channel URL or @handle"
         value={channel}
         onChange={(e) => setChannel(e.target.value)}
         aria-label="YouTube Channel URL or handle"
@@ -116,9 +139,7 @@ function AddMentor({ act, onError }: { act: Act; onError: (message: string | nul
 
 function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [attaching, setAttaching] = useState("");
-  const [showingVideos, setShowingVideos] = useState<number | null>(null);
-  const [editingFilters, setEditingFilters] = useState<number | null>(null);
+  const [attaching, setAttaching] = useState<string | null>(null);
 
   async function rename(event: FormEvent) {
     event.preventDefault();
@@ -127,16 +148,16 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
 
   async function attach(event: FormEvent) {
     event.preventDefault();
-    if (await act(() => api.attachChannel(mentor.id, attaching))) setAttaching("");
+    if (attaching !== null && (await act(() => api.attachChannel(mentor.id, attaching)))) setAttaching(null);
   }
 
   return (
-    <li className="rounded-lg border border-stone-200 p-4">
-      <div className="flex items-center justify-between gap-2">
+    <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {renaming === null ? (
-          <h3 className="font-medium">{mentor.name}</h3>
+          <h3 className="font-condensed text-[1.375rem] leading-tight font-semibold">{mentor.name}</h3>
         ) : (
-          <form onSubmit={rename} className="flex gap-2">
+          <form onSubmit={rename} className="flex flex-wrap gap-2">
             <input
               className={inputClass}
               value={renaming}
@@ -148,12 +169,19 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
             </button>
           </form>
         )}
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
+          <button
+            className={quietButtonClass}
+            aria-expanded={attaching !== null}
+            onClick={() => setAttaching(attaching === null ? "" : null)}
+          >
+            Attach Channel
+          </button>
           <button className={quietButtonClass} onClick={() => setRenaming(renaming === null ? mentor.name : null)}>
             {renaming === null ? "Rename" : "Cancel"}
           </button>
           <button
-            className={`${quietButtonClass} text-red-700 hover:text-red-900`}
+            className={dangerButtonClass}
             onClick={() => {
               if (confirm(`Delete ${mentor.name}, everything ingested from their Channels, and their Mentor Group memberships?`)) {
                 void act(() => api.deleteMentor(mentor.id));
@@ -164,79 +192,93 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
           </button>
         </div>
       </div>
-      <ul className="mt-3 divide-y divide-stone-100">
+      <ul className="mt-3">
         {mentor.channels.map((channel) => (
-          <li key={channel.id} className="py-2 text-sm">
-            <div className="flex items-center justify-between gap-2">
-              <span className={channel.indexed ? "" : "text-stone-400"}>
-                {channel.name} <span className="font-mono text-xs text-stone-400">{channel.youtube_channel_id}</span>
-                {filtersSummary(channel.filters) && (
-                  <span className="block text-xs text-stone-500">Filters: {filtersSummary(channel.filters)}</span>
-                )}
-              </span>
-              <span className="flex items-center gap-3 whitespace-nowrap">
-                <button className={quietButtonClass} onClick={() => void act(() => api.startSync(channel.id))}>
-                  Sync
-                </button>
-                <button className={quietButtonClass} onClick={() => void act(() => api.retryFailed(channel.id))}>
-                  Retry failed
-                </button>
-                <button
-                  className={quietButtonClass}
-                  aria-expanded={editingFilters === channel.id}
-                  onClick={() => setEditingFilters(editingFilters === channel.id ? null : channel.id)}
-                >
-                  Filters
-                </button>
-                <button
-                  className={quietButtonClass}
-                  aria-expanded={showingVideos === channel.id}
-                  onClick={() => setShowingVideos(showingVideos === channel.id ? null : channel.id)}
-                >
-                  Videos
-                </button>
-                <label className="flex items-center gap-1.5 text-stone-600">
-                  <input
-                    type="checkbox"
-                    checked={channel.indexed}
-                    onChange={(e) => void act(() => api.setChannelIndexed(channel.id, e.target.checked))}
-                  />
-                  Indexed
-                </label>
-                {/* The server also refuses to detach a Mentor's last Channel. */}
-                {mentor.channels.length > 1 && (
-                  <button
-                    className={quietButtonClass}
-                    onClick={() => {
-                      if (confirm(`Detach ${channel.name} and remove everything ingested from it?`)) {
-                        void act(() => api.detachChannel(channel.id));
-                      }
-                    }}
-                  >
-                    Detach
-                  </button>
-                )}
-              </span>
-            </div>
-            {editingFilters === channel.id && (
-              <ChannelFiltersForm channel={channel} act={act} onDone={() => setEditingFilters(null)} />
-            )}
-            {showingVideos === channel.id && <ChannelVideos channelId={channel.id} />}
-          </li>
+          <ChannelRow key={channel.id} channel={channel} canDetach={mentor.channels.length > 1} act={act} />
         ))}
       </ul>
-      <form onSubmit={attach} className="mt-2 flex gap-2">
-        <input
-          className={`${inputClass} flex-1`}
-          placeholder="Attach another Channel URL or @handle"
-          value={attaching}
-          onChange={(e) => setAttaching(e.target.value)}
-          aria-label={`Attach a Channel to ${mentor.name}`}
-        />
-        <button className={buttonClass} type="submit" disabled={!attaching.trim()}>
-          Attach
+      {attaching !== null && (
+        <form onSubmit={attach} className="mt-3 flex flex-wrap gap-2 border-t border-rule pt-3">
+          <input
+            className={`${inputClass} min-w-48 flex-1`}
+            placeholder="Another YouTube channel URL or @handle"
+            value={attaching}
+            onChange={(e) => setAttaching(e.target.value)}
+            aria-label={`Attach a Channel to ${mentor.name}`}
+            autoFocus
+          />
+          <button className={buttonClass} type="submit" disabled={!attaching.trim()}>
+            Attach
+          </button>
+          <button className={quietButtonClass} type="button" onClick={() => setAttaching(null)}>
+            Cancel
+          </button>
+        </form>
+      )}
+    </li>
+  );
+}
+
+function ChannelRow({ channel, canDetach, act }: { channel: Channel; canDetach: boolean; act: Act }) {
+  const [panel, setPanel] = useState<"filters" | "videos" | null>(null);
+  const filters = filtersSummary(channel.filters);
+  const toggle = (next: "filters" | "videos") => setPanel(panel === next ? null : next);
+
+  return (
+    <li className="border-t border-rule py-3 first:border-t-0 first:pt-1 last:pb-0">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <p className={`font-medium ${channel.indexed ? "" : "text-pencil"}`}>
+            <a
+              className="decoration-machine/50 underline-offset-2 hover:underline"
+              href={`https://www.youtube.com/channel/${channel.youtube_channel_id}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {channel.name}
+            </a>
+            {!channel.indexed && <span className="ml-2 text-[13px] font-normal">Not indexed, so left out of search</span>}
+          </p>
+          {filters && <p className="text-[13px] text-pencil">Filtered to {filters}</p>}
+        </div>
+        <button className={outlineButtonClass} onClick={() => void act(() => api.startSync(channel.id))}>
+          Sync
         </button>
-      </form>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+        <button className={quietButtonClass} onClick={() => void act(() => api.retryFailed(channel.id))}>
+          Retry failed
+        </button>
+        <button className={quietButtonClass} aria-expanded={panel === "filters"} onClick={() => toggle("filters")}>
+          Filters
+        </button>
+        <button className={quietButtonClass} aria-expanded={panel === "videos"} onClick={() => toggle("videos")}>
+          Videos
+        </button>
+        <label className="ml-1 flex items-center gap-1.5 px-1 text-[15px] text-pencil">
+          <input
+            type="checkbox"
+            checked={channel.indexed}
+            onChange={(e) => void act(() => api.setChannelIndexed(channel.id, e.target.checked))}
+          />
+          Indexed
+        </label>
+        {/* The server also refuses to detach a Mentor's last Channel. */}
+        {canDetach && (
+          <button
+            className={`${dangerButtonClass} ml-auto`}
+            onClick={() => {
+              if (confirm(`Detach ${channel.name} and remove everything ingested from it?`)) {
+                void act(() => api.detachChannel(channel.id));
+              }
+            }}
+          >
+            Detach
+          </button>
+        )}
+      </div>
+      {panel === "filters" && <ChannelFiltersForm channel={channel} act={act} onDone={() => setPanel(null)} />}
+      {panel === "videos" && <ChannelVideos channelId={channel.id} />}
     </li>
   );
 }

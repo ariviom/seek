@@ -1,18 +1,18 @@
 import { useState, type FormEvent } from "react";
 import { api, type Channel, type ChannelFilters } from "./api";
-import { buttonClass, inputClass, quietButtonClass, type Act } from "./ui";
+import { buttonClass, hintClass, inputClass, quietButtonClass, type Act } from "./ui";
 
 const noFilters: ChannelFilters = { published_after: null, published_before: null, playlist_id: null, most_recent: null };
 
 export function filtersSummary(filters: ChannelFilters): string {
   return [
-    filters.published_after && `from ${filters.published_after}`,
-    filters.published_before && `until ${filters.published_before}`,
+    filters.published_after && `published from ${filters.published_after}`,
+    filters.published_before && `published until ${filters.published_before}`,
     filters.playlist_id && `playlist ${filters.playlist_id}`,
-    filters.most_recent !== null && `${filters.most_recent} most recent`,
+    filters.most_recent !== null && `the ${filters.most_recent} most recent`,
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(", ");
 }
 
 export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel; act: Act; onDone: () => void }) {
@@ -35,10 +35,11 @@ export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel;
     });
   }
 
-  const label = "flex flex-col gap-1 text-xs text-stone-600";
+  const label = "flex flex-col gap-1 text-sm text-pencil";
   return (
-    <form onSubmit={submit} className="mt-2 rounded-md bg-stone-50 p-3">
-      <div className="grid grid-cols-2 gap-3">
+    <form onSubmit={submit} className="mt-3 border-t border-rule pt-3">
+      <p className={hintClass}>Only Videos matching every filter are ingested. Leave a field empty to skip it.</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className={label}>
           Published on or after
           <input className={inputClass} type="date" value={after} onChange={(e) => setAfter(e.target.value)} />
@@ -48,7 +49,7 @@ export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel;
           <input className={inputClass} type="date" value={before} onChange={(e) => setBefore(e.target.value)} />
         </label>
         <label className={label}>
-          Playlist id
+          In playlist (id)
           <input
             className={inputClass}
             placeholder="PL…"
@@ -69,17 +70,17 @@ export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel;
           />
         </label>
       </div>
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <button className={buttonClass} type="submit">
           Save filters
         </button>
         <button className={quietButtonClass} type="button" onClick={() => void save(noFilters)}>
-          Clear
+          Clear filters
         </button>
         <button className={quietButtonClass} type="button" onClick={onDone}>
           Cancel
         </button>
-        <span className="text-xs text-stone-500">Applied by the next Sync.</span>
+        <span className="text-[13px] text-pencil">The next Sync applies them.</span>
       </div>
     </form>
   );

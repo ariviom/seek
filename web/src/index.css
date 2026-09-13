@@ -1,1 +1,44 @@
 @import "tailwindcss";
+
+/* Colours from the shop: machinery enamel, a tape measure's blade, oxidised iron. */
+@theme {
+  --font-sans: "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --font-condensed: "Barlow Condensed", "Barlow", ui-sans-serif, sans-serif;
+
+  --color-ink: #262b2c;
+  --color-pencil: #62696a;
+  --color-floor: #e4e7e1;
+  --color-panel: #f4f6f2;
+  --color-rule: #cdd2cb;
+  --color-machine: #3f6b5c;
+  --color-machine-deep: #2f5246;
+  --color-tape: #e3a516;
+  --color-oxide: #a13d2d;
+}
+
+/* A ruler's graduations: a short tick every tenth, a longer one at the half. */
+@utility rule-ticks {
+  background:
+    linear-gradient(to right, transparent calc(50% - 0.5px), rgb(38 43 44 / 0.45) 0 calc(50% + 0.5px), transparent 0)
+      bottom / 100% 75% no-repeat,
+    repeating-linear-gradient(to right, transparent 0 calc(10% - 1px), rgb(38 43 44 / 0.3) 0 10%) bottom / 100% 45%
+      no-repeat;
+}
+
+@layer base {
+  html {
+    background: var(--color-floor);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-machine-deep);
+    outline-offset: 2px;
+  }
+
+  input[type="checkbox"] {
+    accent-color: var(--color-machine);
+  }
+}
