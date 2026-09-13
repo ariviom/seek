@@ -32,7 +32,7 @@ type Json = dict[str, Any]
 
 
 class Gate:
-    """Holds a fake fetch on its worker thread until released."""
+    """Holds a fake (a fetch or a model load) on its worker thread until released."""
 
     def __init__(self) -> None:
         self.entered = threading.Event()

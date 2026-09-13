@@ -156,23 +156,28 @@ async def test_newer_videos_win_near_ties_gently_by_default_and_strongly_when_as
 ) -> None:
     # Search measures age from the UTC date.
     today = datetime.now(UTC).date()
+    words = [f"term{n}" for n in range(20)]
+
+    def saying(count: int) -> list[Cue]:
+        return said(" ".join(words[:count]))
+
+    # The fake reranker's logit grows with the share of query words present: 20, 19, 15, and 10 of 20.
     fake_channel(transcripts, "UC-wright").videos += [
-        # The fake reranker scores the share of query words present: 4 of 4, 3 of 4, and 1 of 4.
-        fake_video(
-            "v-old-best", "Old", published_on=today - timedelta(days=730), cues=said("sharpen chisel bevel honing")
-        ),
-        fake_video("v-new-close", "Close", published_on=today, cues=said("sharpen chisel bevel")),
-        fake_video("v-new-weak", "Weak", published_on=today, cues=said("sharpen")),
+        fake_video("v-old-best", "Old", published_on=today - timedelta(days=5 * 365), cues=saying(20)),
+        fake_video("v-new-close", "Close", published_on=today, cues=saying(19)),
+        fake_video("v-new-fair", "Fair", published_on=today, cues=saying(15)),
+        fake_video("v-new-weak", "Weak", published_on=today, cues=saying(10)),
     ]
     await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
 
     async def order(**options: object) -> list[str]:
-        return [r["youtube_video_id"] for r in await search(client, "sharpen chisel bevel honing", **options)]
+        return [r["youtube_video_id"] for r in await search(client, " ".join(words), **options)]
 
-    assert await order(prefer_recent="off") == ["v-old-best", "v-new-close", "v-new-weak"]
-    # Two years older loses the near-tie, but still beats a clearly worse match.
-    assert await order() == await order(prefer_recent="gentle") == ["v-new-close", "v-old-best", "v-new-weak"]
-    assert await order(prefer_recent="strong") == ["v-new-close", "v-new-weak", "v-old-best"]
+    assert await order(prefer_recent="off") == ["v-old-best", "v-new-close", "v-new-fair", "v-new-weak"]
+    # Five years older loses only the near-tie.
+    assert await order() == await order(prefer_recent="gentle") == ["v-new-close", "v-old-best", "v-new-fair", "v-new-weak"]
+    # Strongly it loses to a fair match too, but never sinks below a clearly worse one.
+    assert await order(prefer_recent="strong") == ["v-new-close", "v-new-fair", "v-old-best", "v-new-weak"]
 
 
 async def test_exact_jargon_is_found_lexically_beyond_the_nearest_vectors(

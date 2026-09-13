@@ -15,6 +15,7 @@ def test_defaults_serve_on_7337_with_data_in_xdg_data_home(tmp_path: Path) -> No
 
     assert config == Config(data_dir=Path("/data/mentor"), port=7337)
     assert (config.embedding_model, config.embedding_dimension) == ("Qwen/Qwen3-Embedding-0.6B", 1024)
+    assert config.reranker_model == "mixedbread-ai/mxbai-rerank-base-v2"
 
 
 def test_config_file_sets_values_and_env_overrides_them(tmp_path: Path) -> None:
@@ -30,6 +31,7 @@ def test_config_file_sets_values_and_env_overrides_them(tmp_path: Path) -> None:
             "MENTOR_DATA_DIR": "/from/env",
             "MENTOR_MIN_DURATION_SECONDS": "60",
             "MENTOR_EMBEDDING_DIMENSION": "512",
+            "MENTOR_RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",
         }
     )
 
@@ -39,6 +41,7 @@ def test_config_file_sets_values_and_env_overrides_them(tmp_path: Path) -> None:
         min_duration_seconds=60,
         embedding_model="from/file",
         embedding_dimension=512,
+        reranker_model="BAAI/bge-reranker-v2-m3",
     )
 
 
@@ -103,14 +106,42 @@ def test_invalid_youtube_settings_are_rejected(tmp_path: Path, file_text: str, e
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
 
 
-def test_search_recency_half_lives_are_configurable(tmp_path: Path) -> None:
-    write_config(tmp_path, "gentle_recency_half_life_days = 1825\n")
+def test_search_scoring_and_recency_are_configurable(tmp_path: Path) -> None:
+    write_config(tmp_path, "gentle_recency_half_life_days = 1825\nreranker_temperature = 5\n")
 
     defaults = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
-    config = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_STRONG_RECENCY_HALF_LIFE_DAYS": "365"})
+    config = load_config(
+        {
+            "XDG_CONFIG_HOME": str(tmp_path),
+            "MENTOR_STRONG_RECENCY_HALF_LIFE_DAYS": "365",
+            "MENTOR_GENTLE_RECENCY_MAX_PENALTY_PERCENT": "0",
+            "MENTOR_STRONG_RECENCY_MAX_PENALTY_PERCENT": "100",
+        }
+    )
 
-    assert (defaults.gentle_recency_half_life_days, defaults.strong_recency_half_life_days) == (3650, 1095)
-    assert (config.gentle_recency_half_life_days, config.strong_recency_half_life_days) == (1825, 365)
-    for invalid in ({"MENTOR_GENTLE_RECENCY_HALF_LIFE_DAYS": "0"}, {"MENTOR_STRONG_RECENCY_HALF_LIFE_DAYS": "soon"}):
-        with pytest.raises(ConfigError):
-            load_config({"XDG_CONFIG_HOME": str(tmp_path), **invalid})
+    def settings(c: Config) -> tuple[int, int, int, int, int]:
+        return (
+            c.reranker_temperature,
+            c.gentle_recency_half_life_days,
+            c.gentle_recency_max_penalty_percent,
+            c.strong_recency_half_life_days,
+            c.strong_recency_max_penalty_percent,
+        )
+
+    assert settings(defaults) == (3, 3650, 15, 1095, 50)
+    assert settings(config) == (5, 1825, 0, 365, 100)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"MENTOR_GENTLE_RECENCY_HALF_LIFE_DAYS": "0"},
+        {"MENTOR_STRONG_RECENCY_HALF_LIFE_DAYS": "soon"},
+        {"MENTOR_RERANKER_TEMPERATURE": "0"},
+        {"MENTOR_GENTLE_RECENCY_MAX_PENALTY_PERCENT": "101"},
+        {"MENTOR_STRONG_RECENCY_MAX_PENALTY_PERCENT": "-1"},
+    ],
+)
+def test_invalid_search_settings_are_rejected(tmp_path: Path, env: dict[str, str]) -> None:
+    with pytest.raises(ConfigError):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})

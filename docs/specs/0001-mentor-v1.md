@@ -188,3 +188,8 @@ A `reviewer` critique found these gaps. Where an amendment conflicts with text a
 - **Packaging**: the web bundle is built during the Python package build so `uv tool install` from the repo includes it. Vite uses a relative base so a root path prefix works.
 - **Scheduling**: `mentor install-service --timer` installs a systemd user timer that runs `mentor sync --all`. `install-service` records the Claude CLI path.
 - **Expected volume** is on the order of 100k Segments; brute-force vec0 scan is acceptable at that scale.
+
+## Implementation amendments
+
+- **Recency (ticket 10, 2026-09-13)**, replacing the plain half-life decay above: on real reranker logits the sigmoid saturated and age outranked relevance. A result scores `sigmoid(logit / temperature) × (1 − max_penalty × (1 − 0.5^(age / half_life)))`: the temperature (default 3) keeps relevant passages apart, and the age penalty is capped (gentle 15% with a 10-year half-life, strong 50% with 3 years), so old advice loses near-ties but never sinks below a clearly worse match. All are configuration.
+- **Models (ticket 10)**: there is no automatic fallback model; a fallback is used by configuring its name. Syncs wait while the embedding model loads rather than failing.

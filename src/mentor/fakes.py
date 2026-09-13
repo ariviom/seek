@@ -11,6 +11,7 @@ from mentor.ports import (
     ChannelNotFound,
     ChatEvent,
     ChatRequest,
+    ModelStatus,
     ModelUnavailable,
     PlaylistNotFound,
     SourceUnavailable,
@@ -93,19 +94,48 @@ class FakeTranscriptSource:
 
 
 @dataclass
-class FakeEmbedder:
+class _FakeModel:
+    """Loads instantly unless told otherwise. Like the real models, calls raise ModelUnavailable until loaded."""
+
+    model_name: str = "fake-model"
+    # When set, every call raises ModelUnavailable with this message, as if the GPU ran out of memory.
+    unavailable: str | None = None
+    # Called on the loading thread once loading has started, e.g. to hold loading mid-way.
+    before_load: Callable[[], None] | None = None
+    # What status() reports while loading, e.g. download progress.
+    status_while_loading: ModelStatus | None = None
+    # When set, loading fails with this message.
+    load_error: str | None = None
+    _status: ModelStatus | None = field(default=None, init=False, repr=False)
+
+    def load(self) -> None:
+        self._status = self.status_while_loading or ModelStatus(self.model_name, "loading")
+        if self.before_load is not None:
+            self.before_load()
+        if self.load_error is None:
+            self._status = ModelStatus(self.model_name, "ready")
+        else:
+            self._status = ModelStatus(self.model_name, "failed", error=self.load_error)
+
+    def status(self) -> ModelStatus:
+        return self._status or ModelStatus(self.model_name, "waiting")
+
+    def _check(self) -> None:
+        status = self.status()
+        if status.state != "ready":
+            raise ModelUnavailable(status.error or f"The model {self.model_name} is still loading; try again shortly")
+        if self.unavailable is not None:
+            raise ModelUnavailable(self.unavailable)
+
+
+@dataclass
+class FakeEmbedder(_FakeModel):
     """Bag of hashed words, L2-normalised: texts sharing words have similar vectors."""
 
     dimension: int = 64
     model_name: str = "fake-embedder"
-    # When set, every call raises ModelUnavailable with this message.
-    unavailable: str | None = None
     # Every passage embedded, in order.
     passages: list[str] = field(default_factory=list)
-
-    def _check(self) -> None:
-        if self.unavailable is not None:
-            raise ModelUnavailable(self.unavailable)
 
     def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
@@ -126,22 +156,20 @@ class FakeEmbedder:
 
 
 @dataclass
-class FakeReranker:
-    """Fraction of distinct query words present in the passage."""
+class FakeReranker(_FakeModel):
+    """Logit-like scores from -5 to 5: the share of distinct query words present in the passage, scaled."""
 
-    # When set, every call raises ModelUnavailable with this message.
-    unavailable: str | None = None
+    model_name: str = "fake-reranker"
     # Every call as (query, passages), in order.
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
 
     def score(self, query: str, passages: Sequence[str]) -> list[float]:
-        if self.unavailable is not None:
-            raise ModelUnavailable(self.unavailable)
+        self._check()
         self.calls.append((query, list(passages)))
         wanted = set(_tokens(query))
         if not wanted:
-            return [0.0 for _ in passages]
-        return [len(wanted & set(_tokens(p))) / len(wanted) for p in passages]
+            return [-5.0 for _ in passages]
+        return [10 * len(wanted & set(_tokens(p))) / len(wanted) - 5 for p in passages]
 
 
 @dataclass

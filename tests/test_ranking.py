@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from mentor.ranking import fuse, matched_seconds, recency_score
+from mentor.ranking import Recency, fuse, matched_seconds, recency_score
 from mentor.segmentation import SegmentCue
 
 
@@ -29,21 +29,37 @@ def test_fusion_of_nothing_is_empty() -> None:
 TODAY = date(2026, 9, 13)
 
 
-def test_recency_off_is_the_sigmoid_of_the_reranker_score() -> None:
-    assert recency_score(0.0, TODAY - timedelta(days=5000), TODAY, half_life_days=None) == 0.5
-    assert recency_score(2.0, TODAY, TODAY, half_life_days=None) == pytest.approx(0.8808, abs=1e-4)
-    assert recency_score(-1000.0, TODAY, TODAY, half_life_days=None) == pytest.approx(0.0)
-    assert recency_score(1000.0, TODAY, TODAY, half_life_days=None) == pytest.approx(1.0)
+YEARLY_HALF = Recency(half_life_days=365, max_penalty=0.5)
 
 
-def test_recency_halves_the_score_every_half_life_of_age() -> None:
-    assert recency_score(0.0, TODAY, TODAY, half_life_days=365) == 0.5
-    assert recency_score(0.0, TODAY - timedelta(days=365), TODAY, half_life_days=365) == pytest.approx(0.25)
-    assert recency_score(0.0, TODAY - timedelta(days=730), TODAY, half_life_days=365) == pytest.approx(0.125)
+def test_recency_off_is_the_sigmoid_of_the_reranker_logit_over_the_temperature() -> None:
+    assert recency_score(0.0, TODAY - timedelta(days=5000), TODAY, temperature=3, recency=None) == 0.5
+    assert recency_score(6.0, TODAY, TODAY, temperature=3, recency=None) == pytest.approx(0.8808, abs=1e-4)
+    assert recency_score(2.0, TODAY, TODAY, temperature=1, recency=None) == pytest.approx(0.8808, abs=1e-4)
+    assert recency_score(-3000.0, TODAY, TODAY, temperature=3, recency=None) == pytest.approx(0.0)
+    assert recency_score(3000.0, TODAY, TODAY, temperature=3, recency=None) == pytest.approx(1.0)
+
+
+def test_age_takes_away_half_the_max_penalty_every_half_life_up_to_the_max() -> None:
+    def at(days: int) -> float:
+        return recency_score(0.0, TODAY - timedelta(days=days), TODAY, temperature=3, recency=YEARLY_HALF)
+
+    # The penalty closes half its remaining distance to 50% of the score each year: 0, 25%, 37.5%, then near 50%.
+    assert at(0) == 0.5
+    assert at(365) == pytest.approx(0.5 * 0.75)
+    assert at(730) == pytest.approx(0.5 * 0.625)
+    assert at(365 * 40) == pytest.approx(0.25)
+
+
+def test_however_old_a_video_its_score_keeps_at_least_one_minus_the_max_penalty() -> None:
+    ancient = recency_score(9.0, TODAY - timedelta(days=36500), TODAY, temperature=3, recency=YEARLY_HALF)
+    irrelevant_today = recency_score(-2.0, TODAY, TODAY, temperature=3, recency=YEARLY_HALF)
+
+    assert ancient > irrelevant_today
 
 
 def test_a_video_dated_after_today_is_not_boosted() -> None:
-    assert recency_score(0.0, TODAY + timedelta(days=2), TODAY, half_life_days=365) == 0.5
+    assert recency_score(0.0, TODAY + timedelta(days=2), TODAY, temperature=3, recency=YEARLY_HALF) == 0.5
 
 
 # Cues: "Mark the baseline" at offset 0, "then saw to the line" at 18, "and chop out the waste" at 39.

@@ -9,6 +9,10 @@ dependencies = [
     "sqlite-vec>=0.1.9",
     "yt-dlp[default]>=2026.8",
     "snowballstemmer>=3.1.1",
+    "sentence-transformers>=6.0.1",
+    "torch>=2.14",
+    "huggingface-hub>=1.31",
+    "tqdm>=4.70",
 ]
 
 [project.scripts]
@@ -20,6 +24,7 @@ dev = [
     "mypy>=2.3",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
+    "types-tqdm>=4.70.0.20260906",
 ]
 
 [build-system]
@@ -41,9 +46,9 @@ path = "hatch_build.py"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-# Opt-in tests against real services: select them with `-m real_youtube`, which replaces this default.
-addopts = "-m 'not real_youtube'"
-markers = ["real_youtube: fetches from YouTube itself"]
+# Opt-in tests against real services: select them with `-m real_youtube` or `-m real_models`, which replaces this default.
+addopts = "-m 'not real_youtube and not real_models'"
+markers = ["real_youtube: fetches from YouTube itself", "real_models: downloads and runs the embedding and reranking models"]
 
 [tool.mypy]
 strict = true

@@ -1,5 +1,15 @@
+export type ModelStatus = {
+  name: string;
+  state: "waiting" | "downloading" | "loading" | "ready" | "failed";
+  downloaded_bytes: number | null;
+  total_bytes: number | null;
+  error: string | null;
+};
+export type Models = { embedding: ModelStatus; reranker: ModelStatus };
+
 export type Health = {
   status: string;
+  models: Models;
   database: {
     path: string;
     journal_mode: string;

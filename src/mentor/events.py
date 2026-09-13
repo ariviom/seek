@@ -1,15 +1,16 @@
-"""Live changes pushed to the web UI: Sync progress and Video stage changes, from this process only.
+"""Live changes pushed to the web UI: Sync progress, Video stage changes, and model loading, from this process only.
 
 Syncs run in the server process whenever it is up, so its subscribers see every Sync that matters.
 """
 
 import asyncio
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 
 from fastapi.encoders import jsonable_encoder
 
+from mentor.ports import ModelStatus
 from mentor.syncs import Sync
 from mentor.videos import Video
 
@@ -61,3 +62,7 @@ class Events:
     def syncs(self) -> None:
         """Syncs were removed or their names changed; reload them."""
         self._publish({"type": "syncs"})
+
+    def models(self, statuses: Mapping[str, ModelStatus]) -> None:
+        """A model's download or loading progressed; statuses are by role, as Health reports them."""
+        self._publish({"type": "models", "models": statuses})

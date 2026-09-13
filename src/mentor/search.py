@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Literal
@@ -15,7 +15,7 @@ import sqlite_vec
 from mentor.db import Database
 from mentor.errors import NotFound
 from mentor.ports import Embedder, Reranker
-from mentor.ranking import fuse, matched_seconds, recency_score
+from mentor.ranking import Recency, fuse, matched_seconds, recency_score
 from mentor.segmentation import SegmentCue
 
 type PreferRecent = Literal["off", "gentle", "strong"]
@@ -154,17 +154,14 @@ class Search:
         database: Database,
         embedder: Embedder,
         reranker: Reranker,
-        gentle_half_life_days: int,
-        strong_half_life_days: int,
+        temperature: float,
+        recency: Mapping[PreferRecent, Recency | None],
     ) -> None:
         self._database = database
         self._embedder = embedder
         self._reranker = reranker
-        self._half_life_days: dict[PreferRecent, int | None] = {
-            "off": None,
-            "gentle": gentle_half_life_days,
-            "strong": strong_half_life_days,
-        }
+        self._temperature = temperature
+        self._recency = recency
 
     async def search(
         self,
@@ -187,10 +184,10 @@ class Search:
             return []
         reranked = await asyncio.to_thread(self._reranker.score, query, [c.text for c in candidates])
         today = datetime.now(UTC).date()
-        half_life = self._half_life_days[prefer_recent]
+        recency = self._recency[prefer_recent]
         scored = [
-            replace(c, score=recency_score(score, c.published_on, today, half_life))
-            for score, c in zip(reranked, candidates, strict=True)
+            replace(c, score=recency_score(logit, c.published_on, today, self._temperature, recency))
+            for logit, c in zip(reranked, candidates, strict=True)
         ]
         # Stable: equal scores keep the fused order.
         scored.sort(key=lambda result: -result.score)

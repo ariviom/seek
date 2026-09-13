@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+import threading
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,8 +16,18 @@ from mentor.events import Events
 from mentor.events_api import events_router
 from mentor.groups_api import groups_router
 from mentor.mentors_api import mentors_router
-from mentor.ports import ChannelNotFound, Embedder, ModelUnavailable, Reranker, SourceUnavailable, TranscriptSource
-from mentor.search import Search
+from mentor.ports import (
+    ChannelNotFound,
+    Embedder,
+    Model,
+    ModelStatus,
+    ModelUnavailable,
+    Reranker,
+    SourceUnavailable,
+    TranscriptSource,
+)
+from mentor.ranking import Recency
+from mentor.search import PreferRecent, Search
 from mentor.search_api import search_router
 from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
@@ -33,6 +44,45 @@ ERROR_STATUS: dict[type[Exception], int] = {
 }
 
 
+def _statuses(models: Mapping[str, Model]) -> dict[str, ModelStatus]:
+    return {role: model.status() for role, model in models.items()}
+
+
+async def _load_models(
+    models: Mapping[str, Model], events: Events, on_state_change: Callable[[], None], progress_seconds: float
+) -> None:
+    """Loads the models in order, publishing their statuses whenever they change, download progress included."""
+    loop = asyncio.get_running_loop()
+    loaded = asyncio.Event()
+
+    def load_all() -> None:
+        try:
+            for model in models.values():
+                model.load()
+        finally:
+            # The loop is closed if the server stopped first.
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(loaded.set)
+
+    # A daemon thread, so stopping the server doesn't wait for a download to finish (a model already moving onto the
+    # GPU finishes first, since the GPU thread is joined at exit).
+    threading.Thread(target=load_all, name="mentor-models", daemon=True).start()
+    published: dict[str, ModelStatus] = {}
+    while True:
+        # Checked before reading the statuses, so the last pass publishes their final state.
+        finished = loaded.is_set()
+        statuses = _statuses(models)
+        if statuses != published:
+            events.models(statuses)
+            if [s.state for s in statuses.values()] != [s.state for s in published.values()]:
+                on_state_change()
+            published = statuses
+        if finished:
+            return
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(loaded.wait(), progress_seconds)
+
+
 async def _error_response(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=ERROR_STATUS[type(exc)])
 
@@ -45,13 +95,18 @@ def create_app(
     static_dir: Path = PACKAGE_STATIC_DIR,
     sync_poll_seconds: float = 5.0,
     events_keepalive_seconds: float = 15.0,
+    model_progress_seconds: float = 0.5,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
-    search = Search(
-        database, embedder, reranker, config.gentle_recency_half_life_days, config.strong_recency_half_life_days
-    )
+    recency: dict[PreferRecent, Recency | None] = {
+        "off": None,
+        "gentle": Recency(config.gentle_recency_half_life_days, config.gentle_recency_max_penalty_percent / 100),
+        "strong": Recency(config.strong_recency_half_life_days, config.strong_recency_max_penalty_percent / 100),
+    }
+    search = Search(database, embedder, reranker, config.reranker_temperature, recency)
     worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds, events)
+    models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -59,13 +114,19 @@ def create_app(
         app.state.database_info = await asyncio.to_thread(
             db.initialize, config.database_path, embedder.model_name, embedder.dimension
         )
-        worker_task = asyncio.create_task(worker.run())
+        # Syncs wait for the embedding model, so the worker is woken as the models' statuses change.
+        tasks = [
+            asyncio.create_task(_load_models(models, events, worker.wake, model_progress_seconds)),
+            asyncio.create_task(worker.run()),
+        ]
         try:
             yield
         finally:
-            worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     app = FastAPI(title="mentor", lifespan=lifespan)
     for exception in ERROR_STATUS:
@@ -73,7 +134,11 @@ def create_app(
 
     @app.get("/api/health")
     async def health() -> dict[str, object]:
-        return {"status": "ok", "database": app.state.database_info}
+        return {
+            "status": "ok",
+            "database": app.state.database_info,
+            "models": _statuses(models),
+        }
 
     app.include_router(mentors_router(database, transcripts, events), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")

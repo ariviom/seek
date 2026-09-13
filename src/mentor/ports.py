@@ -112,8 +112,33 @@ class TranscriptSource(Protocol):
         ...
 
 
-class Embedder(Protocol):
-    """Raises ModelUnavailable when the model can't be used. model_name and dimension are known before loading."""
+type ModelState = Literal["waiting", "downloading", "loading", "ready", "failed"]
+
+
+@dataclass(frozen=True)
+class ModelStatus:
+    name: str
+    state: ModelState
+    # Progress while downloading; the total is None until known.
+    downloaded_bytes: int | None = None
+    total_bytes: int | None = None
+    # Why loading failed, for the user.
+    error: str | None = None
+
+
+class Model(Protocol):
+    def load(self) -> None:
+        """Downloads the model if needed and loads it. Never raises: the outcome shows in status()."""
+        ...
+
+    def status(self) -> ModelStatus: ...
+
+
+class Embedder(Model, Protocol):
+    """Raises ModelUnavailable when the model can't be used, including until it has loaded.
+
+    model_name and dimension are known before loading.
+    """
 
     model_name: str
     dimension: int
@@ -123,8 +148,8 @@ class Embedder(Protocol):
     def embed_query(self, text: str) -> list[float]: ...
 
 
-class Reranker(Protocol):
-    """Raises ModelUnavailable when the model can't be used."""
+class Reranker(Model, Protocol):
+    """Raises ModelUnavailable when the model can't be used, including until it has loaded."""
 
     def score(self, query: str, passages: Sequence[str]) -> list[float]:
         """Raw relevance logits, one per passage; search squashes them with a sigmoid, so don't return probabilities."""

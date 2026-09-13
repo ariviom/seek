@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Sync, Video } from "./api";
+import type { Models, Sync, Video } from "./api";
 
 export type ServerEvent =
   | { type: "ready" }
   | { type: "sync"; sync: Sync }
   | { type: "video"; channel_id: number; video: Video }
   | { type: "videos"; channel_id: number }
-  | { type: "syncs" };
+  | { type: "syncs" }
+  | { type: "models"; models: Models };
 
 type Listener = (event: ServerEvent) => void;
 
@@ -33,7 +34,7 @@ function open() {
   return opened;
 }
 
-function useServerEvents(onEvent: Listener) {
+export function useServerEvents(onEvent: Listener) {
   const handler = useRef(onEvent);
   useEffect(() => {
     handler.current = onEvent;

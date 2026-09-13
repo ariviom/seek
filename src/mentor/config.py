@@ -8,16 +8,24 @@ DEFAULT_PORT = 7337
 DEFAULT_MIN_DURATION_SECONDS = 120
 DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 DEFAULT_EMBEDDING_DIMENSION = 1024
+# Loads natively through sentence-transformers' CrossEncoder; BAAI/bge-reranker-v2-m3 also does, at twice the size.
+DEFAULT_RERANKER_MODEL = "mixedbread-ai/mxbai-rerank-base-v2"
 # The most dimensions a sqlite-vec float vector column accepts.
 MAX_EMBEDDING_DIMENSION = 8192
 # Unauthenticated, YouTube tolerates roughly 300 Videos an hour; a signed-in cookie file allows about three times that.
 DEFAULT_YOUTUBE_DELAY_SECONDS = 10
 DEFAULT_YOUTUBE_RETRIES = 3
 DEFAULT_YOUTUBE_BACKOFF_SECONDS = 30
-# Search halves a Video's score for every half-life of its age. Gentle breaks near-ties toward newer Videos (a
-# two-year-old Video keeps 87% of its score); strong buries old ones (a two-year-old Video keeps 63%).
+# Search scores a result as sigmoid(reranker logit / temperature). mxbai-rerank-base-v2 gives relevant passages logits
+# of about 5 to 10, which a temperature of 3 keeps apart (0.84 to 0.97) instead of all near 1.
+DEFAULT_RERANKER_TEMPERATURE = 3
+# Age then takes a penalty that closes half its distance to the max penalty every half-life. Gentle breaks near-ties
+# toward newer Videos (a two-year-old Video keeps 98% of its score, a ten-year-old 92.5%, never less than 85%); strong
+# prefers newer Videos plainly (82%, 55%, never less than 50%).
 DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS = 3650
+DEFAULT_GENTLE_RECENCY_MAX_PENALTY_PERCENT = 15
 DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS = 1095
+DEFAULT_STRONG_RECENCY_MAX_PENALTY_PERCENT = 50
 
 
 class ConfigError(Exception):
@@ -33,6 +41,8 @@ class Config:
     # A knowledge base keeps the model it was embedded with; starting with another one is refused.
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_dimension: int = DEFAULT_EMBEDDING_DIMENSION
+    # Models are Hugging Face repository names, downloaded on first use.
+    reranker_model: str = DEFAULT_RERANKER_MODEL
     # The least time between a Sync's YouTube calls: each listing, and each Video with its captions.
     youtube_delay_seconds: int = DEFAULT_YOUTUBE_DELAY_SECONDS
     # Retries after YouTube rate limits a request or can't be reached, waiting youtube_backoff_seconds and doubling.
@@ -40,9 +50,12 @@ class Config:
     youtube_backoff_seconds: int = DEFAULT_YOUTUBE_BACKOFF_SECONDS
     # A Netscape-format cookies.txt exported from a signed-in browser; yt-dlp also writes refreshed cookies back to it.
     youtube_cookie_file: Path | None = None
-    # Half-lives for search's prefer_recent levels "gentle" (the default) and "strong".
+    reranker_temperature: int = DEFAULT_RERANKER_TEMPERATURE
+    # Search's prefer_recent levels "gentle" (the default) and "strong".
     gentle_recency_half_life_days: int = DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS
+    gentle_recency_max_penalty_percent: int = DEFAULT_GENTLE_RECENCY_MAX_PENALTY_PERCENT
     strong_recency_half_life_days: int = DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS
+    strong_recency_max_penalty_percent: int = DEFAULT_STRONG_RECENCY_MAX_PENALTY_PERCENT
 
     @property
     def database_path(self) -> Path:
@@ -112,6 +125,9 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     embedding_dimension = DEFAULT_EMBEDDING_DIMENSION
     if "embedding_dimension" in raw:
         embedding_dimension = _integer("embedding_dimension", *raw["embedding_dimension"], 1, MAX_EMBEDDING_DIMENSION)
+    reranker_model = DEFAULT_RERANKER_MODEL
+    if "reranker_model" in raw:
+        reranker_model = _text("reranker_model", *raw["reranker_model"])
     youtube_delay = DEFAULT_YOUTUBE_DELAY_SECONDS
     if "youtube_delay_seconds" in raw:
         youtube_delay = _integer("youtube_delay_seconds", *raw["youtube_delay_seconds"], 0, 3600)
@@ -124,22 +140,39 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     cookie_file = None
     if "youtube_cookie_file" in raw:
         cookie_file = _absolute_path("youtube_cookie_file", *raw["youtube_cookie_file"])
+    temperature = DEFAULT_RERANKER_TEMPERATURE
+    if "reranker_temperature" in raw:
+        temperature = _integer("reranker_temperature", *raw["reranker_temperature"], 1, 100)
     gentle_half_life = DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS
     if "gentle_recency_half_life_days" in raw:
         gentle_half_life = _integer("gentle_recency_half_life_days", *raw["gentle_recency_half_life_days"], 1, 36500)
+    gentle_penalty = DEFAULT_GENTLE_RECENCY_MAX_PENALTY_PERCENT
+    if "gentle_recency_max_penalty_percent" in raw:
+        gentle_penalty = _integer(
+            "gentle_recency_max_penalty_percent", *raw["gentle_recency_max_penalty_percent"], 0, 100
+        )
     strong_half_life = DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS
     if "strong_recency_half_life_days" in raw:
         strong_half_life = _integer("strong_recency_half_life_days", *raw["strong_recency_half_life_days"], 1, 36500)
+    strong_penalty = DEFAULT_STRONG_RECENCY_MAX_PENALTY_PERCENT
+    if "strong_recency_max_penalty_percent" in raw:
+        strong_penalty = _integer(
+            "strong_recency_max_penalty_percent", *raw["strong_recency_max_penalty_percent"], 0, 100
+        )
     return Config(
         data_dir=data_dir,
         port=port,
         min_duration_seconds=min_duration,
         embedding_model=embedding_model,
         embedding_dimension=embedding_dimension,
+        reranker_model=reranker_model,
         youtube_delay_seconds=youtube_delay,
         youtube_retries=youtube_retries,
         youtube_backoff_seconds=youtube_backoff,
         youtube_cookie_file=cookie_file,
+        reranker_temperature=temperature,
         gentle_recency_half_life_days=gentle_half_life,
+        gentle_recency_max_penalty_percent=gentle_penalty,
         strong_recency_half_life_days=strong_half_life,
+        strong_recency_max_penalty_percent=strong_penalty,
     )

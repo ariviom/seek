@@ -72,7 +72,9 @@ class SyncWorker:
         self._events.syncs()
         heartbeat = asyncio.create_task(self._heartbeat())
         try:
-            while not self._lease_lost:
+            # Queued Syncs wait while the embedding model loads (the app wakes the worker when it's done); if it
+            # failed to load, they fail with its reason.
+            while not self._lease_lost and self._embedder.status().state in ("ready", "failed"):
                 claimed = await self._database.run(lambda conn: syncs.claim_next(conn, self._holder))
                 if claimed is None:
                     break
@@ -108,6 +110,9 @@ class SyncWorker:
             # Shows the Sync running, with any failures a retry cleared when it was claimed.
             if not await self._progress(sync):
                 return
+            if (model := self._embedder.status()).state == "failed":
+                # Not worth any YouTube calls: no Video could be embedded.
+                raise ModelUnavailable(model.error or f"The embedding model {model.name} failed to load")
             if sync.retry_failed:
                 self._events.videos(sync.channel_id)
             playlist_video_ids = None

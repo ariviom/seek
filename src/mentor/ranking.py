@@ -3,6 +3,7 @@
 import math
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import date
 
 import snowballstemmer
@@ -36,13 +37,30 @@ def _sigmoid(x: float) -> float:
     return math.exp(x) / (1 + math.exp(x))
 
 
-def recency_score(reranker_score: float, published_on: date, today: date, half_life_days: float | None) -> float:
-    """The reranker score squashed into 0..1, halved for every half-life of the Video's age; None turns recency off."""
-    score = _sigmoid(reranker_score)
-    if half_life_days is None:
+@dataclass(frozen=True)
+class Recency:
+    """How much newer Videos are preferred. Age takes a penalty that closes half its distance to max_penalty (a
+    fraction of the score) every half-life, so old advice loses near-ties but never sinks below a clearly worse
+    match."""
+
+    half_life_days: int
+    max_penalty: float
+
+
+def recency_score(
+    reranker_logit: float, published_on: date, today: date, temperature: float, recency: Recency | None
+) -> float:
+    """The reranker logit squashed into 0..1, less the Video's age penalty; None turns recency off.
+
+    The temperature divides the logit first: a reranker's logits for relevant passages run high enough that a plain
+    sigmoid would score them all alike.
+    """
+    score = _sigmoid(reranker_logit / temperature)
+    if recency is None:
         return score
     age_days = max((today - published_on).days, 0)
-    return score * math.pow(0.5, age_days / half_life_days)
+    faded = 1 - math.pow(0.5, age_days / recency.half_life_days)
+    return score * (1 - recency.max_penalty * faded)
 
 
 def _terms(stem: Callable[[list[str]], list[str]], text: str) -> set[str]:
