@@ -70,3 +70,34 @@ def test_invalid_config_is_rejected_with_a_config_error(
 
     with pytest.raises(ConfigError):
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
+
+
+def test_youtube_politeness_and_cookie_file_are_configurable(tmp_path: Path) -> None:
+    write_config(tmp_path, 'youtube_delay_seconds = 20\nyoutube_cookie_file = "~/cookies.txt"\n')
+
+    defaults = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
+    config = load_config(
+        {"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_YOUTUBE_RETRIES": "0", "MENTOR_YOUTUBE_BACKOFF_SECONDS": "90"}
+    )
+
+    assert (defaults.youtube_delay_seconds, defaults.youtube_retries, defaults.youtube_backoff_seconds) == (10, 3, 30)
+    assert defaults.youtube_cookie_file is None
+    assert (config.youtube_delay_seconds, config.youtube_retries, config.youtube_backoff_seconds) == (20, 0, 90)
+    assert config.youtube_cookie_file == Path("~/cookies.txt").expanduser()
+
+
+@pytest.mark.parametrize(
+    ("file_text", "env"),
+    [
+        ("youtube_delay_seconds = -1\n", {}),
+        ("", {"MENTOR_YOUTUBE_RETRIES": "many"}),
+        ("youtube_backoff_seconds = 0\n", {}),
+        ("youtube_cookie_file = 'cookies.txt'\n", {}),
+        ("", {"MENTOR_YOUTUBE_COOKIE_FILE": ""}),
+    ],
+)
+def test_invalid_youtube_settings_are_rejected(tmp_path: Path, file_text: str, env: dict[str, str]) -> None:
+    write_config(tmp_path, file_text)
+
+    with pytest.raises(ConfigError):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})

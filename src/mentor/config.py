@@ -10,6 +10,10 @@ DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 DEFAULT_EMBEDDING_DIMENSION = 1024
 # The most dimensions a sqlite-vec float vector column accepts.
 MAX_EMBEDDING_DIMENSION = 8192
+# Unauthenticated, YouTube tolerates roughly 300 Videos an hour; a signed-in cookie file allows about three times that.
+DEFAULT_YOUTUBE_DELAY_SECONDS = 10
+DEFAULT_YOUTUBE_RETRIES = 3
+DEFAULT_YOUTUBE_BACKOFF_SECONDS = 30
 
 
 class ConfigError(Exception):
@@ -25,6 +29,13 @@ class Config:
     # A knowledge base keeps the model it was embedded with; starting with another one is refused.
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_dimension: int = DEFAULT_EMBEDDING_DIMENSION
+    # The least time between YouTube requests a Sync makes.
+    youtube_delay_seconds: int = DEFAULT_YOUTUBE_DELAY_SECONDS
+    # Retries after YouTube rate limits a request or can't be reached, waiting youtube_backoff_seconds and doubling.
+    youtube_retries: int = DEFAULT_YOUTUBE_RETRIES
+    youtube_backoff_seconds: int = DEFAULT_YOUTUBE_BACKOFF_SECONDS
+    # A Netscape-format cookies.txt exported from a signed-in browser; yt-dlp also writes refreshed cookies back to it.
+    youtube_cookie_file: Path | None = None
 
     @property
     def database_path(self) -> Path:
@@ -52,12 +63,12 @@ def _text(key: str, value: object, source: str) -> str:
     return value.strip()
 
 
-def _data_dir(value: object, source: str) -> Path:
+def _absolute_path(key: str, value: object, source: str) -> Path:
     if not isinstance(value, str) or not value:
-        raise ConfigError(f"{source}: data_dir must be a non-empty path")
+        raise ConfigError(f"{source}: {key} must be a non-empty path")
     path = Path(value).expanduser()
     if not path.is_absolute():
-        raise ConfigError(f"{source}: data_dir must be an absolute path")
+        raise ConfigError(f"{source}: {key} must be an absolute path")
     return path
 
 
@@ -83,7 +94,7 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
 
     data_dir = _xdg_dir(env, "XDG_DATA_HOME", ".local/share") / "mentor"
     if "data_dir" in raw:
-        data_dir = _data_dir(*raw["data_dir"])
+        data_dir = _absolute_path("data_dir", *raw["data_dir"])
     port = _integer("port", *raw["port"], 1, 65535) if "port" in raw else DEFAULT_PORT
     min_duration = DEFAULT_MIN_DURATION_SECONDS
     if "min_duration_seconds" in raw:
@@ -94,10 +105,26 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     embedding_dimension = DEFAULT_EMBEDDING_DIMENSION
     if "embedding_dimension" in raw:
         embedding_dimension = _integer("embedding_dimension", *raw["embedding_dimension"], 1, MAX_EMBEDDING_DIMENSION)
+    youtube_delay = DEFAULT_YOUTUBE_DELAY_SECONDS
+    if "youtube_delay_seconds" in raw:
+        youtube_delay = _integer("youtube_delay_seconds", *raw["youtube_delay_seconds"], 0, 3600)
+    youtube_retries = DEFAULT_YOUTUBE_RETRIES
+    if "youtube_retries" in raw:
+        youtube_retries = _integer("youtube_retries", *raw["youtube_retries"], 0, 10)
+    youtube_backoff = DEFAULT_YOUTUBE_BACKOFF_SECONDS
+    if "youtube_backoff_seconds" in raw:
+        youtube_backoff = _integer("youtube_backoff_seconds", *raw["youtube_backoff_seconds"], 1, 3600)
+    cookie_file = None
+    if "youtube_cookie_file" in raw:
+        cookie_file = _absolute_path("youtube_cookie_file", *raw["youtube_cookie_file"])
     return Config(
         data_dir=data_dir,
         port=port,
         min_duration_seconds=min_duration,
         embedding_model=embedding_model,
         embedding_dimension=embedding_dimension,
+        youtube_delay_seconds=youtube_delay,
+        youtube_retries=youtube_retries,
+        youtube_backoff_seconds=youtube_backoff,
+        youtube_cookie_file=cookie_file,
     )

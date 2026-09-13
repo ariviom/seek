@@ -28,7 +28,7 @@ Done note: filters live on `channels` (`published_after`/`published_before` incl
 
 From ticket 06 review (deferred):
 - `tests/test_segments.py` still writes `videos.pipeline_stage` directly. Not switched: no API path re-runs a stage for a Video that still has Segments or vectors (retry resumes after the last completed stage; exclusion deletes Segments first), so that is the only way to reach the replace logic in `segments.record_segments` and `record_embeddings`.
-- `most_recent` counts failed Videos (members-only, non-English) among the N. Needs a product decision: "N most recent" (current) or "N indexable".
+- `most_recent` counts failed Videos (members-only, non-English) among the N. Needs a product decision: "N most recent" (current) or "N indexable". Decided during ticket 08 (2026-09-13): keep "N most recent". The window is then what the Channel shows, it doesn't shift as Videos fail or retries succeed, and a Channel full of members-only Videos can't send a Sync fetching down its whole back catalogue.
 - With undated listings and a date filter, a Sync fetches Videos down the listing until N are in range. Ticket 08 should supply listing dates where yt-dlp can.
 - Databases from before ticket 06 keep Segments for Videos excluded while `done` until their Channel's next Sync. No real data exists yet.
 - Small cleanups not done: `_require_channel` exists in both `syncs.py` and `videos.py`; `FailsOn` (test_sync_resilience) and `BrokenOnGarbledText` (test_segments) are the same fake shape; the 422 for a bad playlist id is pydantic's pattern text; "Retry failed" is always enabled.

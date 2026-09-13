@@ -6,7 +6,7 @@ import uvicorn
 from mentor.app import create_app
 from mentor.config import ConfigError, load_config
 from mentor.embeddings import SentenceTransformerEmbedder
-from mentor.youtube import YouTubeTranscriptSource
+from mentor.youtube import YouTubeSettings, YouTubeTranscriptSource
 
 HOST = "127.0.0.1"
 
@@ -19,7 +19,15 @@ def serve() -> None:
     # proxy_headers=False: forwarded headers are handled deliberately by the app (ticket 17's
     # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
     embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension)
-    app = create_app(config, YouTubeTranscriptSource(), embedder)
+    youtube = YouTubeTranscriptSource(
+        YouTubeSettings(
+            delay_seconds=config.youtube_delay_seconds,
+            retries=config.youtube_retries,
+            backoff_seconds=config.youtube_backoff_seconds,
+            cookie_file=config.youtube_cookie_file,
+        )
+    )
+    app = create_app(config, youtube, embedder)
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
     uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 
