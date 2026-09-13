@@ -14,13 +14,15 @@ def serve() -> None:
         config = load_config()
     except ConfigError as e:
         sys.exit(f"mentor: {e}")
-    uvicorn.run(create_app(config, ports=None), host=HOST, port=config.port)
+    # proxy_headers=False: forwarded headers are handled deliberately by the app (ticket 17's
+    # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
+    uvicorn.run(create_app(config), host=HOST, port=config.port, proxy_headers=False)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mentor")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("serve", help="run the Mentor server on 127.0.0.1")
+    commands.add_parser("serve", help=f"run the Mentor server on {HOST}")
     args = parser.parse_args()
     if args.command == "serve":
         serve()

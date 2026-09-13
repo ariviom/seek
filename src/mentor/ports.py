@@ -1,4 +1,7 @@
-"""Interfaces to the external systems Mentor depends on. Adapter methods are blocking."""
+"""Interfaces to the external systems Mentor depends on.
+
+TranscriptSource, Embedder, and Reranker methods are blocking; ChatEngine streams asynchronously.
+"""
 
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass

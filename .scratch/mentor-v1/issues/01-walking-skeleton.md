@@ -4,14 +4,16 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Python 3.13 uv project; `mentor serve` binds 127.0.0.1 on port 7337 by default
-- [ ] Config: one TOML file in the XDG config dir, overridable by `MENTOR_*` env vars; port and data dir configurable
-- [ ] Database opens in WAL mode with foreign keys on and a busy timeout for every connection; sqlite-vec and FTS5 available
-- [ ] Health endpoint reports server status (model and Claude CLI fields added by later tickets)
-- [ ] Vite + React + Tailwind v4 + TypeScript (no `any`) bundle, built with a relative base, served statically by the server and showing Health
-- [ ] The web bundle is built as part of the Python package build; `uv tool install` from a clean checkout serves the UI
-- [ ] Port interfaces for TranscriptSource, Embedder, Reranker, ChatEngine exist, with fakes (FakeTranscriptSource, hash-based FakeEmbedder, lexical-overlap FakeReranker, scripted FakeChatEngine)
-- [ ] pytest-asyncio harness: in-process ASGI client against a temporary SQLite file with fakes injected; one test hits Health
-- [ ] Pattern established for running blocking work (SQLite, GPU, yt-dlp) off the event loop
+- [x] Python 3.13 uv project; `mentor serve` binds 127.0.0.1 on port 7337 by default
+- [x] Config: one TOML file in the XDG config dir, overridable by `MENTOR_*` env vars; port and data dir configurable
+- [x] Database opens in WAL mode with foreign keys on and a busy timeout for every connection; sqlite-vec and FTS5 available
+- [x] Health endpoint reports server status (model and Claude CLI fields added by later tickets)
+- [x] Vite + React + Tailwind v4 + TypeScript (no `any`) bundle, built with a relative base, served statically by the server and showing Health
+- [x] The web bundle is built as part of the Python package build; `uv tool install` from a clean checkout serves the UI
+- [x] Port interfaces for TranscriptSource, Embedder, Reranker, ChatEngine exist, with fakes (FakeTranscriptSource, hash-based FakeEmbedder, lexical-overlap FakeReranker, scripted FakeChatEngine)
+- [x] pytest-asyncio harness: in-process ASGI client against a temporary SQLite file with fakes injected; one test hits Health
+- [x] Pattern established for running blocking work (SQLite, GPU, yt-dlp) off the event loop
+
+Note: the fakes exist but `create_app` takes no ports yet; ticket 02 adds the ports parameter with its first consumer and injects the fakes in the test harness. The harness runs app lifespan.

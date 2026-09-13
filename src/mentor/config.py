@@ -1,7 +1,7 @@
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 DEFAULT_PORT = 7337
@@ -21,35 +21,52 @@ class Config:
         return self.data_dir / "mentor.db"
 
 
-def config_file_path(env: Mapping[str, str]) -> Path:
-    config_home = Path(env.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return config_home / "mentor" / "config.toml"
+def _xdg_dir(env: Mapping[str, str], var: str, fallback: str) -> Path:
+    return Path(env.get(var) or Path.home() / fallback)
+
+
+def _port(value: object, source: str) -> int:
+    if isinstance(value, str):
+        try:
+            value = int(value)
+        except ValueError:
+            raise ConfigError(f"{source}: port must be an integer") from None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+        raise ConfigError(f"{source}: port must be an integer from 1 to 65535")
+    return value
+
+
+def _data_dir(value: object, source: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"{source}: data_dir must be a non-empty path")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ConfigError(f"{source}: data_dir must be an absolute path")
+    return path
 
 
 def load_config(env: Mapping[str, str] = os.environ) -> Config:
     """Config file values, overridden by MENTOR_* environment variables."""
-    path = config_file_path(env)
-    values: dict[str, object] = {}
+    path = _xdg_dir(env, "XDG_CONFIG_HOME", ".config") / "mentor" / "config.toml"
+    raw: dict[str, tuple[object, str]] = {}
     if path.exists():
         try:
-            values = tomllib.loads(path.read_text())
-        except tomllib.TOMLDecodeError as e:
+            file_values = tomllib.loads(path.read_text())
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
             raise ConfigError(f"{path}: {e}") from e
+        raw = {key: (value, str(path)) for key, value in file_values.items()}
 
-    known = {"data_dir", "port"}
-    unknown = set(values) - known
+    known = {f.name for f in fields(Config)}
+    unknown = set(raw) - known
     if unknown:
         raise ConfigError(f"{path}: unknown keys {sorted(unknown)}")
     for key in known:
-        env_value = env.get(f"MENTOR_{key.upper()}")
-        if env_value is not None:
-            values[key] = env_value
+        env_name = f"MENTOR_{key.upper()}"
+        if env_name in env:
+            raw[key] = (env[env_name], env_name)
 
-    data_home = Path(env.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    try:
-        return Config(
-            data_dir=Path(str(values.get("data_dir", data_home / "mentor"))).expanduser(),
-            port=int(str(values.get("port", DEFAULT_PORT))),
-        )
-    except ValueError as e:
-        raise ConfigError(f"invalid config value: {e}") from e
+    data_dir = _xdg_dir(env, "XDG_DATA_HOME", ".local/share") / "mentor"
+    if "data_dir" in raw:
+        data_dir = _data_dir(*raw["data_dir"])
+    port = _port(*raw["port"]) if "port" in raw else DEFAULT_PORT
+    return Config(data_dir=data_dir, port=port)

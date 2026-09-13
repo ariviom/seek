@@ -7,11 +7,16 @@ export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
 
   useEffect(() => {
+    let current = true;
     getHealth()
-      .then((health) => setState({ kind: "ok", health }))
-      .catch((error: unknown) =>
-        setState({ kind: "error", message: error instanceof Error ? error.message : String(error) }),
+      .then((health) => current && setState({ kind: "ok", health }))
+      .catch(
+        (error: unknown) =>
+          current && setState({ kind: "error", message: error instanceof Error ? error.message : String(error) }),
       );
+    return () => {
+      current = false;
+    };
   }, []);
 
   return (

@@ -1,4 +1,4 @@
-"""Deterministic stand-ins for the ports, used by tests and the fake-backed smoke server."""
+"""Deterministic stand-ins for the ports, for tests."""
 
 import hashlib
 import math
