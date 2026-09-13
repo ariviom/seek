@@ -15,6 +15,35 @@ export type Mentor = { id: number; name: string; channels: Channel[] };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
 export type MentorGroup = { id: number; name: string; mentors: { id: number; name: string }[] };
 
+export type Stage = "discovered" | "transcript_fetched" | "segmented" | "embedded" | "done" | "failed" | "excluded";
+export type Video = {
+  id: number;
+  youtube_video_id: string;
+  title: string;
+  published_on: string | null;
+  duration_seconds: number | null;
+  chapters: { title: string; start: number; end: number }[];
+  stage: Stage;
+  reason: string | null;
+  failure_stage: Stage | null;
+  permanent_failure: boolean | null;
+  language: string | null;
+  transcript_source: "youtube_auto" | "youtube_manual" | null;
+};
+export type Sync = {
+  id: number;
+  channel_id: number;
+  channel_name: string;
+  mentor_name: string;
+  status: "queued" | "running" | "done" | "failed";
+  error: string | null;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  new_videos: number;
+  stage_counts: Record<Stage, number>;
+};
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -70,4 +99,7 @@ export const api = {
   deleteGroup: (id: number) => request<void>(`groups/${id}`, { method: "DELETE" }),
   setGroupMembers: (id: number, mentorIds: number[]) =>
     request<MentorGroup>(`groups/${id}/members`, { method: "PUT", body: { mentor_ids: mentorIds } }),
+  startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
+  listSyncs: () => request<Sync[]>("syncs"),
+  listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
 };

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { errorText } from "./api";
+import { useEffect, useState } from "react";
+import { errorText, type Stage } from "./api";
 
 export const inputClass =
   "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-stone-500 focus:outline-none";
@@ -31,4 +31,31 @@ export function useChanges(refresh: () => Promise<void>, setError: (message: str
   };
 
   return { act, busy };
+}
+
+export const stageLabels: Record<Stage, string> = {
+  discovered: "Discovered",
+  transcript_fetched: "Transcript fetched",
+  segmented: "Segmented",
+  embedded: "Embedded",
+  done: "Done",
+  failed: "Failed",
+  excluded: "Excluded",
+};
+
+// Calls `load` now and again `intervalMs` after each call settles, until unmounted.
+export function usePolling(load: () => Promise<void>, intervalMs: number) {
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+    const tick = async () => {
+      await load();
+      if (active) timer = window.setTimeout(tick, intervalMs);
+    };
+    void tick();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [load, intervalMs]);
 }

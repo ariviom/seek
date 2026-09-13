@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, type Health, type Mentor } from "./api";
 import { Groups } from "./Groups";
 import { Mentors } from "./Mentors";
+import { Syncs } from "./Syncs";
 
 type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
 
@@ -28,6 +29,7 @@ export function App() {
       <h1 className="text-2xl font-semibold">mentor</h1>
       <Mentors onLoaded={setMentors} />
       <Groups mentors={mentors} />
+      <Syncs />
       <footer className="mt-12 border-t border-stone-200 pt-3 text-xs text-stone-500">
         {state.kind === "loading" && "Checking server…"}
         {state.kind === "error" && <span className="text-red-700">Server unavailable: {state.message}</span>}

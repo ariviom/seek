@@ -2,6 +2,7 @@ import asyncio
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import sqlite_vec
@@ -40,7 +41,62 @@ MIGRATIONS = [
     ) WITHOUT ROWID;
     CREATE INDEX mentor_group_members_mentor_id ON mentor_group_members(mentor_id);
     """,
+    """
+    -- pipeline_stage is the last completed stage. A failed Video keeps it and records the stage it
+    -- attempted in failure_stage; an excluded Video keeps it too, so lifting the exclusion loses no work.
+    CREATE TABLE videos (
+        id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        youtube_video_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        duration_seconds INTEGER,
+        published_on TEXT,
+        description TEXT,
+        chapters TEXT,
+        language TEXT,
+        pipeline_stage TEXT NOT NULL DEFAULT 'discovered'
+            CHECK (pipeline_stage IN ('discovered', 'transcript_fetched', 'segmented', 'embedded', 'done')),
+        failure_stage TEXT,
+        failure_reason TEXT,
+        failure_permanent INTEGER CHECK (failure_permanent IN (0, 1)),
+        excluded_reason TEXT,
+        discovered_at TEXT NOT NULL
+    );
+    CREATE INDEX videos_channel_id ON videos(channel_id);
+    CREATE TABLE transcripts (
+        video_id INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('youtube_auto', 'youtube_manual')),
+        language TEXT NOT NULL,
+        cues TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+    );
+    CREATE TABLE syncs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'failed')),
+        error TEXT,
+        queued_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        new_videos INTEGER NOT NULL DEFAULT 0,
+        stage_counts TEXT NOT NULL
+    );
+    CREATE INDEX syncs_channel_id ON syncs(channel_id);
+    CREATE INDEX syncs_status ON syncs(status);
+    CREATE UNIQUE INDEX syncs_one_queued_per_channel ON syncs(channel_id) WHERE status = 'queued';
+    -- At most one Sync worker across processes: the holder renews expires_at while it works.
+    CREATE TABLE sync_lease (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        holder TEXT NOT NULL,
+        expires_at REAL NOT NULL
+    );
+    """,
 ]
+
+
+def now_iso() -> str:
+    """Timestamps are stored as UTC ISO 8601 text."""
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 # Blocking: call from a worker thread, never the event loop.

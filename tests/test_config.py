@@ -17,11 +17,13 @@ def test_defaults_serve_on_7337_with_data_in_xdg_data_home(tmp_path: Path) -> No
 
 
 def test_config_file_sets_values_and_env_overrides_them(tmp_path: Path) -> None:
-    write_config(tmp_path, 'port = 7400\ndata_dir = "/from/file"\n')
+    write_config(tmp_path, 'port = 7400\ndata_dir = "/from/file"\nmin_duration_seconds = 300\n')
 
-    config = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_DATA_DIR": "/from/env"})
+    config = load_config(
+        {"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_DATA_DIR": "/from/env", "MENTOR_MIN_DURATION_SECONDS": "60"}
+    )
 
-    assert config == Config(data_dir=Path("/from/env"), port=7400)
+    assert config == Config(data_dir=Path("/from/env"), port=7400, min_duration_seconds=60)
 
 
 @pytest.mark.parametrize(
@@ -37,6 +39,8 @@ def test_config_file_sets_values_and_env_overrides_them(tmp_path: Path) -> None:
         ("", {"MENTOR_PORT": "seven"}),
         ("", {"MENTOR_DATA_DIR": ""}),
         ("port = \n", {}),
+        ("min_duration_seconds = -1\n", {}),
+        ("", {"MENTOR_MIN_DURATION_SECONDS": "two minutes"}),
     ],
 )
 def test_invalid_config_is_rejected_with_a_config_error(

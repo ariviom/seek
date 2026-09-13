@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type ChannelProposal, type Mentor } from "./api";
 import { buttonClass, inputClass, quietButtonClass, useChanges, type Act } from "./ui";
+import { ChannelVideos } from "./Videos";
 
 export function Mentors({ onLoaded }: { onLoaded: (mentors: Mentor[]) => void }) {
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
@@ -115,6 +116,7 @@ function AddMentor({ act, onError }: { act: Act; onError: (message: string | nul
 function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [attaching, setAttaching] = useState("");
+  const [showingVideos, setShowingVideos] = useState<number | null>(null);
 
   async function rename(event: FormEvent) {
     event.preventDefault();
@@ -162,33 +164,46 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
       </div>
       <ul className="mt-3 divide-y divide-stone-100">
         {mentor.channels.map((channel) => (
-          <li key={channel.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-            <span className={channel.indexed ? "" : "text-stone-400"}>
-              {channel.name} <span className="font-mono text-xs text-stone-400">{channel.youtube_channel_id}</span>
-            </span>
-            <span className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 text-stone-600">
-                <input
-                  type="checkbox"
-                  checked={channel.indexed}
-                  onChange={(e) => void act(() => api.setChannelIndexed(channel.id, e.target.checked))}
-                />
-                Indexed
-              </label>
-              {/* The server also refuses to detach a Mentor's last Channel. */}
-              {mentor.channels.length > 1 && (
+          <li key={channel.id} className="py-2 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className={channel.indexed ? "" : "text-stone-400"}>
+                {channel.name} <span className="font-mono text-xs text-stone-400">{channel.youtube_channel_id}</span>
+              </span>
+              <span className="flex items-center gap-3">
+                <button className={quietButtonClass} onClick={() => void act(() => api.startSync(channel.id))}>
+                  Sync
+                </button>
                 <button
                   className={quietButtonClass}
-                  onClick={() => {
-                    if (confirm(`Detach ${channel.name} and remove everything ingested from it?`)) {
-                      void act(() => api.detachChannel(channel.id));
-                    }
-                  }}
+                  aria-expanded={showingVideos === channel.id}
+                  onClick={() => setShowingVideos(showingVideos === channel.id ? null : channel.id)}
                 >
-                  Detach
+                  Videos
                 </button>
-              )}
-            </span>
+                <label className="flex items-center gap-1.5 text-stone-600">
+                  <input
+                    type="checkbox"
+                    checked={channel.indexed}
+                    onChange={(e) => void act(() => api.setChannelIndexed(channel.id, e.target.checked))}
+                  />
+                  Indexed
+                </label>
+                {/* The server also refuses to detach a Mentor's last Channel. */}
+                {mentor.channels.length > 1 && (
+                  <button
+                    className={quietButtonClass}
+                    onClick={() => {
+                      if (confirm(`Detach ${channel.name} and remove everything ingested from it?`)) {
+                        void act(() => api.detachChannel(channel.id));
+                      }
+                    }}
+                  >
+                    Detach
+                  </button>
+                )}
+              </span>
+            </div>
+            {showingVideos === channel.id && <ChannelVideos channelId={channel.id} />}
           </li>
         ))}
       </ul>

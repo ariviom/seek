@@ -62,14 +62,38 @@ class SourceUnavailable(Exception):
     """The transcript source cannot be reached or is not usable right now."""
 
 
+class VideoUnavailable(Exception):
+    """One Video cannot be ingested: members-only, age-restricted, live or upcoming, no captions, not in English.
+
+    Transient failures (e.g. upcoming) may succeed on a later Sync. `language` names the Video's caption
+    language when that is the reason; `details` carries whatever metadata was fetched before failing.
+    """
+
+    def __init__(
+        self, reason: str, *, permanent: bool, language: str | None = None, details: VideoDetails | None = None
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.permanent = permanent
+        self.language = language
+        self.details = details
+
+
 class TranscriptSource(Protocol):
     def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
         """Accepts a channel URL, an @handle, or a bare channel id."""
         ...
 
-    def list_videos(self, channel_id: str) -> Sequence[VideoListing]: ...
+    def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
+        """A cheap flat listing of the channel's videos tab, which excludes Shorts.
 
-    def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]: ...
+        Raises ChannelNotFound for an unknown channel id.
+        """
+        ...
+
+    def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
+        """Full metadata and English captions. Raises VideoUnavailable otherwise, including for an unknown id."""
+        ...
 
 
 class Embedder(Protocol):

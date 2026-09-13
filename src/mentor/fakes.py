@@ -3,7 +3,7 @@
 import hashlib
 import math
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 
 from mentor.ports import (
@@ -15,6 +15,7 @@ from mentor.ports import (
     Transcript,
     VideoDetails,
     VideoListing,
+    VideoUnavailable,
 )
 
 
@@ -27,6 +28,10 @@ class FakeVideo:
     listing: VideoListing
     details: VideoDetails
     transcript: Transcript
+    # Raised by fetch_video instead of returning the transcript.
+    failure: VideoUnavailable | None = None
+    # Called on the fetching thread before anything else, e.g. to hold a Sync mid-run.
+    before_fetch: Callable[[], None] | None = None
 
 
 @dataclass
@@ -41,24 +46,40 @@ class FakeTranscriptSource:
     channels: list[FakeChannel] = field(default_factory=list)
     # When set, every call raises SourceUnavailable with this message.
     unavailable: str | None = None
+    # Every call as (method, argument), in order.
+    calls: list[tuple[str, str]] = field(default_factory=list)
 
-    def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
+    def _call(self, method: str, argument: str) -> None:
+        self.calls.append((method, argument))
         if self.unavailable is not None:
             raise SourceUnavailable(self.unavailable)
+
+    def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
+        self._call("resolve_channel", url_or_handle)
         for channel in self.channels:
             if url_or_handle in channel.handles or url_or_handle == channel.info.channel_id:
                 return channel.info
         raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
 
     def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
-        return [v.listing for c in self.channels if c.info.channel_id == channel_id for v in c.videos]
+        self._call("list_videos", channel_id)
+        for channel in self.channels:
+            if channel.info.channel_id == channel_id:
+                return [v.listing for v in channel.videos]
+        raise ChannelNotFound(f"No YouTube channel found for {channel_id}")
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         for channel in self.channels:
             for video in channel.videos:
                 if video.listing.video_id == video_id:
+                    if video.before_fetch is not None:
+                        video.before_fetch()
+                    self._call("fetch_video", video_id)
+                    if video.failure is not None:
+                        raise video.failure
                     return video.details, video.transcript
-        raise LookupError(video_id)
+        self._call("fetch_video", video_id)
+        raise VideoUnavailable(f"Video {video_id} not found", permanent=True)
 
 
 @dataclass

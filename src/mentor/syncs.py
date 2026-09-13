@@ -1,0 +1,173 @@
+"""The persisted Sync queue and the lease that lets one worker at a time run it.
+
+Functions are blocking; run them through Database.run.
+"""
+
+import json
+import sqlite3
+import time
+from dataclasses import dataclass
+from typing import Literal
+
+from mentor import videos
+from mentor.db import now_iso, transaction
+from mentor.errors import NotFound
+
+type SyncStatus = Literal["queued", "running", "done", "failed"]
+
+
+@dataclass(frozen=True)
+class Sync:
+    id: int
+    channel_id: int
+    channel_name: str
+    mentor_name: str
+    status: SyncStatus
+    error: str | None
+    queued_at: str
+    started_at: str | None
+    finished_at: str | None
+    new_videos: int
+    stage_counts: dict[str, int]
+
+
+@dataclass(frozen=True)
+class ClaimedSync:
+    id: int
+    channel_id: int
+    youtube_channel_id: str
+
+
+def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) -> list[Sync]:
+    rows = conn.execute(
+        f"""
+        SELECT syncs.*, channels.name AS channel_name, mentors.name AS mentor_name
+        FROM syncs
+        JOIN channels ON channels.id = syncs.channel_id
+        JOIN mentors ON mentors.id = channels.mentor_id
+        {where}
+        """,
+        params,
+    )
+    return [
+        Sync(
+            id=row["id"],
+            channel_id=row["channel_id"],
+            channel_name=row["channel_name"],
+            mentor_name=row["mentor_name"],
+            status=row["status"],
+            error=row["error"],
+            queued_at=row["queued_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            new_videos=row["new_videos"],
+            stage_counts=json.loads(row["stage_counts"]),
+        )
+        for row in rows
+    ]
+
+
+def enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
+    """Queues a Sync for the Channel, or returns the one already queued for it."""
+    with transaction(conn):
+        if conn.execute("SELECT 1 FROM channels WHERE id = ?", (channel_id,)).fetchone() is None:
+            raise NotFound(f"Channel {channel_id} not found")
+        row = conn.execute("SELECT id FROM syncs WHERE channel_id = ? AND status = 'queued'", (channel_id,)).fetchone()
+        if row is None:
+            row = conn.execute(
+                "INSERT INTO syncs (channel_id, status, queued_at, stage_counts) VALUES (?, 'queued', ?, ?) RETURNING id",
+                (channel_id, now_iso(), json.dumps(videos.stage_counts(conn, channel_id))),
+            ).fetchone()
+        [sync] = _select(conn, "WHERE syncs.id = ?", (row["id"],))
+        return sync
+
+
+def list_syncs(conn: sqlite3.Connection, limit: int = 50) -> list[Sync]:
+    """The most recent Syncs, newest first."""
+    return _select(conn, "ORDER BY syncs.id DESC LIMIT ?", (limit,))
+
+
+def has_work(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM syncs WHERE status IN ('queued', 'running') LIMIT 1").fetchone() is not None
+
+
+def acquire_lease(conn: sqlite3.Connection, holder: str, seconds: float) -> bool:
+    """Takes or renews the worker lease; False while another holder's lease is unexpired."""
+    now = time.time()
+    with transaction(conn):
+        row = conn.execute("SELECT holder, expires_at FROM sync_lease WHERE id = 1").fetchone()
+        if row is not None and row["holder"] != holder and row["expires_at"] > now:
+            return False
+        conn.execute(
+            """
+            INSERT INTO sync_lease (id, holder, expires_at) VALUES (1, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at
+            """,
+            (holder, now + seconds),
+        )
+        if row is None or row["holder"] != holder:
+            # Any Sync still marked running belonged to a worker that no longer holds the lease; it resumes
+            # from the queue, ahead of later Syncs, unless its Channel already has a newer one queued.
+            conn.execute(
+                """
+                UPDATE syncs SET status = 'failed', error = 'Interrupted', finished_at = ?
+                WHERE status = 'running' AND channel_id IN (SELECT channel_id FROM syncs WHERE status = 'queued')
+                """,
+                (now_iso(),),
+            )
+            conn.execute("UPDATE syncs SET status = 'queued', started_at = NULL WHERE status = 'running'")
+        return True
+
+
+def release_lease(conn: sqlite3.Connection, holder: str) -> None:
+    with transaction(conn):
+        conn.execute("DELETE FROM sync_lease WHERE holder = ?", (holder,))
+
+
+def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
+    """Marks the oldest queued Sync running, if this holder has the lease."""
+    with transaction(conn):
+        lease = conn.execute("SELECT holder, expires_at FROM sync_lease WHERE id = 1").fetchone()
+        if lease is None or lease["holder"] != holder or lease["expires_at"] <= time.time():
+            return None
+        row = conn.execute(
+            """
+            SELECT syncs.id, syncs.channel_id, channels.youtube_channel_id
+            FROM syncs JOIN channels ON channels.id = syncs.channel_id
+            WHERE syncs.status = 'queued' ORDER BY syncs.id LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE syncs SET status = 'running', started_at = ? WHERE id = ?", (now_iso(), row["id"]))
+        return ClaimedSync(id=row["id"], channel_id=row["channel_id"], youtube_channel_id=row["youtube_channel_id"])
+
+
+def update_progress(conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None) -> bool:
+    """Refreshes the Sync's stage counts from its Channel's Videos; False if the Sync is gone."""
+    with transaction(conn):
+        row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute(
+            "UPDATE syncs SET stage_counts = ?, new_videos = coalesce(?, new_videos) WHERE id = ?",
+            (json.dumps(videos.stage_counts(conn, row["channel_id"])), new_videos, sync_id),
+        )
+        return True
+
+
+def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> None:
+    with transaction(conn):
+        row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
+        if row is None:
+            return
+        conn.execute(
+            "UPDATE syncs SET status = ?, error = ?, finished_at = ?, stage_counts = ? WHERE id = ?",
+            (
+                "failed" if error else "done",
+                error,
+                now_iso(),
+                json.dumps(videos.stage_counts(conn, row["channel_id"])),
+                sync_id,
+            ),
+        )

@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 DEFAULT_PORT = 7337
+DEFAULT_MIN_DURATION_SECONDS = 120
 
 
 class ConfigError(Exception):
@@ -15,6 +16,8 @@ class ConfigError(Exception):
 class Config:
     data_dir: Path
     port: int = DEFAULT_PORT
+    # Videos shorter than this are excluded from ingestion.
+    min_duration_seconds: int = DEFAULT_MIN_DURATION_SECONDS
 
     @property
     def database_path(self) -> Path:
@@ -25,14 +28,14 @@ def _xdg_dir(env: Mapping[str, str], var: str, fallback: str) -> Path:
     return Path(env.get(var) or Path.home() / fallback)
 
 
-def _port(value: object, source: str) -> int:
+def _integer(key: str, value: object, source: str, low: int, high: int) -> int:
     if isinstance(value, str):
         try:
             value = int(value)
         except ValueError:
-            raise ConfigError(f"{source}: port must be an integer") from None
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
-        raise ConfigError(f"{source}: port must be an integer from 1 to 65535")
+            raise ConfigError(f"{source}: {key} must be an integer") from None
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ConfigError(f"{source}: {key} must be an integer from {low} to {high}")
     return value
 
 
@@ -68,5 +71,8 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     data_dir = _xdg_dir(env, "XDG_DATA_HOME", ".local/share") / "mentor"
     if "data_dir" in raw:
         data_dir = _data_dir(*raw["data_dir"])
-    port = _port(*raw["port"]) if "port" in raw else DEFAULT_PORT
-    return Config(data_dir=data_dir, port=port)
+    port = _integer("port", *raw["port"], 1, 65535) if "port" in raw else DEFAULT_PORT
+    min_duration = DEFAULT_MIN_DURATION_SECONDS
+    if "min_duration_seconds" in raw:
+        min_duration = _integer("min_duration_seconds", *raw["min_duration_seconds"], 0, 24 * 60 * 60)
+    return Config(data_dir=data_dir, port=port, min_duration_seconds=min_duration)
