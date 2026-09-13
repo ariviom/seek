@@ -14,3 +14,5 @@
 - [ ] Assistant messages persist on completion with durable citation data (Video id, seconds, Mentor and Video names); the Claude session id is stored
 - [ ] UI chat view renders streaming text and tool calls
 - [ ] API tests with FakeChatEngine assert every lockdown option and the Group binding it received, plus persistence
+
+From ticket 01 review: ChatRequest has no fields for the tool lockdown, Group binding, or replay history, and ChatFailed cannot signal an unresumable session; reshape the port here.

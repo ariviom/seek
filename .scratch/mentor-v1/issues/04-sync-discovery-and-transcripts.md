@@ -16,3 +16,8 @@
 - [ ] A Channel deleted mid-Sync is skipped without errors or orphan rows
 - [ ] Sync record holds per-stage counts and timestamps; Videos list API and UI table show stage, reason, metadata
 - [ ] API tests drive all of the above through FakeTranscriptSource
+
+From ticket 01 review:
+- Connections use autocommit; add a write-transaction helper using BEGIN IMMEDIATE (`with conn:` does not open a transaction).
+- TranscriptSource needs a failure type carrying reason, permanent/transient, and language; decide whether metadata fetch is separate from caption fetch so a caption-less Video keeps its metadata.
+- Pick one unknown-id behaviour for the port and make FakeTranscriptSource match; add call recording and per-video error injection.

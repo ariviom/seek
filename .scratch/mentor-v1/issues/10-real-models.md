@@ -11,3 +11,5 @@
 - [ ] Models preload in the background at startup; Health shows download/load progress; search and sync return a clear "models loading" error until ready
 - [ ] GPU out-of-memory surfaces as a clear error (Sync failure reason or search error), not a crash
 - [ ] Opt-in `real_models` test (skipped by default) ranks a planted Segment first for a known query
+
+From ticket 01 review: GPU work needs its own single-thread executor rather than the default thread pool; take the embedding dimension from config so the startup mismatch check does not wait for model load.

@@ -11,3 +11,5 @@
 - [ ] YouTube channel id is unique; attaching a Channel already owned by another Mentor is rejected with a clear error
 - [ ] Unresolvable URL or handle returns a clear validation error
 - [ ] API tests with FakeTranscriptSource cover each story, setting state only through the public API
+
+From ticket 01 review: `create_app` has no ports parameter yet; add it (required) with the first consumer and inject fakes via the harness.

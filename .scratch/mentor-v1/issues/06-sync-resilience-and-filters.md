@@ -11,3 +11,5 @@
 - [ ] A rerun Sync does no transcript or embed work for Videos already `done`
 - [ ] Filters are editable per Channel via API and UI; every Sync re-applies the current filters, so widening a filter makes older Videos eligible and narrowing one marks them `excluded`
 - [ ] API tests cover each story
+
+From ticket 01 review: VideoListing has no publish date and there is no playlist listing; both are needed to apply filters at discovery.

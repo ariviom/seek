@@ -12,3 +12,5 @@
 - [ ] MCP allowed hosts include the configured public hostname
 - [ ] SSE stays open through a buffering-prone proxy (keepalives observed)
 - [ ] Tests with locally generated signing keys: valid, invalid, missing, expired JWT; the loopback cases; prefix URLs
+
+From ticket 01 review: Health returns the absolute database path; decide whether that is acceptable once published. Relative fetch URLs need the prefix root to end in a slash; the static mount has no SPA fallback for client-side routes.
