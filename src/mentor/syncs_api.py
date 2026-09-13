@@ -17,6 +17,12 @@ def syncs_router(database: Database, wake_worker: Callable[[], None]) -> APIRout
         wake_worker()
         return sync
 
+    @router.post("/channels/{channel_id}/retry-failed", status_code=status.HTTP_202_ACCEPTED)
+    async def retry_failed(channel_id: int) -> Sync:
+        sync = await database.run(lambda conn: syncs.retry_failed(conn, channel_id))
+        wake_worker()
+        return sync
+
     @router.get("/syncs")
     async def list_syncs() -> list[Sync]:
         return await database.run(syncs.list_syncs)

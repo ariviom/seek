@@ -54,9 +54,15 @@ def fake_video(
     failure: VideoUnavailable | None = None,
     before_fetch: Callable[[], None] | None = None,
     cues: Sequence[Cue] | None = None,
+    date_listed: bool = True,
 ) -> FakeVideo:
     return FakeVideo(
-        listing=VideoListing(video_id=video_id, title=title, duration_seconds=listed_duration),
+        listing=VideoListing(
+            video_id=video_id,
+            title=title,
+            duration_seconds=listed_duration,
+            published_on=published_on if date_listed else None,
+        ),
         details=VideoDetails(
             video_id=video_id,
             title=title,
@@ -82,6 +88,18 @@ async def start_sync(client: httpx.AsyncClient, channel_id: int) -> Json:
     assert response.status_code == 202, response.text
     sync: Json = response.json()
     return sync
+
+
+async def list_videos(client: httpx.AsyncClient, channel_id: int) -> dict[str, Json]:
+    """The Channel's Videos by title."""
+    response = await client.get(f"/api/channels/{channel_id}/videos")
+    assert response.status_code == 200, response.text
+    return {v["title"]: v for v in response.json()}
+
+
+def fetched(transcripts: FakeTranscriptSource) -> list[str]:
+    """YouTube video ids fetched so far, in order."""
+    return [argument for method, argument in transcripts.calls if method == "fetch_video"]
 
 
 async def wait_for_syncs(client: httpx.AsyncClient, timeout: float = 5.0) -> list[Json]:

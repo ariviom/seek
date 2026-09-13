@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type ChannelProposal, type Mentor } from "./api";
 import { buttonClass, inputClass, quietButtonClass, useChanges, type Act } from "./ui";
+import { ChannelFiltersForm, filtersSummary } from "./ChannelFilters";
 import { ChannelVideos } from "./Videos";
 
 export function Mentors({ onLoaded }: { onLoaded: (mentors: Mentor[]) => void }) {
@@ -117,6 +118,7 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [attaching, setAttaching] = useState("");
   const [showingVideos, setShowingVideos] = useState<number | null>(null);
+  const [editingFilters, setEditingFilters] = useState<number | null>(null);
 
   async function rename(event: FormEvent) {
     event.preventDefault();
@@ -168,10 +170,23 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
             <div className="flex items-center justify-between gap-2">
               <span className={channel.indexed ? "" : "text-stone-400"}>
                 {channel.name} <span className="font-mono text-xs text-stone-400">{channel.youtube_channel_id}</span>
+                {filtersSummary(channel.filters) && (
+                  <span className="block text-xs text-stone-500">Filters: {filtersSummary(channel.filters)}</span>
+                )}
               </span>
-              <span className="flex items-center gap-3">
+              <span className="flex items-center gap-3 whitespace-nowrap">
                 <button className={quietButtonClass} onClick={() => void act(() => api.startSync(channel.id))}>
                   Sync
+                </button>
+                <button className={quietButtonClass} onClick={() => void act(() => api.retryFailed(channel.id))}>
+                  Retry failed
+                </button>
+                <button
+                  className={quietButtonClass}
+                  aria-expanded={editingFilters === channel.id}
+                  onClick={() => setEditingFilters(editingFilters === channel.id ? null : channel.id)}
+                >
+                  Filters
                 </button>
                 <button
                   className={quietButtonClass}
@@ -203,6 +218,9 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
                 )}
               </span>
             </div>
+            {editingFilters === channel.id && (
+              <ChannelFiltersForm channel={channel} act={act} onDone={() => setEditingFilters(null)} />
+            )}
             {showingVideos === channel.id && <ChannelVideos channelId={channel.id} />}
           </li>
         ))}

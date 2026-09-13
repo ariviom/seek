@@ -9,10 +9,11 @@ from dataclasses import dataclass, field
 from mentor.ports import (
     ChannelInfo,
     ChannelNotFound,
-    SourceUnavailable,
     ChatEvent,
     ChatRequest,
     ModelUnavailable,
+    PlaylistNotFound,
+    SourceUnavailable,
     Transcript,
     VideoDetails,
     VideoListing,
@@ -45,6 +46,8 @@ class FakeChannel:
 @dataclass
 class FakeTranscriptSource:
     channels: list[FakeChannel] = field(default_factory=list)
+    # Video ids by playlist id.
+    playlists: dict[str, list[str]] = field(default_factory=dict)
     # When set, every call raises SourceUnavailable with this message.
     unavailable: str | None = None
     # Every call as (method, argument), in order.
@@ -69,6 +72,12 @@ class FakeTranscriptSource:
                 return [v.listing for v in channel.videos]
         raise ChannelNotFound(f"No YouTube channel found for {channel_id}")
 
+    def list_playlist(self, playlist_id: str) -> Sequence[str]:
+        self._call("list_playlist", playlist_id)
+        if playlist_id not in self.playlists:
+            raise PlaylistNotFound(f"No YouTube playlist found for {playlist_id}")
+        return self.playlists[playlist_id]
+
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         for channel in self.channels:
             for video in channel.videos:
@@ -91,6 +100,8 @@ class FakeEmbedder:
     model_name: str = "fake-embedder"
     # When set, every call raises ModelUnavailable with this message.
     unavailable: str | None = None
+    # Every passage embedded, in order.
+    passages: list[str] = field(default_factory=list)
 
     def _check(self) -> None:
         if self.unavailable is not None:
@@ -106,6 +117,7 @@ class FakeEmbedder:
 
     def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
         self._check()
+        self.passages += texts
         return [self._embed(t) for t in texts]
 
     def embed_query(self, text: str) -> list[float]:

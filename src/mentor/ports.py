@@ -20,6 +20,7 @@ class VideoListing:
     video_id: str
     title: str
     duration_seconds: int | None
+    published_on: date | None
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,10 @@ class ChannelNotFound(Exception):
     """The URL, handle, or id does not identify a YouTube channel."""
 
 
+class PlaylistNotFound(Exception):
+    """The id does not identify a YouTube playlist."""
+
+
 class SourceUnavailable(Exception):
     """The transcript source cannot be reached or is not usable right now."""
 
@@ -89,9 +94,16 @@ class TranscriptSource(Protocol):
         ...
 
     def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
-        """A cheap flat listing of the channel's videos tab, which excludes Shorts.
+        """A cheap flat listing of the channel's videos tab, newest first, which excludes Shorts.
 
         Raises ChannelNotFound for an unknown channel id.
+        """
+        ...
+
+    def list_playlist(self, playlist_id: str) -> Sequence[str]:
+        """The video ids in a playlist, which may include other channels' videos.
+
+        Raises PlaylistNotFound for an unknown playlist id.
         """
         ...
 

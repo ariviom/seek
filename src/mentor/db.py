@@ -123,6 +123,13 @@ MIGRATIONS = [
         dimension INTEGER NOT NULL
     );
     """,
+    """
+    -- Optional per-Channel filters, re-applied by every Sync. Dates are inclusive.
+    ALTER TABLE channels ADD COLUMN published_after TEXT;
+    ALTER TABLE channels ADD COLUMN published_before TEXT;
+    ALTER TABLE channels ADD COLUMN playlist_id TEXT;
+    ALTER TABLE channels ADD COLUMN most_recent INTEGER CHECK (most_recent > 0);
+    """,
 ]
 
 

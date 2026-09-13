@@ -9,12 +9,13 @@ from mentor.ports import (
     ChannelNotFound,
     Embedder,
     ModelUnavailable,
+    PlaylistNotFound,
     SourceUnavailable,
     TranscriptSource,
     VideoUnavailable,
 )
 from mentor.syncs import ClaimedSync
-from mentor.videos import PendingVideo, PipelineStage, StageOutcome
+from mentor.videos import ExclusionRules, PendingVideo, PipelineStage, StageOutcome
 
 log = logging.getLogger(__name__)
 
@@ -93,19 +94,21 @@ class SyncWorker:
     async def _run_sync(self, sync: ClaimedSync) -> None:
         # Returning without finishing is deliberate in two cases: the Channel was deleted (its Sync went with
         # it), or the lease was lost (the next holder requeues the Sync).
+        rules = ExclusionRules(self._min_duration_seconds, sync.filters)
         try:
             listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id)
+            playlist = None
+            if sync.filters.playlist_id is not None:
+                playlist = set(await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id))
             new_videos = await self._database.run(
-                lambda conn: videos.record_discovery(
-                    conn, sync.id, sync.channel_id, listings, self._min_duration_seconds
-                )
+                lambda conn: videos.record_discovery(conn, sync.id, sync.channel_id, listings, playlist, rules)
             )
             if new_videos is None or not await self._progress(sync, new_videos):
                 return
             for video in await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id)):
-                if not await self._advance(sync, video):
+                if not await self._advance(sync, rules, video):
                     return
-        except (ChannelNotFound, SourceUnavailable, ModelUnavailable) as e:
+        except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
             error: str | None = str(e)
         except Exception as e:
             log.exception("Sync %s failed", sync.id)
@@ -117,22 +120,22 @@ class SyncWorker:
     async def _progress(self, sync: ClaimedSync, new_videos: int | None = None) -> bool:
         return await self._database.run(lambda conn: syncs.update_progress(conn, sync.id, new_videos))
 
-    async def _advance(self, sync: ClaimedSync, video: PendingVideo) -> bool:
+    async def _advance(self, sync: ClaimedSync, rules: ExclusionRules, video: PendingVideo) -> bool:
         """Runs the Video's remaining stages in order; False if the Sync should stop without finishing."""
         for stage in videos.PIPELINE[videos.PIPELINE.index(video.pipeline_stage) + 1 :]:
             if self._lease_lost:
                 return False
-            outcome = await self._run_stage(video, stage)
+            outcome = await self._run_stage(rules, video, stage)
             if outcome == "gone" or not await self._progress(sync):
                 return False
             if outcome == "stopped":
                 return True
         return True
 
-    async def _run_stage(self, video: PendingVideo, stage: PipelineStage) -> StageOutcome:
+    async def _run_stage(self, rules: ExclusionRules, video: PendingVideo, stage: PipelineStage) -> StageOutcome:
         """Runs one stage after discovery, which the whole Channel completes at once."""
         if stage == "transcript_fetched":
-            return await self._fetch_transcript(video)
+            return await self._fetch_transcript(rules, video)
         try:
             if stage == "segmented":
                 advanced = await self._database.run(lambda conn: segments.record_segments(conn, video.id))
@@ -146,14 +149,15 @@ class SyncWorker:
         except Exception as e:
             # As when fetching, one Video that can't be processed must not block its Channel's Syncs.
             log.exception("Stage %s failed for Video %s", stage, video.youtube_video_id)
-            return await self._record_failure(video, stage, VideoUnavailable(f"Unexpected error: {e}", permanent=False))
+            failure = VideoUnavailable(f"Unexpected error: {e}", permanent=False)
+            return await self._record_failure(rules, video, stage, failure)
         return "advanced" if advanced else "gone"
 
     async def _record_failure(
-        self, video: PendingVideo, attempted: PipelineStage, failure: VideoUnavailable
+        self, rules: ExclusionRules, video: PendingVideo, attempted: PipelineStage, failure: VideoUnavailable
     ) -> StageOutcome:
         recorded = await self._database.run(
-            lambda conn: videos.record_failure(conn, video.id, attempted, failure, self._min_duration_seconds)
+            lambda conn: videos.record_failure(conn, video.id, attempted, failure, rules)
         )
         return "stopped" if recorded else "gone"
 
@@ -165,7 +169,7 @@ class SyncWorker:
         pairs = [(segment_id, vector) for (segment_id, _), vector in zip(texts, vectors, strict=True)]
         return await self._database.run(lambda conn: segments.record_embeddings(conn, video.id, pairs))
 
-    async def _fetch_transcript(self, video: PendingVideo) -> StageOutcome:
+    async def _fetch_transcript(self, rules: ExclusionRules, video: PendingVideo) -> StageOutcome:
         failure: VideoUnavailable | None = None
         try:
             details, transcript = await asyncio.to_thread(self._transcripts.fetch_video, video.youtube_video_id)
@@ -186,7 +190,7 @@ class SyncWorker:
                     details=details,
                 )
         if failure is not None:
-            return await self._record_failure(video, "transcript_fetched", failure)
+            return await self._record_failure(rules, video, "transcript_fetched", failure)
         return await self._database.run(
-            lambda conn: videos.record_transcript(conn, video.id, details, transcript, self._min_duration_seconds)
+            lambda conn: videos.record_transcript(conn, video.id, details, transcript, rules)
         )

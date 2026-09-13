@@ -10,7 +10,20 @@ export type Health = {
   };
 };
 
-export type Channel = { id: number; youtube_channel_id: string; name: string; indexed: boolean };
+// Each filter is off when null; dates are inclusive YYYY-MM-DD.
+export type ChannelFilters = {
+  published_after: string | null;
+  published_before: string | null;
+  playlist_id: string | null;
+  most_recent: number | null;
+};
+export type Channel = {
+  id: number;
+  youtube_channel_id: string;
+  name: string;
+  indexed: boolean;
+  filters: ChannelFilters;
+};
 export type Mentor = { id: number; name: string; channels: Channel[] };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
 export type MentorGroup = { id: number; name: string; mentors: { id: number; name: string }[] };
@@ -91,6 +104,8 @@ export const api = {
     request<Channel>(`mentors/${mentorId}/channels`, { method: "POST", body: { channel } }),
   setChannelIndexed: (id: number, indexed: boolean) =>
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { indexed } }),
+  setChannelFilters: (id: number, filters: ChannelFilters) =>
+    request<Channel>(`channels/${id}`, { method: "PATCH", body: { filters } }),
   detachChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
   listGroups: () => request<MentorGroup[]>("groups"),
   createGroup: (name: string) => request<MentorGroup>("groups", { method: "POST", body: { name } }),
@@ -100,6 +115,7 @@ export const api = {
   setGroupMembers: (id: number, mentorIds: number[]) =>
     request<MentorGroup>(`groups/${id}/members`, { method: "PUT", body: { mentor_ids: mentorIds } }),
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
+  retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
 };

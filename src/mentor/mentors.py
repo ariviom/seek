@@ -2,10 +2,22 @@
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import date
 
 from mentor.db import transaction
 from mentor.errors import Conflict, NotFound
 from mentor.ports import ChannelInfo
+
+
+@dataclass(frozen=True)
+class ChannelFilters:
+    """Scope a Channel's ingestion; each is off when None. Dates are inclusive."""
+
+    published_after: date | None = None
+    published_before: date | None = None
+    playlist_id: str | None = None
+    # Only this many of the newest otherwise-eligible Videos.
+    most_recent: int | None = None
 
 
 @dataclass(frozen=True)
@@ -14,6 +26,7 @@ class Channel:
     youtube_channel_id: str
     name: str
     indexed: bool
+    filters: ChannelFilters
 
 
 @dataclass(frozen=True)
@@ -26,8 +39,7 @@ class Mentor:
 def _select_mentors(conn: sqlite3.Connection, mentor_id: int | None = None) -> list[Mentor]:
     rows = conn.execute(
         """
-        SELECT mentors.id AS mentor_id, mentors.name AS mentor_name,
-               channels.id, channels.youtube_channel_id, channels.name, channels.indexed
+        SELECT mentors.name AS mentor_name, channels.*
         FROM mentors JOIN channels ON channels.mentor_id = mentors.id
         WHERE ?1 IS NULL OR mentors.id = ?1
         ORDER BY mentors.name COLLATE NOCASE, mentors.id, channels.id
@@ -49,6 +61,17 @@ def _channel(row: sqlite3.Row) -> Channel:
         youtube_channel_id=row["youtube_channel_id"],
         name=row["name"],
         indexed=bool(row["indexed"]),
+        filters=read_filters(row),
+    )
+
+
+def read_filters(row: sqlite3.Row) -> ChannelFilters:
+    """The filters from a row holding the channels table's filter columns."""
+    return ChannelFilters(
+        published_after=date.fromisoformat(row["published_after"]) if row["published_after"] else None,
+        published_before=date.fromisoformat(row["published_before"]) if row["published_before"] else None,
+        playlist_id=row["playlist_id"],
+        most_recent=row["most_recent"],
     )
 
 
@@ -65,9 +88,7 @@ def _require_mentor(conn: sqlite3.Connection, mentor_id: int) -> None:
 
 
 def _get_channel(conn: sqlite3.Connection, channel_id: int) -> tuple[int, Channel]:
-    row = conn.execute(
-        "SELECT mentor_id, id, youtube_channel_id, name, indexed FROM channels WHERE id = ?", (channel_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM channels WHERE id = ?", (channel_id,)).fetchone()
     if row is None:
         raise NotFound(f"Channel {channel_id} not found")
     return int(row["mentor_id"]), _channel(row)
@@ -88,7 +109,9 @@ def _insert_channel(conn: sqlite3.Connection, mentor_id: int, info: ChannelInfo)
         "INSERT INTO channels (mentor_id, youtube_channel_id, name) VALUES (?, ?, ?) RETURNING id",
         (mentor_id, info.channel_id, info.name),
     ).fetchone()
-    return Channel(id=channel_id, youtube_channel_id=info.channel_id, name=info.name, indexed=True)
+    return Channel(
+        id=channel_id, youtube_channel_id=info.channel_id, name=info.name, indexed=True, filters=ChannelFilters()
+    )
 
 
 def _name_taken(conn: sqlite3.Connection, name: str, except_id: int | None = None) -> None:
@@ -129,10 +152,28 @@ def attach_channel(conn: sqlite3.Connection, mentor_id: int, info: ChannelInfo) 
         return _insert_channel(conn, mentor_id, info)
 
 
-def set_channel_indexed(conn: sqlite3.Connection, channel_id: int, indexed: bool) -> Channel:
+def update_channel(
+    conn: sqlite3.Connection, channel_id: int, indexed: bool | None, filters: ChannelFilters | None
+) -> Channel:
+    """Changes whichever of indexed and the filters are given; filters are replaced as a whole."""
     with transaction(conn):
         _get_channel(conn, channel_id)
-        conn.execute("UPDATE channels SET indexed = ? WHERE id = ?", (indexed, channel_id))
+        if indexed is not None:
+            conn.execute("UPDATE channels SET indexed = ? WHERE id = ?", (indexed, channel_id))
+        if filters is not None:
+            conn.execute(
+                """
+                UPDATE channels SET published_after = ?, published_before = ?, playlist_id = ?, most_recent = ?
+                WHERE id = ?
+                """,
+                (
+                    filters.published_after and filters.published_after.isoformat(),
+                    filters.published_before and filters.published_before.isoformat(),
+                    filters.playlist_id,
+                    filters.most_recent,
+                    channel_id,
+                ),
+            )
         return _get_channel(conn, channel_id)[1]
 
 

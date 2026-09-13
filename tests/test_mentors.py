@@ -166,7 +166,13 @@ async def test_a_channel_can_be_indexed_again_and_only_takes_a_real_boolean(clie
     loose = await client.patch(f"/api/channels/{channel_id}", json={"indexed": "no"})
 
     assert reindexed.status_code == 200
-    assert reindexed.json() == {"id": channel_id, "youtube_channel_id": "UC-wright", "name": "Wood By Wright", "indexed": True}
+    assert reindexed.json() == {
+        "id": channel_id,
+        "youtube_channel_id": "UC-wright",
+        "name": "Wood By Wright",
+        "indexed": True,
+        "filters": {"published_after": None, "published_before": None, "playlist_id": None, "most_recent": None},
+    }
     assert loose.status_code == 422
 
 

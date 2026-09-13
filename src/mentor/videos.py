@@ -2,13 +2,14 @@
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Literal
 
 from mentor.db import now_iso, transaction
 from mentor.errors import NotFound
+from mentor.mentors import ChannelFilters
 from mentor.ports import Chapter, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 type PipelineStage = Literal["discovered", "transcript_fetched", "segmented", "embedded", "done"]
@@ -57,13 +58,23 @@ def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
         raise NotFound(f"Channel {channel_id} not found")
 
 
-def _too_short(min_duration_seconds: int) -> str:
-    return f"Shorter than the {min_duration_seconds} second minimum"
+@dataclass(frozen=True)
+class ExclusionRules:
+    """What a Sync excludes: Videos under the minimum length and Videos outside the Channel's filters."""
+
+    min_duration_seconds: int
+    filters: ChannelFilters
 
 
-def _exclusion(duration_seconds: int | None, min_duration_seconds: int) -> str | None:
-    if duration_seconds is not None and duration_seconds < min_duration_seconds:
-        return _too_short(min_duration_seconds)
+def _exclusion(rules: ExclusionRules, duration_seconds: int | None, published_on: date | None) -> str | None:
+    """The reason a Video is excluded by the rules that need only its own metadata; unknown values pass."""
+    if duration_seconds is not None and duration_seconds < rules.min_duration_seconds:
+        return f"Shorter than the {rules.min_duration_seconds} second minimum"
+    after, before = rules.filters.published_after, rules.filters.published_before
+    if published_on is not None and after is not None and published_on < after:
+        return f"Published before {after.isoformat()}, outside the Channel's filters"
+    if published_on is not None and before is not None and published_on > before:
+        return f"Published after {before.isoformat()}, outside the Channel's filters"
     return None
 
 
@@ -105,11 +116,18 @@ def stage_counts(conn: sqlite3.Connection, channel_id: int) -> dict[str, int]:
 
 
 def record_discovery(
-    conn: sqlite3.Connection, sync_id: int, channel_id: int, listings: Sequence[VideoListing], min_duration_seconds: int
+    conn: sqlite3.Connection,
+    sync_id: int,
+    channel_id: int,
+    listings: Sequence[VideoListing],
+    playlist: Collection[str] | None,
+    rules: ExclusionRules,
 ) -> int | None:
-    """Upserts the listing by YouTube video id; returns how many Videos are new, or None if the Sync is gone.
+    """Upserts the listing by YouTube video id and re-applies the rules to every Video of the Channel.
 
-    Checking the Sync rather than the Channel matters: a deleted Channel's id can be reused by a new Channel.
+    `listings` is newest first; `playlist` holds the ids in the filter's playlist, None without one. Returns how
+    many Videos are new, or None if the Sync is gone: checking the Sync rather than the Channel matters, because
+    a deleted Channel's id can be reused by a new Channel.
     """
     with transaction(conn):
         if conn.execute("SELECT 1 FROM syncs WHERE id = ? AND channel_id = ?", (sync_id, channel_id)).fetchone() is None:
@@ -117,22 +135,75 @@ def record_discovery(
         count = "SELECT count(*) FROM videos WHERE channel_id = ?"
         (before,) = conn.execute(count, (channel_id,)).fetchone()
         discovered_at = now_iso()
+        # A stored publish date came from the Video's full metadata, which is more precise than a listing's.
         conn.executemany(
             """
-            INSERT INTO videos (channel_id, youtube_video_id, title, duration_seconds, discovered_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO videos (channel_id, youtube_video_id, title, duration_seconds, published_on, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (youtube_video_id) DO UPDATE SET
                 title = excluded.title,
-                duration_seconds = coalesce(excluded.duration_seconds, videos.duration_seconds)
+                duration_seconds = coalesce(excluded.duration_seconds, videos.duration_seconds),
+                published_on = coalesce(videos.published_on, excluded.published_on)
             """,
-            [(channel_id, v.video_id, v.title, v.duration_seconds, discovered_at) for v in listings],
+            [
+                (
+                    channel_id,
+                    v.video_id,
+                    v.title,
+                    v.duration_seconds,
+                    v.published_on and v.published_on.isoformat(),
+                    discovered_at,
+                )
+                for v in listings
+            ],
         )
         (after,) = conn.execute(count, (channel_id,)).fetchone()
-        conn.execute(
-            "UPDATE videos SET excluded_reason = CASE WHEN duration_seconds < ?1 THEN ?2 END WHERE channel_id = ?3",
-            (min_duration_seconds, _too_short(min_duration_seconds), channel_id),
-        )
+        _apply_exclusions(conn, channel_id, listings, playlist, rules)
         return int(after - before)
+
+
+def _apply_exclusions(
+    conn: sqlite3.Connection,
+    channel_id: int,
+    listings: Sequence[VideoListing],
+    playlist: Collection[str] | None,
+    rules: ExclusionRules,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, youtube_video_id, duration_seconds, published_on, pipeline_stage, excluded_reason
+        FROM videos WHERE channel_id = ? ORDER BY id DESC
+        """,
+        (channel_id,),
+    ).fetchall()
+    reasons: dict[int, str | None] = {}
+    for row in rows:
+        published_on = date.fromisoformat(row["published_on"]) if row["published_on"] else None
+        reason = _exclusion(rules, row["duration_seconds"], published_on)
+        if reason is None and playlist is not None and row["youtube_video_id"] not in playlist:
+            reason = f"Not in playlist {rules.filters.playlist_id}, outside the Channel's filters"
+        reasons[row["id"]] = reason
+    if rules.filters.most_recent is not None:
+        # Newest first by listing position; Videos no longer listed rank after every listed one.
+        position = {listing.video_id: i for i, listing in enumerate(listings)}
+        eligible = sorted(
+            (row for row in rows if reasons[row["id"]] is None),
+            key=lambda row: position.get(row["youtube_video_id"], len(listings)),
+        )
+        for row in eligible[rules.filters.most_recent :]:
+            reasons[row["id"]] = (
+                f"Not among the {rules.filters.most_recent} most recent Videos, outside the Channel's filters"
+            )
+    conn.executemany(
+        "UPDATE videos SET excluded_reason = ? WHERE id = ?",
+        [(reasons[row["id"]], row["id"]) for row in rows if reasons[row["id"]] != row["excluded_reason"]],
+    )
+    # Excluded Videos leave the search indexes but keep their Transcripts, so lifting the exclusion
+    # re-segments them without fetching again.
+    for row in rows:
+        if reasons[row["id"]] is not None and row["pipeline_stage"] in ("segmented", "embedded", "done"):
+            conn.execute("DELETE FROM segments WHERE video_id = ?", (row["id"],))
+            complete_stage(conn, row["id"], "transcript_fetched")
 
 
 def pending_videos(conn: sqlite3.Connection, channel_id: int) -> list[PendingVideo]:
@@ -149,7 +220,7 @@ def pending_videos(conn: sqlite3.Connection, channel_id: int) -> list[PendingVid
     return [PendingVideo(row["id"], row["youtube_video_id"], row["pipeline_stage"]) for row in rows]
 
 
-def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetails, min_duration_seconds: int) -> bool:
+def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetails, rules: ExclusionRules) -> bool:
     cursor = conn.execute(
         """
         UPDATE videos SET title = ?, published_on = ?, duration_seconds = ?, description = ?, chapters = ?,
@@ -162,7 +233,7 @@ def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetai
             details.duration_seconds,
             details.description,
             json.dumps([asdict(c) for c in details.chapters]),
-            _exclusion(details.duration_seconds, min_duration_seconds),
+            _exclusion(rules, details.duration_seconds, details.published_on),
             video_id,
         ),
     )
@@ -174,14 +245,14 @@ def record_transcript(
     video_id: int,
     details: VideoDetails,
     transcript: Transcript,
-    min_duration_seconds: int,
+    rules: ExclusionRules,
 ) -> StageOutcome:
     """Stores metadata and the Transcript and advances the stage."""
     with transaction(conn):
-        if not _record_details(conn, video_id, details, min_duration_seconds):
+        if not _record_details(conn, video_id, details, rules):
             return "gone"
-        # A Video only found to be too short once its full metadata arrives is excluded, not advanced.
-        if _exclusion(details.duration_seconds, min_duration_seconds) is not None:
+        # A Video only found to be too short or out of range once its full metadata arrives is excluded, not advanced.
+        if _exclusion(rules, details.duration_seconds, details.published_on) is not None:
             return "stopped"
         conn.execute(
             """
@@ -227,11 +298,11 @@ def record_failure(
     video_id: int,
     attempted: PipelineStage,
     failure: VideoUnavailable,
-    min_duration_seconds: int,
+    rules: ExclusionRules,
 ) -> bool:
     """Marks the Video failed at the attempted stage, keeping any metadata; False if the Video is gone."""
     with transaction(conn):
-        if failure.details is not None and not _record_details(conn, video_id, failure.details, min_duration_seconds):
+        if failure.details is not None and not _record_details(conn, video_id, failure.details, rules):
             return False
         cursor = conn.execute(
             """
@@ -242,3 +313,14 @@ def record_failure(
             (attempted, failure.reason, failure.permanent, failure.language, video_id),
         )
         return cursor.rowcount == 1
+
+
+def clear_failures(conn: sqlite3.Connection, channel_id: int) -> None:
+    """Within a transaction: every failed Video of the Channel resumes from its last completed stage."""
+    conn.execute(
+        """
+        UPDATE videos SET failure_stage = NULL, failure_reason = NULL, failure_permanent = NULL
+        WHERE channel_id = ? AND failure_stage IS NOT NULL
+        """,
+        (channel_id,),
+    )

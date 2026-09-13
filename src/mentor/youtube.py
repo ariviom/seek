@@ -14,5 +14,8 @@ class YouTubeTranscriptSource:
     def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
         raise SourceUnavailable(_NOT_BUILT)
 
+    def list_playlist(self, playlist_id: str) -> Sequence[str]:
+        raise SourceUnavailable(_NOT_BUILT)
+
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         raise SourceUnavailable(_NOT_BUILT)

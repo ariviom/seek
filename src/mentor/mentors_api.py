@@ -1,12 +1,13 @@
 import asyncio
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Self
 
 from fastapi import APIRouter, status
-from pydantic import BaseModel, StrictBool, StringConstraints
+from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, model_validator
 
 from mentor import mentors
 from mentor.db import Database
-from mentor.mentors import Channel, Mentor
+from mentor.mentors import Channel, ChannelFilters, Mentor
 from mentor.ports import ChannelInfo, TranscriptSource
 
 type Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -32,8 +33,24 @@ class MentorRename(BaseModel):
     name: Name
 
 
+class FiltersBody(BaseModel):
+    published_after: date | None
+    published_before: date | None
+    playlist_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}$")] | None
+    most_recent: Annotated[StrictInt, Field(ge=1, le=100_000)] | None
+
+    @model_validator(mode="after")
+    def dates_in_order(self) -> Self:
+        if self.published_after and self.published_before and self.published_after > self.published_before:
+            raise ValueError("published_after must not be later than published_before")
+        return self
+
+
 class ChannelUpdate(BaseModel):
-    indexed: StrictBool
+    """Fields left out are unchanged."""
+
+    indexed: StrictBool | None = None
+    filters: FiltersBody | None = None
 
 
 def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRouter:
@@ -72,7 +89,8 @@ def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRout
 
     @router.patch("/channels/{channel_id}")
     async def update_channel(channel_id: int, body: ChannelUpdate) -> Channel:
-        return await database.run(lambda conn: mentors.set_channel_indexed(conn, channel_id, body.indexed))
+        filters = None if body.filters is None else ChannelFilters(**body.filters.model_dump())
+        return await database.run(lambda conn: mentors.update_channel(conn, channel_id, body.indexed, filters))
 
     @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def detach_channel(channel_id: int) -> None:

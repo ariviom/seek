@@ -9,9 +9,10 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-from mentor import videos
+from mentor import mentors, videos
 from mentor.db import now_iso, transaction
 from mentor.errors import NotFound
+from mentor.mentors import ChannelFilters
 
 type SyncStatus = Literal["queued", "running", "done", "failed"]
 
@@ -36,6 +37,8 @@ class ClaimedSync:
     id: int
     channel_id: int
     youtube_channel_id: str
+    # As they were when the Sync started; changes apply from the next Sync.
+    filters: ChannelFilters
 
 
 def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) -> list[Sync]:
@@ -70,16 +73,35 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
 def enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
     """Queues a Sync for the Channel, or returns the one already queued for it."""
     with transaction(conn):
-        if conn.execute("SELECT 1 FROM channels WHERE id = ?", (channel_id,)).fetchone() is None:
-            raise NotFound(f"Channel {channel_id} not found")
-        row = conn.execute("SELECT id FROM syncs WHERE channel_id = ? AND status = 'queued'", (channel_id,)).fetchone()
-        if row is None:
-            row = conn.execute(
-                "INSERT INTO syncs (channel_id, status, queued_at, stage_counts) VALUES (?, 'queued', ?, ?) RETURNING id",
-                (channel_id, now_iso(), json.dumps(videos.stage_counts(conn, channel_id))),
-            ).fetchone()
-        [sync] = _select(conn, "WHERE syncs.id = ?", (row["id"],))
-        return sync
+        return _enqueue(conn, channel_id)
+
+
+def retry_failed(conn: sqlite3.Connection, channel_id: int) -> Sync:
+    """Clears every failure on the Channel's Videos, permanent ones too, and queues a Sync to retry them."""
+    with transaction(conn):
+        videos.clear_failures(conn, channel_id)
+        return _enqueue(conn, channel_id)
+
+
+def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
+    if conn.execute("SELECT 1 FROM channels WHERE id = ?", (channel_id,)).fetchone() is None:
+        raise NotFound(f"Channel {channel_id} not found")
+
+
+def _enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
+    _require_channel(conn, channel_id)
+    counts = json.dumps(videos.stage_counts(conn, channel_id))
+    row = conn.execute("SELECT id FROM syncs WHERE channel_id = ? AND status = 'queued'", (channel_id,)).fetchone()
+    if row is None:
+        row = conn.execute(
+            "INSERT INTO syncs (channel_id, status, queued_at, stage_counts) VALUES (?, 'queued', ?, ?) RETURNING id",
+            (channel_id, now_iso(), counts),
+        ).fetchone()
+    else:
+        # Refreshed, since a retry may have just cleared failures.
+        conn.execute("UPDATE syncs SET stage_counts = ? WHERE id = ?", (counts, row["id"]))
+    [sync] = _select(conn, "WHERE syncs.id = ?", (row["id"],))
+    return sync
 
 
 def list_syncs(conn: sqlite3.Connection, limit: int = 50) -> list[Sync]:
@@ -141,15 +163,20 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
             return None
         row = conn.execute(
             """
-            SELECT syncs.id, syncs.channel_id, channels.youtube_channel_id
+            SELECT syncs.id AS sync_id, channels.*
             FROM syncs JOIN channels ON channels.id = syncs.channel_id
             WHERE syncs.status = 'queued' ORDER BY syncs.id LIMIT 1
             """
         ).fetchone()
         if row is None:
             return None
-        conn.execute("UPDATE syncs SET status = 'running', started_at = ? WHERE id = ?", (now_iso(), row["id"]))
-        return ClaimedSync(id=row["id"], channel_id=row["channel_id"], youtube_channel_id=row["youtube_channel_id"])
+        conn.execute("UPDATE syncs SET status = 'running', started_at = ? WHERE id = ?", (now_iso(), row["sync_id"]))
+        return ClaimedSync(
+            id=row["sync_id"],
+            channel_id=row["id"],
+            youtube_channel_id=row["youtube_channel_id"],
+            filters=mentors.read_filters(row),
+        )
 
 
 def update_progress(conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None) -> bool:

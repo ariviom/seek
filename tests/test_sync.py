@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 import httpx
-from harness import Json, add_mentor, fake_channel, fake_video, running, start_sync, wait_for_syncs
+from harness import add_mentor, fake_channel, fake_video, fetched, list_videos, running, start_sync, wait_for_syncs
 
 from mentor.app import create_app
 from mentor.config import Config
@@ -23,16 +23,6 @@ NO_COUNTS = {
     "failed": 0,
     "excluded": 0,
 }
-
-
-async def list_videos(client: httpx.AsyncClient, channel_id: int) -> dict[str, Json]:
-    response = await client.get(f"/api/channels/{channel_id}/videos")
-    assert response.status_code == 200, response.text
-    return {v["title"]: v for v in response.json()}
-
-
-def fetched(transcripts: FakeTranscriptSource) -> list[str]:
-    return [argument for method, argument in transcripts.calls if method == "fetch_video"]
 
 
 class Gate:
@@ -244,7 +234,7 @@ async def test_the_minimum_duration_is_configurable(
 
 
 async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
 ) -> None:
     videos_tab = fake_channel(transcripts, "UC-wright").videos
     videos_tab.append(fake_video("v-first", "First video"))
@@ -261,6 +251,7 @@ async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(
     assert latest["stage_counts"] == NO_COUNTS | {"done": 2}
     assert sorted(await list_videos(client, channel_id)) == ["First video", "Second video"]
     assert fetched(transcripts) == ["v-first", "v-second"]
+    assert [p for p in embedder.passages if "video" in p] == ["Welcome to First video Let's begin", "Welcome to Second video Let's begin"]
 
 
 async def test_syncs_run_one_at_a_time_in_queue_order_and_a_queued_channel_is_queued_once(
