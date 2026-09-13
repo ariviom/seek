@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import { getHealth, type Health } from "./api";
+import { api, type Health } from "./api";
+import { Mentors } from "./Mentors";
 
-type State = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
+type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
 
 export function App() {
-  const [state, setState] = useState<State>({ kind: "loading" });
+  const [state, setState] = useState<HealthState>({ kind: "loading" });
 
   useEffect(() => {
     let current = true;
-    getHealth()
+    api
+      .health()
       .then((health) => current && setState({ kind: "ok", health }))
       .catch(
         (error: unknown) =>
@@ -22,25 +24,18 @@ export function App() {
   return (
     <main className="mx-auto max-w-2xl p-8 font-sans text-stone-900">
       <h1 className="text-2xl font-semibold">mentor</h1>
-      <section className="mt-6 rounded-lg border border-stone-200 p-4">
-        <h2 className="text-sm font-medium tracking-wide text-stone-500 uppercase">Health</h2>
-        {state.kind === "loading" && <p className="mt-2">Checking…</p>}
-        {state.kind === "error" && <p className="mt-2 text-red-700">{state.message}</p>}
+      <Mentors />
+      <footer className="mt-12 border-t border-stone-200 pt-3 text-xs text-stone-500">
+        {state.kind === "loading" && "Checking server…"}
+        {state.kind === "error" && <span className="text-red-700">Server unavailable: {state.message}</span>}
         {state.kind === "ok" && (
-          <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt className="text-stone-500">Server</dt>
-            <dd>{state.health.status}</dd>
-            <dt className="text-stone-500">Database</dt>
-            <dd className="font-mono break-all">{state.health.database.path}</dd>
-            <dt className="text-stone-500">Journal</dt>
-            <dd>{state.health.database.journal_mode}</dd>
-            <dt className="text-stone-500">sqlite-vec</dt>
-            <dd>{state.health.database.sqlite_vec}</dd>
-            <dt className="text-stone-500">FTS5</dt>
-            <dd>{state.health.database.fts5 ? "available" : "missing"}</dd>
-          </dl>
+          <span>
+            Server {state.health.status} · sqlite-vec {state.health.database.sqlite_vec} · FTS5{" "}
+            {state.health.database.fts5 ? "available" : "missing"} ·{" "}
+            <span className="font-mono">{state.health.database.path}</span>
+          </span>
         )}
-      </section>
+      </footer>
     </main>
   );
 }

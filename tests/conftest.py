@@ -7,6 +7,8 @@ from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
+from mentor.fakes import FakeChannel, FakeTranscriptSource
+from mentor.ports import ChannelInfo
 
 
 @pytest.fixture
@@ -15,7 +17,30 @@ def config(tmp_path: Path) -> Config:
 
 
 @pytest.fixture
-async def client(config: Config, tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
+def transcripts() -> FakeTranscriptSource:
+    return FakeTranscriptSource(
+        channels=[
+            FakeChannel(
+                info=ChannelInfo(channel_id="UC-wright", name="Wood By Wright"),
+                handles=["@woodbywright", "https://www.youtube.com/@woodbywright"],
+            ),
+            FakeChannel(
+                info=ChannelInfo(channel_id="UC-wright-vlog", name="Wright Vlogs"),
+                handles=["@wrightvlogs"],
+            ),
+            FakeChannel(
+                info=ChannelInfo(channel_id="UC-rex", name="Rex Krueger"),
+                handles=["@rexkrueger"],
+            ),
+        ]
+    )
+
+
+@pytest.fixture
+async def client(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> AsyncIterator[httpx.AsyncClient]:
     # No web bundle: API tests don't need one.
-    async with running(create_app(config, static_dir=tmp_path / "no-bundle")) as c:
+    app = create_app(config, transcripts=transcripts, static_dir=tmp_path / "no-bundle")
+    async with running(app) as c:
         yield c

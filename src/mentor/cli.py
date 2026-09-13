@@ -5,6 +5,7 @@ import uvicorn
 
 from mentor.app import create_app
 from mentor.config import ConfigError, load_config
+from mentor.youtube import YouTubeTranscriptSource
 
 HOST = "127.0.0.1"
 
@@ -16,7 +17,7 @@ def serve() -> None:
         sys.exit(f"mentor: {e}")
     # proxy_headers=False: forwarded headers are handled deliberately by the app (ticket 17's
     # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
-    uvicorn.run(create_app(config), host=HOST, port=config.port, proxy_headers=False)
+    uvicorn.run(create_app(config, YouTubeTranscriptSource()), host=HOST, port=config.port, proxy_headers=False)
 
 
 def main() -> None:

@@ -53,6 +53,14 @@ class Transcript:
     cues: Sequence[Cue]
 
 
+class ChannelNotFound(Exception):
+    """The URL, handle, or id does not identify a YouTube channel."""
+
+
+class SourceUnavailable(Exception):
+    """The transcript source cannot be reached or is not usable right now."""
+
+
 class TranscriptSource(Protocol):
     def resolve_channel(self, url_or_handle: str) -> ChannelInfo: ...
 
@@ -117,10 +125,3 @@ type ChatEvent = TextDelta | ToolCall | ToolResult | ChatDone | ChatFailed
 class ChatEngine(Protocol):
     def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]: ...
 
-
-@dataclass(frozen=True)
-class Ports:
-    transcripts: TranscriptSource
-    embedder: Embedder
-    reranker: Reranker
-    chat: ChatEngine
