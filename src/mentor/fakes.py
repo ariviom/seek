@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from mentor.ports import (
     ChannelInfo,
     ChannelNotFound,
+    SourceUnavailable,
     ChatEvent,
     ChatRequest,
     Transcript,
@@ -38,12 +39,16 @@ class FakeChannel:
 @dataclass
 class FakeTranscriptSource:
     channels: list[FakeChannel] = field(default_factory=list)
+    # When set, every call raises SourceUnavailable with this message.
+    unavailable: str | None = None
 
     def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
+        if self.unavailable is not None:
+            raise SourceUnavailable(self.unavailable)
         for channel in self.channels:
             if url_or_handle in channel.handles or url_or_handle == channel.info.channel_id:
                 return channel.info
-        raise ChannelNotFound(url_or_handle)
+        raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
 
     def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
         return [v.listing for c in self.channels if c.info.channel_id == channel_id for v in c.videos]
@@ -97,5 +102,3 @@ class FakeChatEngine:
         self.requests.append(request)
         for event in self.script:
             yield event
-
-

@@ -1,12 +1,14 @@
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.youtube import YouTubeTranscriptSource
+from mentor.fakes import FakeTranscriptSource
 
 type Json = dict[str, Any]
 
@@ -135,21 +137,71 @@ async def test_unknown_mentors_and_channels_are_not_found(client: httpx.AsyncCli
 async def test_an_unavailable_youtube_source_is_reported_as_service_unavailable(
     config: Config, tmp_path: Path
 ) -> None:
-    app = create_app(config, YouTubeTranscriptSource(), static_dir=tmp_path / "no-bundle")
+    source = FakeTranscriptSource(unavailable="YouTube is rate limiting requests")
+    app = create_app(config, source, static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         response = await client.post("/api/channels/resolve", json={"channel": "@woodbywright"})
 
     assert response.status_code == 503
-    assert response.json()["detail"]
+    assert response.json()["detail"] == "YouTube is rate limiting requests"
 
 
-async def test_mentor_names_must_be_unique_and_non_blank(client: httpx.AsyncClient) -> None:
+async def test_unresolvable_channels_are_rejected_when_creating_or_attaching(client: httpx.AsyncClient) -> None:
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+
+    create = await client.post("/api/mentors", json={"name": "Nobody", "channel": "@nobody-here"})
+    attach = await client.post(f"/api/mentors/{mentor['id']}/channels", json={"channel": "@nobody-here"})
+    too_long = await client.post("/api/channels/resolve", json={"channel": "@" + "x" * 600})
+    blank = await client.post("/api/channels/resolve", json={"channel": "  "})
+
+    assert [create.status_code, attach.status_code, too_long.status_code, blank.status_code] == [422, 422, 422, 422]
+    assert [m["name"] for m in (await client.get("/api/mentors")).json()] == ["Wood By Wright"]
+
+
+async def test_reattaching_a_mentors_own_channel_says_it_is_already_attached(client: httpx.AsyncClient) -> None:
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+
+    response = await client.post(f"/api/mentors/{mentor['id']}/channels", json={"channel": "@woodbywright"})
+
+    assert response.status_code == 409
+    assert "already attached" in response.json()["detail"]
+
+
+async def test_a_channel_can_be_indexed_again_and_only_takes_a_real_boolean(client: httpx.AsyncClient) -> None:
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+
+    await client.patch(f"/api/channels/{channel_id}", json={"indexed": False})
+    reindexed = await client.patch(f"/api/channels/{channel_id}", json={"indexed": True})
+    loose = await client.patch(f"/api/channels/{channel_id}", json={"indexed": "no"})
+
+    assert reindexed.status_code == 200
+    assert reindexed.json() == {"id": channel_id, "youtube_channel_id": "UC-wright", "name": "Wood By Wright", "indexed": True}
+    assert loose.status_code == 422
+
+
+async def test_mentor_names_must_be_unique_ignoring_case_and_non_blank(client: httpx.AsyncClient) -> None:
     await add_mentor(client, "Wood By Wright", "@woodbywright")
+    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
 
-    duplicate = await client.post("/api/mentors", json={"name": "Wood By Wright", "channel": "@rexkrueger"})
-    blank = await client.post("/api/mentors", json={"name": "   ", "channel": "@rexkrueger"})
+    duplicate = await client.post("/api/mentors", json={"name": "wood by wright", "channel": "@wrightvlogs"})
+    blank = await client.post("/api/mentors", json={"name": "   ", "channel": "@wrightvlogs"})
+    rename_duplicate = await client.patch(f"/api/mentors/{rex['id']}", json={"name": "WOOD BY WRIGHT"})
+    rename_blank = await client.patch(f"/api/mentors/{rex['id']}", json={"name": ""})
 
-    assert duplicate.status_code == 409
-    assert blank.status_code == 422
-    assert len((await client.get("/api/mentors")).json()) == 1
+    assert [duplicate.status_code, blank.status_code] == [409, 422]
+    assert [rename_duplicate.status_code, rename_blank.status_code] == [409, 422]
+    assert [m["name"] for m in (await client.get("/api/mentors")).json()] == ["Rex Krueger", "Wood By Wright"]
+
+
+async def test_server_refuses_a_knowledge_base_from_a_newer_mentor(config: Config, tmp_path: Path) -> None:
+    config.data_dir.mkdir(parents=True)
+    conn = sqlite3.connect(config.database_path)
+    conn.execute("PRAGMA user_version = 999")
+    conn.close()
+    app = create_app(config, FakeTranscriptSource(), static_dir=tmp_path / "no-bundle")
+
+    with pytest.raises(RuntimeError, match="newer"):
+        async with running(app):
+            pass

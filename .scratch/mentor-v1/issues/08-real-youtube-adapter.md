@@ -11,3 +11,9 @@
 - [ ] Delays between requests and backoff on errors, with configurable, documented defaults; optional cookie file path from config
 - [ ] Maps members-only, age-restricted, live/upcoming, no-captions, and non-English cases to reasons with a permanent/transient class; PO-token failures name the `bgutil-ytdlp-pot-provider` fix
 - [ ] Opt-in `real_youtube` test (skipped by default) fetches captions for one short public Video
+
+From ticket 02:
+- Replace the placeholder `YouTubeTranscriptSource` (currently raises SourceUnavailable for everything).
+- `resolve_channel` must accept a bare channel id: the web create flow re-resolves the proposal's id server-side.
+- Map every yt-dlp failure to ChannelNotFound or SourceUnavailable with a user-facing message; anything else surfaces as an opaque 500.
+- Accept only YouTube URLs, @handles, and channel ids before calling yt-dlp, whose generic extractor would fetch arbitrary URLs.

@@ -9,20 +9,20 @@ import sqlite_vec
 BUSY_TIMEOUT_MS = 5000
 
 # Applied in order; PRAGMA user_version records how many have run. Never edit a shipped entry.
+# Migrations run with foreign keys ON inside a transaction, where they cannot be switched off:
+# keep them additive, because DROP TABLE on a parent would cascade-delete its children.
 MIGRATIONS = [
     """
     CREATE TABLE mentors (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE
     );
     CREATE TABLE channels (
         id INTEGER PRIMARY KEY,
         mentor_id INTEGER NOT NULL REFERENCES mentors(id) ON DELETE CASCADE,
         youtube_channel_id TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
-        indexed INTEGER NOT NULL DEFAULT 1 CHECK (indexed IN (0, 1)),
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        indexed INTEGER NOT NULL DEFAULT 1 CHECK (indexed IN (0, 1))
     );
     CREATE INDEX channels_mentor_id ON channels(mentor_id);
     """,
@@ -52,29 +52,30 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     try:
         yield
     except BaseException:
-        conn.execute("ROLLBACK")
+        # SQLite may already have rolled back (e.g. disk full); don't mask the original error.
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    applied = conn.execute("PRAGMA user_version").fetchone()[0]
-    for number, script in enumerate(MIGRATIONS[applied:], start=applied + 1):
-        # executescript handles multi-statement bodies (e.g. triggers); the explicit
-        # transaction keeps each migration and its version bump atomic.
-        try:
-            conn.executescript(f"BEGIN IMMEDIATE; {script}; PRAGMA user_version = {number}; COMMIT;")
-        except sqlite3.Error:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
+    # The version is read under the write lock so two processes starting together don't both apply.
+    with transaction(conn):
+        applied = conn.execute("PRAGMA user_version").fetchone()[0]
+        if applied > len(MIGRATIONS):
+            raise RuntimeError(
+                f"The knowledge base was created by a newer mentor (schema {applied}, this build knows "
+                f"{len(MIGRATIONS)}); upgrade mentor"
+            )
+        for number, script in enumerate(MIGRATIONS[applied:], start=applied + 1):
+            # executescript handles multi-statement bodies such as triggers; in autocommit mode
+            # it does not commit the surrounding transaction.
+            conn.executescript(f"{script}; PRAGMA user_version = {number};")
 
 
 def initialize(path: Path) -> dict[str, object]:
-    """Open and migrate the knowledge base and report its configuration.
-
-    Raises if FTS5 or sqlite-vec is missing.
-    """
+    """Open and migrate the knowledge base; raises if FTS5 or sqlite-vec is missing."""
     conn = connect(path)
     try:
         migrate(conn)
@@ -97,7 +98,10 @@ class Database:
         self.path = path
 
     async def run[T](self, work: Callable[[sqlite3.Connection], T]) -> T:
-        """Run blocking database work on a worker thread with its own connection."""
+        """Run blocking database work on a worker thread with its own connection.
+
+        A fresh connection per call is cheap enough for one user and avoids sharing across threads.
+        """
 
         def call() -> T:
             conn = connect(self.path)

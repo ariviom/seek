@@ -2,7 +2,7 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, status
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, StrictBool, StringConstraints
 
 from mentor import mentors
 from mentor.db import Database
@@ -10,10 +10,12 @@ from mentor.mentors import Channel, Mentor
 from mentor.ports import ChannelInfo, TranscriptSource
 
 type Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+# A YouTube channel URL, @handle, or channel id.
+type ChannelInput = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class ChannelRef(BaseModel):
-    channel: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    channel: ChannelInput
 
 
 class ChannelProposal(BaseModel):
@@ -23,7 +25,7 @@ class ChannelProposal(BaseModel):
 
 class NewMentor(BaseModel):
     name: Name
-    channel: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    channel: ChannelInput
 
 
 class MentorRename(BaseModel):
@@ -31,7 +33,7 @@ class MentorRename(BaseModel):
 
 
 class ChannelUpdate(BaseModel):
-    indexed: bool
+    indexed: StrictBool
 
 
 def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRouter:
@@ -51,6 +53,7 @@ def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRout
 
     @router.post("/mentors", status_code=status.HTTP_201_CREATED)
     async def create_mentor(body: NewMentor) -> Mentor:
+        # Resolved again server-side (usually from the proposal's channel id) rather than trusting the client.
         info = await resolve(body.channel)
         return await database.run(lambda conn: mentors.create_mentor(conn, body.name, info))
 
@@ -68,7 +71,7 @@ def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRout
         return await database.run(lambda conn: mentors.attach_channel(conn, mentor_id, info))
 
     @router.patch("/channels/{channel_id}")
-    async def update_channel(channel_id: int, body: ChannelUpdate) -> Mentor:
+    async def update_channel(channel_id: int, body: ChannelUpdate) -> Channel:
         return await database.run(lambda conn: mentors.set_channel_indexed(conn, channel_id, body.indexed))
 
     @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)

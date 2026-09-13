@@ -14,7 +14,9 @@ export type Channel = { id: number; youtube_channel_id: string; name: string; in
 export type Mentor = { id: number; name: string; channels: Channel[] };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
 
-export class ApiError extends Error {}
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function detailMessage(body: unknown, status: number): string {
   if (typeof body === "object" && body !== null && "detail" in body) {
@@ -31,7 +33,7 @@ function detailMessage(body: unknown, status: number): string {
 }
 
 // Relative URLs so requests follow any reverse-proxy path prefix.
-async function request<T>(path: string, init?: { method: string; body?: unknown }): Promise<T> {
+async function request<T>(path: string, init?: { method: "POST" | "PATCH" | "DELETE"; body?: unknown }): Promise<T> {
   const response = await fetch(`api/${path}`, {
     method: init?.method ?? "GET",
     headers: init?.body === undefined ? undefined : { "Content-Type": "application/json" },
@@ -39,7 +41,7 @@ async function request<T>(path: string, init?: { method: string; body?: unknown 
   });
   if (response.status === 204) return undefined as T;
   const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(detailMessage(body, response.status));
+  if (!response.ok) throw new Error(detailMessage(body, response.status));
   return body as T;
 }
 
@@ -55,6 +57,6 @@ export const api = {
   attachChannel: (mentorId: number, channel: string) =>
     request<Channel>(`mentors/${mentorId}/channels`, { method: "POST", body: { channel } }),
   setChannelIndexed: (id: number, indexed: boolean) =>
-    request<Mentor>(`channels/${id}`, { method: "PATCH", body: { indexed } }),
+    request<Channel>(`channels/${id}`, { method: "PATCH", body: { indexed } }),
   detachChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
 };

@@ -13,3 +13,5 @@
 - [ ] API tests cover each story
 
 From ticket 01 review: VideoListing has no publish date and there is no playlist listing; both are needed to apply filters at discovery.
+
+From ticket 02 review: PATCH /api/channels/{id} currently requires `indexed`; make fields optional when adding filters.

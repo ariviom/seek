@@ -1,40 +1,47 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type ChannelProposal, type Mentor } from "./api";
+import { api, errorText, type ChannelProposal, type Mentor } from "./api";
 
-const input = "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-stone-500 focus:outline-none";
-const button = "rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50";
-const quietButton = "rounded-md px-2 py-1 text-sm text-stone-600 hover:bg-stone-100 hover:text-stone-900";
+const inputClass = "rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:border-stone-500 focus:outline-none";
+const buttonClass =
+  "rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50";
+const quietButtonClass =
+  "rounded-md px-2 py-1 text-sm text-stone-600 hover:bg-stone-100 hover:text-stone-900 disabled:opacity-50";
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+// Runs one change at a time; resolves true when the change itself succeeded.
+type Act = (change: () => Promise<unknown>) => Promise<boolean>;
 
 export function Mentors() {
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    setMentors(await api.listMentors());
+    try {
+      setMentors(await api.listMentors());
+    } catch (e) {
+      setMentors((current) => current ?? []);
+      setError(`Could not load Mentors: ${errorText(e)}`);
+    }
   }, []);
 
-  // Runs a change, then reloads the list; any failure is shown once at the top.
-  const act = useCallback(
-    async (change: () => Promise<unknown>): Promise<boolean> => {
-      setError(null);
-      try {
-        await change();
-        await refresh();
-        return true;
-      } catch (e) {
-        setError(errorText(e));
-        return false;
-      }
-    },
-    [refresh],
-  );
+  // Controls are disabled while busy, so changes and their refreshes never interleave.
+  const act: Act = async (change) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await change();
+    } catch (e) {
+      setError(errorText(e));
+      return false;
+    } finally {
+      await refresh();
+      setBusy(false);
+    }
+    return true;
+  };
 
   useEffect(() => {
-    refresh().catch((e: unknown) => setError(errorText(e)));
+    void refresh();
   }, [refresh]);
 
   return (
@@ -45,36 +52,43 @@ export function Mentors() {
           {error}
         </p>
       )}
-      <AddMentor act={act} />
-      {mentors === null ? (
-        <p className="mt-4 text-sm text-stone-500">Loading…</p>
-      ) : mentors.length === 0 ? (
-        <p className="mt-4 text-sm text-stone-500">No Mentors yet. Paste a YouTube channel above.</p>
-      ) : (
-        <ul className="mt-4 space-y-4">
-          {mentors.map((mentor) => (
-            <MentorCard key={mentor.id} mentor={mentor} act={act} />
-          ))}
-        </ul>
-      )}
+      <fieldset disabled={busy}>
+        <AddMentor act={act} onError={setError} />
+        {mentors === null ? (
+          <p className="mt-4 text-sm text-stone-500">Loading…</p>
+        ) : mentors.length === 0 ? (
+          <p className="mt-4 text-sm text-stone-500">No Mentors yet. Paste a YouTube Channel above.</p>
+        ) : (
+          <ul className="mt-4 space-y-4">
+            {mentors.map((mentor) => (
+              <MentorCard key={mentor.id} mentor={mentor} act={act} />
+            ))}
+          </ul>
+        )}
+      </fieldset>
     </section>
   );
 }
 
-type Act = (change: () => Promise<unknown>) => Promise<boolean>;
-
-function AddMentor({ act }: { act: Act }) {
+function AddMentor({ act, onError }: { act: Act; onError: (message: string | null) => void }) {
   const [channel, setChannel] = useState("");
   const [proposal, setProposal] = useState<ChannelProposal | null>(null);
   const [name, setName] = useState("");
+  const [looking, setLooking] = useState(false);
 
-  async function resolve(event: FormEvent) {
+  async function lookUp(event: FormEvent) {
     event.preventDefault();
-    await act(async () => {
+    onError(null);
+    setLooking(true);
+    try {
       const found = await api.resolveChannel(channel);
       setProposal(found);
       setName(found.name);
-    });
+    } catch (e) {
+      onError(errorText(e));
+    } finally {
+      setLooking(false);
+    }
   }
 
   async function create(event: FormEvent) {
@@ -92,11 +106,11 @@ function AddMentor({ act }: { act: Act }) {
         <span className="text-sm text-stone-600">
           Channel <strong>{proposal.name}</strong> → Mentor name
         </span>
-        <input className={input} value={name} onChange={(e) => setName(e.target.value)} aria-label="Mentor name" />
-        <button className={button} type="submit" disabled={!name.trim()}>
+        <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} aria-label="Mentor name" />
+        <button className={buttonClass} type="submit" disabled={!name.trim()}>
           Add Mentor
         </button>
-        <button className={quietButton} type="button" onClick={() => setProposal(null)}>
+        <button className={quietButtonClass} type="button" onClick={() => setProposal(null)}>
           Cancel
         </button>
       </form>
@@ -104,16 +118,16 @@ function AddMentor({ act }: { act: Act }) {
   }
 
   return (
-    <form onSubmit={resolve} className="mt-3 flex gap-2">
+    <form onSubmit={lookUp} className="mt-3 flex gap-2">
       <input
-        className={`${input} flex-1`}
-        placeholder="YouTube channel URL or @handle"
+        className={`${inputClass} flex-1`}
+        placeholder="YouTube Channel URL or @handle"
         value={channel}
         onChange={(e) => setChannel(e.target.value)}
-        aria-label="YouTube channel URL or handle"
+        aria-label="YouTube Channel URL or handle"
       />
-      <button className={button} type="submit" disabled={!channel.trim()}>
-        Look up
+      <button className={buttonClass} type="submit" disabled={!channel.trim() || looking}>
+        {looking ? "Looking up…" : "Look up"}
       </button>
     </form>
   );
@@ -141,22 +155,22 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
         ) : (
           <form onSubmit={rename} className="flex gap-2">
             <input
-              className={input}
+              className={inputClass}
               value={renaming}
               onChange={(e) => setRenaming(e.target.value)}
               aria-label="New Mentor name"
             />
-            <button className={button} type="submit" disabled={!renaming.trim()}>
+            <button className={buttonClass} type="submit" disabled={!renaming.trim()}>
               Save
             </button>
           </form>
         )}
         <div className="flex gap-1">
-          <button className={quietButton} onClick={() => setRenaming(renaming === null ? mentor.name : null)}>
+          <button className={quietButtonClass} onClick={() => setRenaming(renaming === null ? mentor.name : null)}>
             {renaming === null ? "Rename" : "Cancel"}
           </button>
           <button
-            className={`${quietButton} text-red-700 hover:text-red-900`}
+            className={`${quietButtonClass} text-red-700 hover:text-red-900`}
             onClick={() => {
               if (confirm(`Delete ${mentor.name} and everything ingested from their Channels?`)) {
                 void act(() => api.deleteMentor(mentor.id));
@@ -182,8 +196,16 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
                 />
                 Indexed
               </label>
+              {/* The server also refuses to detach a Mentor's last Channel. */}
               {mentor.channels.length > 1 && (
-                <button className={quietButton} onClick={() => void act(() => api.detachChannel(channel.id))}>
+                <button
+                  className={quietButtonClass}
+                  onClick={() => {
+                    if (confirm(`Detach ${channel.name} and remove everything ingested from it?`)) {
+                      void act(() => api.detachChannel(channel.id));
+                    }
+                  }}
+                >
                   Detach
                 </button>
               )}
@@ -193,13 +215,13 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
       </ul>
       <form onSubmit={attach} className="mt-2 flex gap-2">
         <input
-          className={`${input} flex-1`}
-          placeholder="Attach another channel URL or @handle"
+          className={`${inputClass} flex-1`}
+          placeholder="Attach another Channel URL or @handle"
           value={attaching}
           onChange={(e) => setAttaching(e.target.value)}
-          aria-label={`Attach a channel to ${mentor.name}`}
+          aria-label={`Attach a Channel to ${mentor.name}`}
         />
-        <button className={button} type="submit" disabled={!attaching.trim()}>
+        <button className={buttonClass} type="submit" disabled={!attaching.trim()}>
           Attach
         </button>
       </form>

@@ -4,12 +4,14 @@
 
 **Blocked by:** 01 — Walking skeleton
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Two-step create: a resolve call returns the proposal (channel id, display name); a create call persists the Mentor with its first Channel
-- [ ] Attach, detach, toggle indexed, rename, delete work through the API and the UI
-- [ ] YouTube channel id is unique; attaching a Channel already owned by another Mentor is rejected with a clear error
-- [ ] Unresolvable URL or handle returns a clear validation error
-- [ ] API tests with FakeTranscriptSource cover each story, setting state only through the public API
+- [x] Two-step create: a resolve call returns the proposal (channel id, display name); a create call persists the Mentor with its first Channel
+- [x] Attach, detach, toggle indexed, rename, delete work through the API and the UI
+- [x] YouTube channel id is unique; attaching a Channel already owned by another Mentor is rejected with a clear error
+- [x] Unresolvable URL or handle returns a clear validation error
+- [x] API tests with FakeTranscriptSource cover each story, setting state only through the public API
 
 From ticket 01 review: `create_app` has no ports parameter yet; add it (required) with the first consumer and inject fakes via the harness.
+
+Done note: `create_app` takes each port as its own argument (`transcripts` today) rather than a Ports bundle, because `serve` has no real embedder, reranker, or chat engine yet. `mentor serve` wires a placeholder YouTube source that answers 503 until ticket 08, so Mentors can only be added via tests or a fake-backed server until then.

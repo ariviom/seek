@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Health } from "./api";
+import { api, errorText, type Health } from "./api";
 import { Mentors } from "./Mentors";
 
 type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
@@ -14,7 +14,7 @@ export function App() {
       .then((health) => current && setState({ kind: "ok", health }))
       .catch(
         (error: unknown) =>
-          current && setState({ kind: "error", message: error instanceof Error ? error.message : String(error) }),
+          current && setState({ kind: "error", message: errorText(error) }),
       );
     return () => {
       current = false;

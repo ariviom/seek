@@ -53,6 +53,7 @@ class Transcript:
     cues: Sequence[Cue]
 
 
+# Adapters raise only these for expected failures; messages are shown to the user as-is.
 class ChannelNotFound(Exception):
     """The URL, handle, or id does not identify a YouTube channel."""
 
@@ -62,7 +63,9 @@ class SourceUnavailable(Exception):
 
 
 class TranscriptSource(Protocol):
-    def resolve_channel(self, url_or_handle: str) -> ChannelInfo: ...
+    def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
+        """Accepts a channel URL, an @handle, or a bare channel id."""
+        ...
 
     def list_videos(self, channel_id: str) -> Sequence[VideoListing]: ...
 
@@ -124,4 +127,3 @@ type ChatEvent = TextDelta | ToolCall | ToolResult | ChatDone | ChatFailed
 
 class ChatEngine(Protocol):
     def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]: ...
-
