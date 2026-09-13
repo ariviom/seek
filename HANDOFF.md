@@ -1,6 +1,6 @@
 # Handoff — Mentor
 
-State as of 2026-09-13: tickets 01 (walking skeleton) and 02 (Mentors and Channels) are done, reviewed, and merged to `main`. Next up: ticket 03 (Mentor Groups), then 04 (Sync: discovery and transcripts). Both are unblocked; 03 is smaller.
+State as of 2026-09-13: tickets 01 (walking skeleton), 02 (Mentors and Channels), and 03 (Mentor Groups) are done, reviewed, and merged to `main`. Next up: ticket 04 (Sync: discovery and transcripts).
 
 Read in this order:
 1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Mentor").
@@ -12,8 +12,8 @@ Read in this order:
 - `create_app(config, transcripts, static_dir)`: each port is its own argument, added when its first consumer lands. `mentor serve` wires `YouTubeTranscriptSource`, a placeholder that answers 503 until ticket 08.
 - Store: `db.Database.run(fn)` runs blocking work on a thread with a fresh connection. Writes go through `db.transaction(conn)` (`BEGIN IMMEDIATE`, guarded rollback). Do read-backs inside the transaction. Migrations are appended to `db.MIGRATIONS`: additive only, never edit a shipped entry.
 - Errors: domain code raises `errors.NotFound` / `errors.Conflict`; ports raise `ChannelNotFound` / `SourceUnavailable`. All messages are user-facing and mapped to statuses in `app.ERROR_STATUS`.
-- Tests: HTTP API seam through `tests/harness.running(app)`, which runs lifespan. The `client` fixture uses a seeded `FakeTranscriptSource`; it supports `unavailable="..."` for 503 cases. Pure-function tests only for intricate logic.
-- UI: `web/src/api.ts` has typed calls and `errorText`. Components use Tailwind v4 and serialise changes with a busy lock (`Mentors.tsx`). Run `pnpm --dir web run build` before testing the served UI.
+- Tests: HTTP API seam through `tests/harness.running(app)`, which runs lifespan; `harness.add_mentor` creates a Mentor. The `client` fixture uses a seeded `FakeTranscriptSource`; it supports `unavailable="..."` for 503 cases. Pure-function tests only for intricate logic.
+- UI: `web/src/api.ts` has typed calls and `errorText`. Components use Tailwind v4; shared classes and `useChanges` (a per-section busy lock that serialises changes and refreshes) live in `web/src/ui.ts`. App lifts the Mentor list from `Mentors` into `Groups`. Run `pnpm --dir web run build` before testing the served UI.
 - Checks: `uv run pytest -q`, `uv run mypy`, `pnpm --dir web run typecheck`.
 
 ## Process

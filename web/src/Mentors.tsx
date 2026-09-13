@@ -151,7 +151,7 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
           <button
             className={`${quietButtonClass} text-red-700 hover:text-red-900`}
             onClick={() => {
-              if (confirm(`Delete ${mentor.name} and everything ingested from their Channels?`)) {
+              if (confirm(`Delete ${mentor.name}, everything ingested from their Channels, and their Mentor Group memberships?`)) {
                 void act(() => api.deleteMentor(mentor.id));
               }
             }}

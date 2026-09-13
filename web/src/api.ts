@@ -34,7 +34,10 @@ function detailMessage(body: unknown, status: number): string {
 }
 
 // Relative URLs so requests follow any reverse-proxy path prefix.
-async function request<T>(path: string, init?: { method: "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown }): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: { method: "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown },
+): Promise<T> {
   const response = await fetch(`api/${path}`, {
     method: init?.method ?? "GET",
     headers: init?.body === undefined ? undefined : { "Content-Type": "application/json" },

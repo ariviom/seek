@@ -1,5 +1,6 @@
 """Mentor Groups and their member Mentors. Functions are blocking; run them through Database.run."""
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -90,9 +91,15 @@ def set_members(conn: sqlite3.Connection, group_id: int, mentor_ids: list[int]) 
     unique_ids = list(dict.fromkeys(mentor_ids))
     with transaction(conn):
         _require_group(conn, group_id)
-        for mentor_id in unique_ids:
-            if conn.execute("SELECT 1 FROM mentors WHERE id = ?", (mentor_id,)).fetchone() is None:
-                raise NotFound(f"Mentor {mentor_id} not found")
+        # Bound as one JSON array: no placeholder per id, and ids beyond SQLite's integer range simply match nothing.
+        found = {
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM mentors WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(unique_ids),)
+            )
+        }
+        if missing := [mentor_id for mentor_id in unique_ids if mentor_id not in found]:
+            raise NotFound(f"Mentor {missing[0]} not found")
         conn.execute("DELETE FROM mentor_group_members WHERE group_id = ?", (group_id,))
         conn.executemany(
             "INSERT INTO mentor_group_members (group_id, mentor_id) VALUES (?, ?)",

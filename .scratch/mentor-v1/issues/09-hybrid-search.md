@@ -13,3 +13,5 @@
 - [ ] Matched cue = the Segment cue with the highest query-term overlap, else Segment start; Citation URL uses that time
 - [ ] Result shape matches the spec; search API and a UI results page
 - [ ] API tests: scoping, not-indexed exclusion, recency ordering on planted near-ties, citation fields
+
+From ticket 03 review: Group names may be all digits (e.g. "12"), so `group` accepting "id or name" is ambiguous when a Group named "12" and a Group with id 12 both exist. Decide the rule here (e.g. JSON number = id, string = name) and document it.

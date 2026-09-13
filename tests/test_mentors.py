@@ -1,24 +1,13 @@
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
-from harness import running
+from harness import add_mentor, running
 
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeTranscriptSource
-
-type Json = dict[str, Any]
-
-
-async def add_mentor(client: httpx.AsyncClient, name: str, channel: str) -> Json:
-    response = await client.post("/api/mentors", json={"name": name, "channel": channel})
-    assert response.status_code == 201, response.text
-    mentor: Json = response.json()
-    return mentor
-
 
 async def test_resolving_a_channel_proposes_its_display_name_as_the_mentor_name(
     client: httpx.AsyncClient,

@@ -1,17 +1,21 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorText, type Mentor, type MentorGroup } from "./api";
 import { buttonClass, inputClass, quietButtonClass, useChanges, type Act } from "./ui";
 
-// `mentors` is null until the Mentors section has loaded; each new list also refreshes the Groups,
-// since renaming or deleting a Mentor changes their members.
+// `mentors` is null until the Mentors section has loaded.
 export function Groups({ mentors }: { mentors: Mentor[] | null }) {
   const [groups, setGroups] = useState<MentorGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const latestLoad = useRef(0);
 
   const refresh = useCallback(async () => {
+    // Reloads can overlap when a Mentor change lands during a Group change; only the latest may apply.
+    const load = ++latestLoad.current;
     try {
-      setGroups(await api.listGroups());
+      const listed = await api.listGroups();
+      if (load === latestLoad.current) setGroups(listed);
     } catch (e) {
+      if (load !== latestLoad.current) return;
       setGroups((current) => current ?? []);
       setError(`Could not load Mentor Groups: ${errorText(e)}`);
     }
@@ -19,9 +23,11 @@ export function Groups({ mentors }: { mentors: Mentor[] | null }) {
 
   const { act, busy } = useChanges(refresh, setError);
 
+  // Renaming or deleting a Mentor changes Group members; Channel changes don't.
+  const mentorNames = mentors?.map((m) => `${m.id}:${m.name}`).join("\n");
   useEffect(() => {
     void refresh();
-  }, [refresh, mentors]);
+  }, [refresh, mentorNames]);
 
   return (
     <section className="mt-10">
@@ -40,7 +46,7 @@ export function Groups({ mentors }: { mentors: Mentor[] | null }) {
         ) : (
           <ul className="mt-4 space-y-4">
             {groups.map((group) => (
-              <GroupCard key={group.id} group={group} mentors={mentors ?? []} act={act} />
+              <GroupCard key={group.id} group={group} mentors={mentors ?? group.mentors} act={act} />
             ))}
           </ul>
         )}
@@ -64,7 +70,7 @@ function AddGroup({ act }: { act: Act }) {
         placeholder="New Mentor Group name, e.g. Woodworking"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        aria-label="New Mentor Group name"
+        aria-label="Mentor Group name"
       />
       <button className={buttonClass} type="submit" disabled={!name.trim()}>
         Create Group
@@ -73,7 +79,8 @@ function AddGroup({ act }: { act: Act }) {
   );
 }
 
-function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: Mentor[]; act: Act }) {
+// `mentors` is every Mentor that can be ticked: all of them once loaded, else just the members.
+function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: MentorGroup["mentors"]; act: Act }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const memberIds = group.mentors.map((m) => m.id);
 

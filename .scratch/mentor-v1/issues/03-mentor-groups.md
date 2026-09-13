@@ -4,9 +4,11 @@
 
 **Blocked by:** 02 — Mentors and Channels
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Group create, rename, delete, set members via API and UI
-- [ ] Group names are unique
-- [ ] A Mentor in several Groups appears in each; deleting a Mentor removes it from every Group
-- [ ] API tests cover many-to-many membership and the uniqueness error
+- [x] Group create, rename, delete, set members via API and UI
+- [x] Group names are unique
+- [x] A Mentor in several Groups appears in each; deleting a Mentor removes it from every Group
+- [x] API tests cover many-to-many membership and the uniqueness error
+
+Done note: `PUT /api/groups/{id}/members` replaces the member set (repeats collapse; any unknown Mentor id is a 404 and nothing changes). `GET /api/groups` lists Groups with member Mentors. Group names are unique ignoring ASCII case, like Mentor names. `mentor_groups.id` is AUTOINCREMENT, so a deleted Group's id is never reused. Mentors and Mentor Groups keep separate busy locks in the UI; the Groups section reloads when a Mentor is added, renamed, or deleted and discards out-of-order reloads.

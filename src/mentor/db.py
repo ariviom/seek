@@ -27,8 +27,10 @@ MIGRATIONS = [
     CREATE INDEX channels_mentor_id ON channels(mentor_id);
     """,
     """
+    -- AUTOINCREMENT: a deleted Group's id is never reused, so records that outlive it can't
+    -- attach to a new Group.
     CREATE TABLE mentor_groups (
-        id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE COLLATE NOCASE
     );
     CREATE TABLE mentor_group_members (
