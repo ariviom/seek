@@ -6,7 +6,7 @@ from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
 
 
 async def test_health_reports_server_ok(client: httpx.AsyncClient) -> None:
@@ -31,7 +31,7 @@ async def test_server_refuses_to_start_when_the_data_dir_is_unusable(tmp_path: P
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("")
     app = create_app(
-        Config(data_dir=blocker / "data"), FakeTranscriptSource(), FakeEmbedder(), static_dir=tmp_path / "no-bundle"
+        Config(data_dir=blocker / "data"), FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle"
     )
 
     with pytest.raises(OSError):

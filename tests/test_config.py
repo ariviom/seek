@@ -101,3 +101,16 @@ def test_invalid_youtube_settings_are_rejected(tmp_path: Path, file_text: str, e
 
     with pytest.raises(ConfigError):
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
+
+
+def test_search_recency_half_lives_are_configurable(tmp_path: Path) -> None:
+    write_config(tmp_path, "gentle_recency_half_life_days = 1825\n")
+
+    defaults = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
+    config = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_STRONG_RECENCY_HALF_LIFE_DAYS": "365"})
+
+    assert (defaults.gentle_recency_half_life_days, defaults.strong_recency_half_life_days) == (3650, 1095)
+    assert (config.gentle_recency_half_life_days, config.strong_recency_half_life_days) == (1825, 365)
+    for invalid in ({"MENTOR_GENTLE_RECENCY_HALF_LIFE_DAYS": "0"}, {"MENTOR_STRONG_RECENCY_HALF_LIFE_DAYS": "soon"}):
+        with pytest.raises(ConfigError):
+            load_config({"XDG_CONFIG_HOME": str(tmp_path), **invalid})

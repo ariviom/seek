@@ -15,7 +15,7 @@ from harness import (
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import VideoUnavailable
 
 NO_COUNTS = {
@@ -31,7 +31,7 @@ NO_COUNTS = {
 
 def make_app(config: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> FastAPI:
     return create_app(
-        config, transcripts, FakeEmbedder(), static_dir=tmp_path / "no-bundle", events_keepalive_seconds=0.02
+        config, transcripts, FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle", events_keepalive_seconds=0.02
     )
 
 

@@ -57,6 +57,32 @@ export type Sync = {
   stage_counts: Record<Stage, number>;
 };
 
+export type PreferRecent = "off" | "gentle" | "strong";
+// At most one of `group` (a number is an id, a string a name) and `mentors`; neither searches every Mentor.
+export type SearchRequest = {
+  query: string;
+  group?: number | string;
+  mentors?: number[];
+  limit?: number;
+  prefer_recent?: PreferRecent;
+};
+export type SearchResult = {
+  segment_id: number;
+  text: string;
+  start_seconds: number;
+  // Where the Citation points: the cue that best matched the question.
+  matched_seconds: number;
+  video_id: number;
+  youtube_video_id: string;
+  video_title: string;
+  published_on: string;
+  chapter_title: string | null;
+  channel_name: string;
+  mentor_name: string;
+  score: number;
+  url: string;
+};
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -118,4 +144,5 @@ export const api = {
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
+  search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
 };

@@ -15,7 +15,9 @@ from mentor.events import Events
 from mentor.events_api import events_router
 from mentor.groups_api import groups_router
 from mentor.mentors_api import mentors_router
-from mentor.ports import ChannelNotFound, Embedder, ModelUnavailable, SourceUnavailable, TranscriptSource
+from mentor.ports import ChannelNotFound, Embedder, ModelUnavailable, Reranker, SourceUnavailable, TranscriptSource
+from mentor.search import Search
+from mentor.search_api import search_router
 from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
 
@@ -39,12 +41,16 @@ def create_app(
     config: Config,
     transcripts: TranscriptSource,
     embedder: Embedder,
+    reranker: Reranker,
     static_dir: Path = PACKAGE_STATIC_DIR,
     sync_poll_seconds: float = 5.0,
     events_keepalive_seconds: float = 15.0,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
+    search = Search(
+        database, embedder, reranker, config.gentle_recency_half_life_days, config.strong_recency_half_life_days
+    )
     worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds, events)
 
     @asynccontextmanager
@@ -72,6 +78,7 @@ def create_app(
     app.include_router(mentors_router(database, transcripts, events), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(syncs_router(database, events, worker.wake), prefix="/api")
+    app.include_router(search_router(search), prefix="/api")
     app.include_router(events_router(events, events_keepalive_seconds), prefix="/api")
 
     # Mounted last: a catch-all at "/" would shadow routes registered after it.

@@ -14,6 +14,10 @@ MAX_EMBEDDING_DIMENSION = 8192
 DEFAULT_YOUTUBE_DELAY_SECONDS = 10
 DEFAULT_YOUTUBE_RETRIES = 3
 DEFAULT_YOUTUBE_BACKOFF_SECONDS = 30
+# Search halves a Video's score for every half-life of its age. Gentle breaks near-ties toward newer Videos (a
+# two-year-old Video keeps 87% of its score); strong buries old ones (a two-year-old Video keeps 63%).
+DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS = 3650
+DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS = 1095
 
 
 class ConfigError(Exception):
@@ -36,6 +40,9 @@ class Config:
     youtube_backoff_seconds: int = DEFAULT_YOUTUBE_BACKOFF_SECONDS
     # A Netscape-format cookies.txt exported from a signed-in browser; yt-dlp also writes refreshed cookies back to it.
     youtube_cookie_file: Path | None = None
+    # Half-lives for search's prefer_recent levels "gentle" (the default) and "strong".
+    gentle_recency_half_life_days: int = DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS
+    strong_recency_half_life_days: int = DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS
 
     @property
     def database_path(self) -> Path:
@@ -117,6 +124,12 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     cookie_file = None
     if "youtube_cookie_file" in raw:
         cookie_file = _absolute_path("youtube_cookie_file", *raw["youtube_cookie_file"])
+    gentle_half_life = DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS
+    if "gentle_recency_half_life_days" in raw:
+        gentle_half_life = _integer("gentle_recency_half_life_days", *raw["gentle_recency_half_life_days"], 1, 36500)
+    strong_half_life = DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS
+    if "strong_recency_half_life_days" in raw:
+        strong_half_life = _integer("strong_recency_half_life_days", *raw["strong_recency_half_life_days"], 1, 36500)
     return Config(
         data_dir=data_dir,
         port=port,
@@ -127,4 +140,6 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         youtube_retries=youtube_retries,
         youtube_backoff_seconds=youtube_backoff,
         youtube_cookie_file=cookie_file,
+        gentle_recency_half_life_days=gentle_half_life,
+        strong_recency_half_life_days=strong_half_life,
     )

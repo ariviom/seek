@@ -1,0 +1,264 @@
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+import httpx
+import pytest
+from harness import Json, add_mentor, fake_channel, fake_video, running, start_sync, wait_for_syncs
+
+from mentor.app import create_app
+from mentor.config import Config
+from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.ports import Chapter, Cue
+
+
+def said(*lines: str, every: float = 5.0) -> list[Cue]:
+    return [Cue(start=i * every, end=(i + 1) * every, text=line) for i, line in enumerate(lines)]
+
+
+async def search(client: httpx.AsyncClient, query: str, **scope: object) -> list[Json]:
+    response = await client.post("/api/search", json={"query": query, **scope})
+    assert response.status_code == 200, response.text
+    results: list[Json] = response.json()
+    return results
+
+
+async def sync(client: httpx.AsyncClient, *mentors: Json) -> None:
+    for mentor in mentors:
+        for channel in mentor["channels"]:
+            await start_sync(client, channel["id"])
+    assert all(s["status"] == "done" for s in await wait_for_syncs(client))
+
+
+async def test_a_result_carries_its_mentor_video_chapter_and_a_citation_to_the_matched_cue(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video(
+            "v-dovetails",
+            "Hand-cut dovetails",
+            published_on=date(2024, 5, 17),
+            chapters=[Chapter(title="Intro", start=0, end=30), Chapter(title="Sawing", start=30, end=600)],
+            cues=[
+                Cue(start=0, end=30, text="Welcome back to the shop"),
+                Cue(start=30, end=35, text="First knife the baseline all round"),
+                Cue(start=35, end=41.5, text="Now the saw does the work"),
+                Cue(start=41.5, end=48, text="Keep the kerf on the waste side of the line"),
+            ],
+        )
+    )
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-sheath", "Leather sheath", cues=said("Stitch the sheath with waxed thread"))
+    )
+    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
+    await sync(client, wright, await add_mentor(client, "Rex Krueger", "@rexkrueger"))
+
+    results = await search(client, "which side of the line does the kerf go")
+
+    assert results[0] == {
+        "segment_id": results[0]["segment_id"],
+        "text": (
+            "First knife the baseline all round Now the saw does the work Keep the kerf on the waste side of the line"
+        ),
+        "start_seconds": 30.0,
+        "matched_seconds": 41.5,
+        "video_id": results[0]["video_id"],
+        "youtube_video_id": "v-dovetails",
+        "video_title": "Hand-cut dovetails",
+        "published_on": "2024-05-17",
+        "chapter_title": "Sawing",
+        "channel_name": "Wood By Wright",
+        "mentor_name": "Paul Wright",
+        "score": results[0]["score"],
+        "url": "https://www.youtube.com/watch?v=v-dovetails&t=41s",
+    }
+    assert isinstance(results[0]["segment_id"], int) and isinstance(results[0]["video_id"], int)
+    assert 0 < results[0]["score"] <= 1
+    assert sorted(r["youtube_video_id"] for r in results) == ["v-dovetails", "v-dovetails", "v-sheath"]
+    assert [r["score"] for r in results] == sorted((r["score"] for r in results), reverse=True)
+
+
+async def test_search_is_scoped_to_a_group_by_id_or_name_to_mentors_or_to_everything(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    for youtube_id, video_id in [("UC-wright", "v-wright"), ("UC-rex", "v-rex")]:
+        fake_channel(transcripts, youtube_id).videos.append(
+            fake_video(video_id, video_id, cues=said("Sharpen the chisel on a fine stone"))
+        )
+    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    await sync(client, wright, rex)
+    # A Group can be named like another Group's id: a JSON number is an id, a string is a name.
+    first = (await client.post("/api/groups", json={"name": "Joinery"})).json()
+    named_like_an_id = (await client.post("/api/groups", json={"name": str(first["id"])})).json()
+    await client.put(f"/api/groups/{first['id']}/members", json={"mentor_ids": [wright["id"]]})
+    await client.put(f"/api/groups/{named_like_an_id['id']}/members", json={"mentor_ids": [rex["id"]]})
+
+    async def found(**scope: object) -> set[str]:
+        return {r["youtube_video_id"] for r in await search(client, "sharpen a chisel", **scope)}
+
+    assert await found() == {"v-wright", "v-rex"}
+    assert await found(group=first["id"]) == {"v-wright"}
+    assert await found(group="joinery") == {"v-wright"}
+    assert await found(group=str(first["id"])) == {"v-rex"}
+    assert await found(mentors=[rex["id"]]) == {"v-rex"}
+    assert await found(mentors=[rex["id"], wright["id"]]) == {"v-wright", "v-rex"}
+    empty = (await client.post("/api/groups", json={"name": "Empty"})).json()
+    assert await found(group=empty["id"]) == set()
+
+
+@pytest.mark.parametrize(
+    ("body", "status"),
+    [
+        ({"query": "chisel", "group": 1, "mentors": [1]}, 422),
+        ({"query": "chisel", "mentors": []}, 422),
+        ({"query": "   "}, 422),
+        ({"query": "chisel", "limit": 0}, 422),
+        ({"query": "chisel", "limit": 51}, 422),
+        ({"query": "chisel", "prefer_recent": "always"}, 422),
+        ({"query": "chisel", "group": 999}, 404),
+        ({"query": "chisel", "group": "Nobody"}, 404),
+        ({"query": "chisel", "mentors": [999]}, 404),
+    ],
+)
+async def test_invalid_searches_are_rejected(client: httpx.AsyncClient, body: Json, status: int) -> None:
+    await add_mentor(client, "Wood By Wright", "@woodbywright")
+    await client.post("/api/groups", json={"name": "Joinery"})
+
+    response = await client.post("/api/search", json=body)
+
+    assert response.status_code == status, response.text
+
+
+async def test_not_indexed_channels_are_left_out_of_every_scope(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-main", "Main", cues=said("Flatten the board")))
+    fake_channel(transcripts, "UC-wright-vlog").videos.append(
+        fake_video("v-vlog", "Vlog", cues=said("Flatten the board at the cabin"))
+    )
+    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
+    wright["channels"].append(vlog)
+    await sync(client, wright)
+    group = (await client.post("/api/groups", json={"name": "Joinery"})).json()
+    await client.put(f"/api/groups/{group['id']}/members", json={"mentor_ids": [wright["id"]]})
+
+    before = await search(client, "flatten the board")
+    await client.patch(f"/api/channels/{vlog['id']}", json={"indexed": False})
+
+    assert {r["youtube_video_id"] for r in before} == {"v-main", "v-vlog"}
+    for scope in ({}, {"group": group["id"]}, {"mentors": [wright["id"]]}):
+        assert [r["youtube_video_id"] for r in await search(client, "flatten the board", **scope)] == ["v-main"]
+
+
+async def test_newer_videos_win_near_ties_gently_by_default_and_strongly_when_asked(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    # Search measures age from the UTC date.
+    today = datetime.now(UTC).date()
+    fake_channel(transcripts, "UC-wright").videos += [
+        # The fake reranker scores the share of query words present: 4 of 4, 3 of 4, and 1 of 4.
+        fake_video(
+            "v-old-best", "Old", published_on=today - timedelta(days=730), cues=said("sharpen chisel bevel honing")
+        ),
+        fake_video("v-new-close", "Close", published_on=today, cues=said("sharpen chisel bevel")),
+        fake_video("v-new-weak", "Weak", published_on=today, cues=said("sharpen")),
+    ]
+    await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
+
+    async def order(**options: object) -> list[str]:
+        return [r["youtube_video_id"] for r in await search(client, "sharpen chisel bevel honing", **options)]
+
+    assert await order(prefer_recent="off") == ["v-old-best", "v-new-close", "v-new-weak"]
+    # Two years older loses the near-tie, but still beats a clearly worse match.
+    assert await order() == await order(prefer_recent="gentle") == ["v-new-close", "v-old-best", "v-new-weak"]
+    assert await order(prefer_recent="strong") == ["v-new-close", "v-new-weak", "v-old-best"]
+
+
+async def test_exact_jargon_is_found_lexically_beyond_the_nearest_vectors(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(f"v-technique-{n}", f"Technique {n}", cues=said("technique")) for n in range(60)
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-domino", "Loose tenons", cues=said("the domino joiner makes loose tenons quickly for many other jobs"))
+    )
+    await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
+    await sync(client, await add_mentor(client, "Rex Krueger", "@rexkrueger"))
+
+    # Every "technique" Segment is nearer the query than the long one naming the tool.
+    results = await search(client, "domino joiner technique")
+    syntax = await client.post("/api/search", json={"query": 'C++ "domino" NEAR(joiner -technique*) OR'})
+
+    assert results[0]["youtube_video_id"] == "v-domino"
+    assert syntax.status_code == 200, syntax.text
+    assert syntax.json()[0]["youtube_video_id"] == "v-domino"
+
+
+async def test_videos_still_in_the_pipeline_are_not_searchable(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-done", "Done", cues=said("flatten the board")))
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-stuck", "Stuck", cues=said("flatten the board")))
+    await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
+    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    embedder.unavailable = "CUDA out of memory"
+    await start_sync(client, rex["channels"][0]["id"])
+    [stopped, _] = await wait_for_syncs(client)
+    embedder.unavailable = None
+
+    results = await search(client, "flatten the board")
+
+    assert (stopped["status"], stopped["stage_counts"]["segmented"]) == ("failed", 1)
+    assert [r["youtube_video_id"] for r in results] == ["v-done"]
+
+
+class Synonyms(FakeEmbedder):
+    """Embeds "hone" as "sharpen": a paraphrase the vector search finds and the lexical search can't."""
+
+    def _embed(self, text: str) -> list[float]:
+        return super()._embed(text.replace("hone", "sharpen"))
+
+
+async def test_a_small_mentor_in_a_large_corpus_still_gets_vector_hits_and_at_most_50_are_reranked(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    reranker = FakeReranker()
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(f"v-wright-{n}", f"Wright {n}", cues=said(f"sharpen chisel bevel {n}")) for n in range(60)
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex", cues=said("hone blade")))
+    app = create_app(config, transcripts, Synonyms(), reranker, static_dir=tmp_path / "no-bundle")
+
+    async with running(app) as client:
+        wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        await sync(client, wright, rex)
+        everything = await search(client, "sharpen chisel")
+        just_rex = await search(client, "sharpen chisel", mentors=[rex["id"]], limit=50)
+
+    assert len(everything) == 10
+    # Rex's Segment shares no words with the query and is further from it than any of Wright's 60.
+    assert [r["youtube_video_id"] for r in just_rex] == ["v-rex"]
+    assert [len(passages) for _, passages in reranker.calls] == [50, 1]
+
+
+@pytest.mark.parametrize("model", ["embedder", "reranker"])
+async def test_search_reports_an_unavailable_model(
+    client: httpx.AsyncClient,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    model: str,
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
+    await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
+    if model == "embedder":
+        embedder.unavailable = "The model is still loading"
+    else:
+        reranker.unavailable = "The model is still loading"
+
+    response = await client.post("/api/search", json={"query": "welcome"})
+
+    assert (response.status_code, response.json()) == (503, {"detail": "The model is still loading"})

@@ -13,3 +13,7 @@
 - [ ] MCP transport's allowed-hosts list is configurable so proxied Host headers are not rejected by DNS-rebinding protection
 - [ ] Expand available in the API and the search UI
 - [ ] Tests over an in-memory MCP client: tool listing, guidance present, search shape parity, sql rejections including `load_extension`
+
+From ticket 09 review:
+- Reuse `search.Search` (built in `create_app`) for the `search` tool. State the Group rule in its description: a number is a Group id, a string is a Group name. `limit` is 1–50; `prefer_recent` is `off | gentle | strong`.
+- The web Search section (`web/src/Search.tsx`) is where Expand goes; results carry `segment_id`.

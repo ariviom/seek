@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn>=0.52",
     "sqlite-vec>=0.1.9",
     "yt-dlp[default]>=2026.8",
+    "snowballstemmer>=3.1.1",
 ]
 
 [project.scripts]
@@ -49,5 +50,5 @@ strict = true
 files = ["src", "tests", "hatch_build.py"]
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec", "hatchling.*", "yt_dlp", "yt_dlp.*"]
+module = ["sqlite_vec", "hatchling.*", "yt_dlp", "yt_dlp.*", "snowballstemmer"]
 ignore_missing_imports = true

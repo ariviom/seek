@@ -11,9 +11,20 @@ export const quietButtonClass =
   "rounded-[3px] px-2 py-1 text-[15px] text-pencil hover:bg-ink/5 hover:text-ink disabled:opacity-45";
 export const dangerButtonClass =
   "rounded-[3px] px-2 py-1 text-[15px] text-oxide hover:bg-oxide/10 disabled:opacity-45";
+// A label wrapping a checkbox, drawn as a pill that fills when ticked.
+export const chipClass =
+  "flex cursor-pointer items-center gap-2 rounded-full border border-rule bg-white px-3 py-1 text-[15px] text-pencil hover:border-machine/60 has-checked:border-machine has-checked:bg-machine/10 has-checked:text-ink";
 export const sectionHeadingClass = "font-condensed text-[1.75rem] leading-none font-semibold";
 export const alertClass = "mt-3 rounded-[3px] border-l-4 border-oxide bg-oxide/10 px-3 py-2 text-sm text-oxide";
 export const hintClass = "text-sm text-pencil";
+
+export function formatDuration(seconds: number | null): string {
+  if (seconds === null) return "";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = String(seconds % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
 
 // Runs one change at a time; resolves true when the change itself succeeded.
 export type Act = (change: () => Promise<unknown>) => Promise<boolean>;

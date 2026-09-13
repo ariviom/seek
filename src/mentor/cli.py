@@ -5,7 +5,7 @@ import uvicorn
 
 from mentor.app import create_app
 from mentor.config import ConfigError, load_config
-from mentor.embeddings import SentenceTransformerEmbedder
+from mentor.embeddings import SentenceTransformerEmbedder, SentenceTransformerReranker
 from mentor.youtube import YouTubeSettings, YouTubeTranscriptSource
 
 HOST = "127.0.0.1"
@@ -27,7 +27,7 @@ def serve() -> None:
             cookie_file=config.youtube_cookie_file,
         )
     )
-    app = create_app(config, youtube, embedder)
+    app = create_app(config, youtube, embedder, SentenceTransformerReranker())
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
     uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 

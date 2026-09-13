@@ -125,10 +125,19 @@ class FakeEmbedder:
         return self._embed(text)
 
 
+@dataclass
 class FakeReranker:
     """Fraction of distinct query words present in the passage."""
 
+    # When set, every call raises ModelUnavailable with this message.
+    unavailable: str | None = None
+    # Every call as (query, passages), in order.
+    calls: list[tuple[str, list[str]]] = field(default_factory=list)
+
     def score(self, query: str, passages: Sequence[str]) -> list[float]:
+        if self.unavailable is not None:
+            raise ModelUnavailable(self.unavailable)
+        self.calls.append((query, list(passages)))
         wanted = set(_tokens(query))
         if not wanted:
             return [0.0 for _ in passages]

@@ -1,15 +1,7 @@
 import { useCallback } from "react";
 import { api, errorText, type Video } from "./api";
 import { useLiveList, type Reaction, type ServerEvent } from "./events";
-import { stageFill, stageLabels } from "./ui";
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = String(seconds % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
-}
+import { formatDuration, stageFill, stageLabels } from "./ui";
 
 // The API's order: newest first, undated last.
 function newestFirst(a: Video, b: Video): number {

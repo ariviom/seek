@@ -124,7 +124,11 @@ class Embedder(Protocol):
 
 
 class Reranker(Protocol):
-    def score(self, query: str, passages: Sequence[str]) -> list[float]: ...
+    """Raises ModelUnavailable when the model can't be used."""
+
+    def score(self, query: str, passages: Sequence[str]) -> list[float]:
+        """Raw relevance logits, one per passage; search squashes them with a sigmoid, so don't return probabilities."""
+        ...
 
 
 @dataclass(frozen=True)

@@ -18,3 +18,7 @@ From ticket 05 review:
 - The Embedder port promises `model_name` and `dimension` before loading; the stub `embeddings.SentenceTransformerEmbedder` takes them from config. If the adapter falls back to another model, it must report the fallback's name and dimension (and the startup check must see them), or refuse rather than silently store vectors under the primary's stamp. Nothing ties `embedding_dimension` to the model: validate it on load and raise a clear `ModelUnavailable`.
 - Map GPU OOM to `ModelUnavailable` so it stops the Sync; other embedder exceptions currently fail one Video transiently.
 - Startup refusals (model mismatch, newer schema) raise `RuntimeError` inside the lifespan, which uvicorn prints as a traceback. Consider surfacing them as a one-line `mentor: ...` exit like config errors.
+
+From ticket 09 review:
+- The Reranker port returns raw logits and `ranking.recency_score` applies the sigmoid. sentence-transformers' CrossEncoder may default to a sigmoid activation for one-label models; make sure the adapter returns logits, or scores collapse into 0.5–0.73 and recency dominates. The default half-lives (gentle 3650 days, strong 1095) were chosen against the fake's 0–1 scores; check them against real logits on a planted near-tie.
+- `embeddings.SentenceTransformerReranker` takes no arguments; build it from reranker model config like the embedder. `search.Search` calls `embed_query` and `score` through `asyncio.to_thread`; move both to the GPU executor.

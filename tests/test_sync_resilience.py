@@ -18,7 +18,7 @@ from harness import (
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import ModelUnavailable, VideoUnavailable
 
 
@@ -55,7 +55,7 @@ async def test_an_interrupted_sync_resumes_only_the_unfinished_videos_when_rerun
     else:
         embedder.error = ModelUnavailable("Network unreachable")
 
-    async with running(create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")) as client:
+    async with running(create_app(config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle")) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
         channel_id = mentor["channels"][0]["id"]
         await start_sync(client, channel_id)
@@ -96,7 +96,7 @@ async def test_a_normal_sync_skips_permanent_failures_and_retry_failed_recovers_
         fake_video("v-ok", "Fine"),
     ]
 
-    async with running(create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")) as client:
+    async with running(create_app(config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle")) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
         channel_id = mentor["channels"][0]["id"]
         await start_sync(client, channel_id)

@@ -3,6 +3,7 @@ import { api, errorText, type Mentor, type MentorGroup } from "./api";
 import {
   alertClass,
   buttonClass,
+  chipClass,
   dangerButtonClass,
   hintClass,
   inputClass,
@@ -12,8 +13,14 @@ import {
   type Act,
 } from "./ui";
 
-// `mentors` is null until the Mentors section has loaded.
-export function Groups({ mentors }: { mentors: Mentor[] | null }) {
+// `mentors` is null until the Mentors section has loaded. `onLoaded` receives every Group list loaded.
+export function Groups({
+  mentors,
+  onLoaded,
+}: {
+  mentors: Mentor[] | null;
+  onLoaded: (groups: MentorGroup[]) => void;
+}) {
   const [groups, setGroups] = useState<MentorGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const latestLoad = useRef(0);
@@ -23,13 +30,15 @@ export function Groups({ mentors }: { mentors: Mentor[] | null }) {
     const load = ++latestLoad.current;
     try {
       const listed = await api.listGroups();
-      if (load === latestLoad.current) setGroups(listed);
+      if (load !== latestLoad.current) return;
+      setGroups(listed);
+      onLoaded(listed);
     } catch (e) {
       if (load !== latestLoad.current) return;
       setGroups((current) => current ?? []);
       setError(`Could not load Mentor Groups: ${errorText(e)}`);
     }
-  }, []);
+  }, [onLoaded]);
 
   const { act, busy } = useChanges(refresh, setError);
 
@@ -152,7 +161,7 @@ function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: Mento
         <ul className="mt-3 flex flex-wrap gap-2" aria-label={`Mentors in ${group.name}`}>
           {mentors.map((mentor) => (
             <li key={mentor.id}>
-              <label className="flex cursor-pointer items-center gap-2 rounded-full border border-rule bg-white px-3 py-1 text-[15px] text-pencil hover:border-machine/60 has-checked:border-machine has-checked:bg-machine/10 has-checked:text-ink">
+              <label className={chipClass}>
                 <input
                   type="checkbox"
                   checked={memberIds.includes(mentor.id)}

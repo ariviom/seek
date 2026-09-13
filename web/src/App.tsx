@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, errorText, type Health, type Mentor } from "./api";
+import { api, errorText, type Health, type Mentor, type MentorGroup } from "./api";
 import { Groups } from "./Groups";
 import { Mentors } from "./Mentors";
+import { Search } from "./Search";
 import { Syncs } from "./Syncs";
 
 type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
@@ -9,6 +10,7 @@ type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind
 export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
+  const [groups, setGroups] = useState<MentorGroup[] | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -38,8 +40,9 @@ export function App() {
       </header>
       <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <main className="min-w-0 space-y-12">
+          <Search mentors={mentors} groups={groups} />
           <Mentors onLoaded={setMentors} />
-          <Groups mentors={mentors} />
+          <Groups mentors={mentors} onLoaded={setGroups} />
         </main>
         <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
           <Syncs />

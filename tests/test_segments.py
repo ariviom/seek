@@ -22,7 +22,7 @@ from harness import (
 from mentor import db
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import Chapter, Cue
 
 
@@ -199,7 +199,7 @@ async def test_a_video_that_cannot_be_embedded_fails_alone_and_is_retried_on_the
         fake_video("v-garbled", "Garbled", cues=spoken("garbled", until=100)),
         fake_video("v-ok", "Fine"),
     ]
-    app = create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
@@ -232,7 +232,7 @@ async def test_the_embedding_model_can_change_until_vectors_are_stored_then_othe
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
 
     def app(embedder: FakeEmbedder) -> FastAPI:
-        return create_app(config, transcripts, embedder, static_dir=tmp_path / "no-bundle")
+        return create_app(config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle")
 
     async with running(app(FakeEmbedder())):
         pass
