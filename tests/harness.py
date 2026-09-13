@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import date
@@ -7,6 +8,8 @@ from typing import Any, Literal
 import httpx
 from fastapi import FastAPI
 
+from mentor import db
+from mentor.config import Config
 from mentor.fakes import FakeVideo
 from mentor.ports import Chapter, Cue, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
@@ -45,6 +48,7 @@ def fake_video(
     language: str = "en",
     failure: VideoUnavailable | None = None,
     before_fetch: Callable[[], None] | None = None,
+    cues: Sequence[Cue] | None = None,
 ) -> FakeVideo:
     return FakeVideo(
         listing=VideoListing(video_id=video_id, title=title, duration_seconds=listed_duration),
@@ -59,7 +63,8 @@ def fake_video(
         transcript=Transcript(
             source=source,
             language=language,
-            cues=[Cue(start=0.0, end=4.0, text=f"Welcome to {title}"), Cue(start=4.0, end=9.5, text="Let's begin")],
+            cues=cues
+            or [Cue(start=0.0, end=4.0, text=f"Welcome to {title}"), Cue(start=4.0, end=9.5, text="Let's begin")],
         ),
         failure=failure,
         before_fetch=before_fetch,
@@ -81,3 +86,19 @@ async def wait_for_syncs(client: httpx.AsyncClient, timeout: float = 5.0) -> lis
             if all(s["status"] not in ("queued", "running") for s in syncs):
                 return syncs
             await asyncio.sleep(0.02)
+
+
+def query(config: Config, sql: str, params: Sequence[object] = ()) -> list[sqlite3.Row]:
+    """Reads the knowledge base directly, for state no API exposes yet."""
+    conn = db.connect(config.database_path)
+    try:
+        rows: list[sqlite3.Row] = conn.execute(sql, params).fetchall()
+        return rows
+    finally:
+        conn.close()
+
+
+def row_counts(config: Config) -> dict[str, int]:
+    """Rows per table, including the FTS5 index's own row table and the vector table."""
+    tables = ("videos", "transcripts", "segments", "segments_fts_docsize", "segment_vectors")
+    return {table: query(config, f"SELECT count(*) FROM {table}")[0][0] for table in tables}

@@ -3,11 +3,18 @@ import contextlib
 import logging
 import uuid
 
-from mentor import syncs, videos
+from mentor import segments, syncs, videos
 from mentor.db import Database
-from mentor.ports import ChannelNotFound, SourceUnavailable, TranscriptSource, VideoUnavailable
+from mentor.ports import (
+    ChannelNotFound,
+    Embedder,
+    ModelUnavailable,
+    SourceUnavailable,
+    TranscriptSource,
+    VideoUnavailable,
+)
 from mentor.syncs import ClaimedSync
-from mentor.videos import PendingVideo
+from mentor.videos import PendingVideo, PipelineStage, StageOutcome
 
 log = logging.getLogger(__name__)
 
@@ -19,10 +26,16 @@ class SyncWorker:
     """Runs queued Syncs one at a time, only while holding the lease shared by every mentor process."""
 
     def __init__(
-        self, database: Database, transcripts: TranscriptSource, min_duration_seconds: int, poll_seconds: float
+        self,
+        database: Database,
+        transcripts: TranscriptSource,
+        embedder: Embedder,
+        min_duration_seconds: int,
+        poll_seconds: float,
     ) -> None:
         self._database = database
         self._transcripts = transcripts
+        self._embedder = embedder
         self._min_duration_seconds = min_duration_seconds
         # Polling picks up Syncs queued by other processes and leases they give up.
         self._poll_seconds = poll_seconds
@@ -90,11 +103,9 @@ class SyncWorker:
             if new_videos is None or not await self._progress(sync, new_videos):
                 return
             for video in await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id)):
-                if video.pipeline_stage != "discovered":
-                    continue
-                if self._lease_lost or not await self._fetch_transcript(video) or not await self._progress(sync):
+                if not await self._advance(sync, video):
                     return
-        except (ChannelNotFound, SourceUnavailable) as e:
+        except (ChannelNotFound, SourceUnavailable, ModelUnavailable) as e:
             error: str | None = str(e)
         except Exception as e:
             log.exception("Sync %s failed", sync.id)
@@ -106,8 +117,38 @@ class SyncWorker:
     async def _progress(self, sync: ClaimedSync, new_videos: int | None = None) -> bool:
         return await self._database.run(lambda conn: syncs.update_progress(conn, sync.id, new_videos))
 
-    async def _fetch_transcript(self, video: PendingVideo) -> bool:
-        """False if the Video is gone."""
+    async def _advance(self, sync: ClaimedSync, video: PendingVideo) -> bool:
+        """Runs the Video's remaining stages in order; False if the Sync should stop without finishing."""
+        for stage in videos.PIPELINE[videos.PIPELINE.index(video.pipeline_stage) + 1 :]:
+            if self._lease_lost:
+                return False
+            outcome = await self._run_stage(video, stage)
+            if outcome == "gone" or not await self._progress(sync):
+                return False
+            if outcome == "stopped":
+                return True
+        return True
+
+    async def _run_stage(self, video: PendingVideo, stage: PipelineStage) -> StageOutcome:
+        """Runs one stage after discovery, which the whole Channel completes at once."""
+        if stage == "transcript_fetched":
+            return await self._fetch_transcript(video)
+        if stage == "segmented":
+            advanced = await self._database.run(lambda conn: segments.record_segments(conn, video.id))
+        elif stage == "embedded":
+            advanced = await self._embed(video)
+        else:
+            advanced = await self._database.run(lambda conn: videos.record_done(conn, video.id))
+        return "advanced" if advanced else "gone"
+
+    async def _embed(self, video: PendingVideo) -> bool:
+        """False if the Video is gone. Embedder failures stop the Sync: they are not about one Video."""
+        texts = await self._database.run(lambda conn: segments.segment_texts(conn, video.id))
+        vectors = await asyncio.to_thread(self._embedder.embed_passages, [text for _, text in texts]) if texts else []
+        pairs = [(segment_id, vector) for (segment_id, _), vector in zip(texts, vectors, strict=True)]
+        return await self._database.run(lambda conn: segments.record_embeddings(conn, video.id, pairs))
+
+    async def _fetch_transcript(self, video: PendingVideo) -> StageOutcome:
         failure: VideoUnavailable | None = None
         try:
             details, transcript = await asyncio.to_thread(self._transcripts.fetch_video, video.youtube_video_id)
@@ -129,11 +170,12 @@ class SyncWorker:
                 )
         if failure is not None:
             unavailable = failure
-            return await self._database.run(
+            recorded = await self._database.run(
                 lambda conn: videos.record_failure(
                     conn, video.id, "transcript_fetched", unavailable, self._min_duration_seconds
                 )
             )
+            return "stopped" if recorded else "gone"
         return await self._database.run(
             lambda conn: videos.record_transcript(conn, video.id, details, transcript, self._min_duration_seconds)
         )

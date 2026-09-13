@@ -4,7 +4,7 @@ from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeTranscriptSource
+from mentor.fakes import FakeEmbedder, FakeTranscriptSource
 
 
 async def test_server_serves_the_built_web_ui_alongside_the_api(config: Config, tmp_path: Path) -> None:
@@ -13,7 +13,7 @@ async def test_server_serves_the_built_web_ui_alongside_the_api(config: Config, 
     (static / "index.html").write_text("<title>mentor</title>")
     (static / "assets" / "app.js").write_text("console.log('mentor')")
 
-    async with running(create_app(config, FakeTranscriptSource(), static_dir=static)) as client:
+    async with running(create_app(config, FakeTranscriptSource(), FakeEmbedder(), static_dir=static)) as client:
         index = await client.get("/")
         asset = await client.get("/assets/app.js")
         health = await client.get("/api/health")

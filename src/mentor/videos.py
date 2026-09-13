@@ -13,6 +13,10 @@ from mentor.ports import Chapter, Transcript, VideoDetails, VideoListing, VideoU
 
 type PipelineStage = Literal["discovered", "transcript_fetched", "segmented", "embedded", "done"]
 type Stage = PipelineStage | Literal["failed", "excluded"]
+# What running one stage did to a Video: advanced it, stopped it (failed or excluded), or found it gone.
+type StageOutcome = Literal["advanced", "stopped", "gone"]
+
+PIPELINE: tuple[PipelineStage, ...] = ("discovered", "transcript_fetched", "segmented", "embedded", "done")
 
 STAGES: tuple[Stage, ...] = ("discovered", "transcript_fetched", "segmented", "embedded", "done", "failed", "excluded")
 
@@ -171,14 +175,14 @@ def record_transcript(
     details: VideoDetails,
     transcript: Transcript,
     min_duration_seconds: int,
-) -> bool:
-    """Stores metadata and the Transcript and advances the stage; False if the Video is gone."""
+) -> StageOutcome:
+    """Stores metadata and the Transcript and advances the stage."""
     with transaction(conn):
         if not _record_details(conn, video_id, details, min_duration_seconds):
-            return False
+            return "gone"
         # A Video only found to be too short once its full metadata arrives is excluded, not advanced.
         if _exclusion(details.duration_seconds, min_duration_seconds) is not None:
-            return True
+            return "stopped"
         conn.execute(
             """
             UPDATE videos SET pipeline_stage = 'transcript_fetched', language = ?,
@@ -197,7 +201,13 @@ def record_transcript(
                 now_iso(),
             ),
         )
-        return True
+        return "advanced"
+
+
+def record_done(conn: sqlite3.Connection, video_id: int) -> bool:
+    """Marks the Video done; False if the Video is gone."""
+    with transaction(conn):
+        return conn.execute("UPDATE videos SET pipeline_stage = 'done' WHERE id = ?", (video_id,)).rowcount == 1
 
 
 def record_failure(

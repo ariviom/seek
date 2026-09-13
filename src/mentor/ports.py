@@ -96,7 +96,13 @@ class TranscriptSource(Protocol):
         ...
 
 
+class ModelUnavailable(Exception):
+    """The embedding or reranking model cannot be used right now."""
+
+
 class Embedder(Protocol):
+    """Raises ModelUnavailable when the model can't be used. model_name and dimension are known before loading."""
+
     model_name: str
     dimension: int
 

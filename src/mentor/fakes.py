@@ -12,6 +12,7 @@ from mentor.ports import (
     SourceUnavailable,
     ChatEvent,
     ChatRequest,
+    ModelUnavailable,
     Transcript,
     VideoDetails,
     VideoListing,
@@ -88,8 +89,12 @@ class FakeEmbedder:
 
     dimension: int = 64
     model_name: str = "fake-embedder"
+    # When set, every call raises ModelUnavailable with this message.
+    unavailable: str | None = None
 
     def _embed(self, text: str) -> list[float]:
+        if self.unavailable is not None:
+            raise ModelUnavailable(self.unavailable)
         vector = [0.0] * self.dimension
         for token in _tokens(text):
             digest = hashlib.sha256(token.encode()).digest()

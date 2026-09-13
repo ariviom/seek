@@ -11,7 +11,7 @@ from harness import Json, add_mentor, fake_video, running, start_sync, wait_for_
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeTranscriptSource
+from mentor.fakes import FakeChannel, FakeEmbedder, FakeTranscriptSource
 from mentor.ports import Chapter, VideoDetails, VideoUnavailable
 
 NO_COUNTS = {
@@ -81,7 +81,7 @@ async def test_a_sync_discovers_videos_and_fetches_their_transcripts_and_metadat
     assert (finished["channel_name"], finished["mentor_name"]) == ("Wood By Wright", "Wood By Wright")
     assert finished["started_at"] is not None and finished["finished_at"] is not None
     assert finished["new_videos"] == 2
-    assert finished["stage_counts"] == NO_COUNTS | {"transcript_fetched": 2}
+    assert finished["stage_counts"] == NO_COUNTS | {"done": 2}
     dovetails = videos["Hand-cut dovetails"]
     assert dovetails == {
         "id": dovetails["id"],
@@ -93,7 +93,7 @@ async def test_a_sync_discovers_videos_and_fetches_their_transcripts_and_metadat
             {"title": "Marking out", "start": 0.0, "end": 45.0},
             {"title": "Sawing", "start": 45.0, "end": 600.0},
         ],
-        "stage": "transcript_fetched",
+        "stage": "done",
         "reason": None,
         "failure_stage": None,
         "permanent_failure": None,
@@ -122,14 +122,14 @@ async def test_videos_under_the_minimum_duration_are_excluded_and_not_processed(
     assert {title: v["stage"] for title, v in videos.items()} == {
         "Quick tip": "excluded",
         "Glue-up in a minute": "excluded",
-        "Full episode": "transcript_fetched",
+        "Full episode": "done",
     }
     assert "120" in videos["Quick tip"]["reason"]
     assert videos["Quick tip"]["failure_stage"] is None
     assert videos["Glue-up in a minute"]["duration_seconds"] == 60
     assert "v-tip" not in fetched(transcripts)
     assert sync["status"] == "done"
-    assert sync["stage_counts"] == NO_COUNTS | {"transcript_fetched": 1, "excluded": 2}
+    assert sync["stage_counts"] == NO_COUNTS | {"done": 1, "excluded": 2}
 
 
 async def test_unavailable_videos_fail_with_a_reason_and_the_sync_carries_on(
@@ -180,9 +180,9 @@ async def test_unavailable_videos_fail_with_a_reason_and_the_sync_carries_on(
     }
     assert videos["Holzverbindungen"]["language"] == "de"
     assert (videos["Silent build"]["published_on"], videos["Silent build"]["duration_seconds"]) == ("2024-01-02", 700)
-    assert videos["Sharpening chisels"]["stage"] == "transcript_fetched"
+    assert videos["Sharpening chisels"]["stage"] == "done"
     assert sync["status"] == "done"
-    assert sync["stage_counts"] == NO_COUNTS | {"transcript_fetched": 1, "failed": 5}
+    assert sync["stage_counts"] == NO_COUNTS | {"done": 1, "failed": 5}
 
 
 async def test_a_misbehaving_or_non_english_video_fails_alone_and_transient_failures_are_retried(
@@ -217,12 +217,12 @@ async def test_a_misbehaving_or_non_english_video_fails_alone_and_transient_fail
     german = after_first["Holzverbindungen"]
     assert (german["stage"], german["permanent_failure"], german["language"]) == ("failed", True, "de")
     assert {title: (v["stage"], v["reason"]) for title, v in after_second.items()} == {
-        "Live Q&A": ("transcript_fetched", None),
-        "Broken page": ("transcript_fetched", None),
+        "Live Q&A": ("done", None),
+        "Broken page": ("done", None),
         "Holzverbindungen": ("failed", german["reason"]),
-        "Sharpening chisels": ("transcript_fetched", None),
+        "Sharpening chisels": ("done", None),
     }
-    assert second["stage_counts"] == NO_COUNTS | {"transcript_fetched": 3, "failed": 1}
+    assert second["stage_counts"] == NO_COUNTS | {"done": 3, "failed": 1}
     assert fetched(transcripts).count("v-german") == 1
     assert fetched(transcripts).count("v-ok") == 1
 
@@ -234,7 +234,9 @@ async def test_the_minimum_duration_is_configurable(
         fake_video("v-short", "Short", listed_duration=20, duration=20),
         fake_video("v-medium", "Medium", listed_duration=90, duration=90),
     ]
-    app = create_app(replace(config, min_duration_seconds=30), transcripts, static_dir=tmp_path / "no-bundle")
+    app = create_app(
+        replace(config, min_duration_seconds=30), transcripts, FakeEmbedder(), static_dir=tmp_path / "no-bundle"
+    )
 
     async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
@@ -242,7 +244,7 @@ async def test_the_minimum_duration_is_configurable(
         await wait_for_syncs(client)
         videos = await list_videos(client, mentor["channels"][0]["id"])
 
-    assert {title: v["stage"] for title, v in videos.items()} == {"Short": "excluded", "Medium": "transcript_fetched"}
+    assert {title: v["stage"] for title, v in videos.items()} == {"Short": "excluded", "Medium": "done"}
     assert "30" in videos["Short"]["reason"]
 
 
@@ -261,7 +263,7 @@ async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(
     latest, _ = await wait_for_syncs(client)
 
     assert latest["new_videos"] == 1
-    assert latest["stage_counts"] == NO_COUNTS | {"transcript_fetched": 2}
+    assert latest["stage_counts"] == NO_COUNTS | {"done": 2}
     assert sorted(await list_videos(client, channel_id)) == ["First video", "Second video"]
     assert fetched(transcripts) == ["v-first", "v-second"]
 
@@ -359,7 +361,7 @@ async def test_a_sync_waits_while_another_process_holds_the_lease(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
-    app = create_app(config, transcripts, static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02)
+    app = create_app(config, transcripts, FakeEmbedder(), static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02)
 
     async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
@@ -386,15 +388,15 @@ async def test_a_sync_left_running_by_a_stopped_server_resumes_at_startup(
     gate = Gate()
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", before_fetch=gate))
 
-    async with running(create_app(config, transcripts, static_dir=tmp_path / "no-bundle")) as client:
+    async with running(create_app(config, transcripts, FakeEmbedder(), static_dir=tmp_path / "no-bundle")) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
         sync = await start_sync(client, mentor["channels"][0]["id"])
         await gate.wait_entered()
     gate.released.set()
 
-    async with running(create_app(config, transcripts, static_dir=tmp_path / "no-bundle")) as client:
+    async with running(create_app(config, transcripts, FakeEmbedder(), static_dir=tmp_path / "no-bundle")) as client:
         [finished] = await wait_for_syncs(client)
         videos = await list_videos(client, mentor["channels"][0]["id"])
 
     assert (finished["id"], finished["status"]) == (sync["id"], "done")
-    assert videos["One"]["stage"] == "transcript_fetched"
+    assert videos["One"]["stage"] == "done"

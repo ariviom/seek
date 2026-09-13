@@ -93,6 +93,36 @@ MIGRATIONS = [
         expires_at REAL NOT NULL
     );
     """,
+    """
+    -- Segments are replaced, never updated; the triggers keep the external-content FTS5 index in step.
+    -- AUTOINCREMENT: the Sync worker holds Segment ids while embedding, and ids key the FTS5 and vector rows.
+    -- The vector table is not here: its dimension comes from the embedding model (see create_vector_index).
+    CREATE TABLE segments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        start_seconds REAL NOT NULL,
+        end_seconds REAL NOT NULL,
+        text TEXT NOT NULL,
+        chapter_title TEXT,
+        cues TEXT NOT NULL
+    );
+    CREATE INDEX segments_video_id ON segments(video_id);
+    CREATE VIRTUAL TABLE segments_fts USING fts5(
+        text, content = 'segments', content_rowid = 'id', tokenize = 'porter unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER segments_fts_insert AFTER INSERT ON segments BEGIN
+        INSERT INTO segments_fts (rowid, text) VALUES (new.id, new.text);
+    END;
+    CREATE TRIGGER segments_fts_delete AFTER DELETE ON segments BEGIN
+        INSERT INTO segments_fts (segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    END;
+    -- The embedding model every stored vector came from; a knowledge base never mixes two.
+    CREATE TABLE embedding_model (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        name TEXT NOT NULL,
+        dimension INTEGER NOT NULL
+    );
+    """,
 ]
 
 
@@ -146,11 +176,40 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.executescript(f"{script}; PRAGMA user_version = {number};")
 
 
-def initialize(path: Path) -> dict[str, object]:
-    """Open and migrate the knowledge base; raises if FTS5 or sqlite-vec is missing."""
+def create_vector_index(conn: sqlite3.Connection, model_name: str, dimension: int) -> None:
+    """Creates the Segment vector table for this embedding model, or refuses a knowledge base built with another."""
+    with transaction(conn):
+        row = conn.execute("SELECT name, dimension FROM embedding_model").fetchone()
+        if row is not None:
+            if (row["name"], row["dimension"]) != (model_name, dimension):
+                raise RuntimeError(
+                    f"The knowledge base was embedded with {row['name']} ({row['dimension']} dimensions), but "
+                    f"the configured embedding model is {model_name} ({dimension} dimensions); configure the "
+                    "original model again, or use a new data_dir"
+                )
+            return
+        conn.execute("INSERT INTO embedding_model (id, name, dimension) VALUES (1, ?, ?)", (model_name, dimension))
+        # channel_id is a metadata column so KNN can be scoped to Channels before taking the top k.
+        conn.executescript(
+            f"""
+            CREATE VIRTUAL TABLE segment_vectors USING vec0(
+                segment_id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                embedding float[{int(dimension)}] distance_metric=cosine
+            );
+            CREATE TRIGGER segment_vectors_delete AFTER DELETE ON segments BEGIN
+                DELETE FROM segment_vectors WHERE segment_id = old.id;
+            END;
+            """
+        )
+
+
+def initialize(path: Path, embedding_model: str, embedding_dimension: int) -> dict[str, object]:
+    """Open and migrate the knowledge base; raises if FTS5 or sqlite-vec is missing or the embedding model changed."""
     conn = connect(path)
     try:
         migrate(conn)
+        create_vector_index(conn, embedding_model, embedding_dimension)
         conn.execute("CREATE VIRTUAL TABLE temp.fts5_probe USING fts5(text)")
         conn.execute("DROP TABLE temp.fts5_probe")
         return {

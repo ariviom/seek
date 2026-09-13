@@ -13,7 +13,7 @@ from mentor.config import Config
 from mentor.errors import Conflict, NotFound
 from mentor.groups_api import groups_router
 from mentor.mentors_api import mentors_router
-from mentor.ports import ChannelNotFound, SourceUnavailable, TranscriptSource
+from mentor.ports import ChannelNotFound, Embedder, SourceUnavailable, TranscriptSource
 from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
 
@@ -35,16 +35,19 @@ async def _error_response(request: Request, exc: Exception) -> JSONResponse:
 def create_app(
     config: Config,
     transcripts: TranscriptSource,
+    embedder: Embedder,
     static_dir: Path = PACKAGE_STATIC_DIR,
     sync_poll_seconds: float = 5.0,
 ) -> FastAPI:
     database = db.Database(config.database_path)
-    worker = SyncWorker(database, transcripts, config.min_duration_seconds, sync_poll_seconds)
+    worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Fail at startup, not on first request, if the knowledge base can't be opened.
-        app.state.database_info = await asyncio.to_thread(db.initialize, config.database_path)
+        app.state.database_info = await asyncio.to_thread(
+            db.initialize, config.database_path, embedder.model_name, embedder.dimension
+        )
         worker_task = asyncio.create_task(worker.run())
         try:
             yield

@@ -7,7 +7,7 @@ from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeTranscriptSource
+from mentor.fakes import FakeChannel, FakeEmbedder, FakeTranscriptSource
 from mentor.ports import ChannelInfo
 
 
@@ -37,10 +37,15 @@ def transcripts() -> FakeTranscriptSource:
 
 
 @pytest.fixture
+def embedder() -> FakeEmbedder:
+    return FakeEmbedder()
+
+
+@pytest.fixture
 async def client(
-    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+    config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbedder, tmp_path: Path
 ) -> AsyncIterator[httpx.AsyncClient]:
     # No web bundle: API tests don't need one.
-    app = create_app(config, transcripts=transcripts, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts=transcripts, embedder=embedder, static_dir=tmp_path / "no-bundle")
     async with running(app) as c:
         yield c
