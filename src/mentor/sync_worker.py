@@ -1,10 +1,12 @@
 import asyncio
 import contextlib
 import logging
+import sqlite3
 import uuid
 
 from mentor import segments, syncs, videos
 from mentor.db import Database
+from mentor.events import Events
 from mentor.ports import (
     ChannelNotFound,
     Embedder,
@@ -14,8 +16,8 @@ from mentor.ports import (
     TranscriptSource,
     VideoUnavailable,
 )
-from mentor.syncs import ClaimedSync
-from mentor.videos import ExclusionRules, PendingVideo, PipelineStage, StageOutcome
+from mentor.syncs import ClaimedSync, Sync
+from mentor.videos import ExclusionRules, PendingVideo, PipelineStage, StageOutcome, Video
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +35,10 @@ class SyncWorker:
         embedder: Embedder,
         min_duration_seconds: int,
         poll_seconds: float,
+        events: Events,
     ) -> None:
         self._database = database
+        self._events = events
         self._transcripts = transcripts
         self._embedder = embedder
         self._min_duration_seconds = min_duration_seconds
@@ -96,6 +100,11 @@ class SyncWorker:
         # it), or the lease was lost (the next holder requeues the Sync).
         rules = ExclusionRules(self._min_duration_seconds, sync.filters)
         try:
+            # Shows the Sync running, with any failures a retry cleared when it was claimed.
+            if not await self._progress(sync):
+                return
+            if sync.retry_failed:
+                self._events.videos(sync.channel_id)
             playlist_video_ids = None
             if sync.filters.playlist_id is not None:
                 playlist_video_ids = set(
@@ -107,7 +116,10 @@ class SyncWorker:
                     conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules
                 )
             )
-            if new_videos is None or not await self._progress(sync, new_videos):
+            if new_videos is None:
+                return
+            self._events.videos(sync.channel_id)
+            if not await self._progress(sync, new_videos):
                 return
             attempted: set[int] = set()
             while True:
@@ -128,6 +140,7 @@ class SyncWorker:
                     )
                 ):
                     return
+                self._events.videos(sync.channel_id)
         except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
             error: str | None = str(e)
         except Exception as e:
@@ -135,10 +148,28 @@ class SyncWorker:
             error = f"Unexpected error: {e}"
         else:
             error = None
-        await self._database.run(lambda conn: syncs.finish(conn, sync.id, error))
+        finished = await self._database.run(lambda conn: syncs.finish(conn, sync.id, error))
+        if finished is not None:
+            self._events.sync(finished)
 
-    async def _progress(self, sync: ClaimedSync, new_videos: int | None = None) -> bool:
-        return await self._database.run(lambda conn: syncs.update_progress(conn, sync.id, new_videos))
+    async def _progress(
+        self, sync: ClaimedSync, new_videos: int | None = None, video: PendingVideo | None = None
+    ) -> bool:
+        """Refreshes and publishes the Sync's counts, and the Video's stage if given; False if the Sync is gone."""
+
+        def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None]:
+            return (
+                syncs.update_progress(conn, sync.id, new_videos),
+                None if video is None else videos.get_video(conn, video.id),
+            )
+
+        updated, changed = await self._database.run(refresh)
+        if changed is not None:
+            self._events.video(sync.channel_id, changed)
+        if updated is None:
+            return False
+        self._events.sync(updated)
+        return True
 
     async def _advance(self, sync: ClaimedSync, rules: ExclusionRules, video: PendingVideo) -> bool:
         """Runs the Video's remaining stages in order; False if the Sync should stop without finishing."""
@@ -146,7 +177,7 @@ class SyncWorker:
             if self._lease_lost:
                 return False
             outcome = await self._run_stage(rules, video, stage)
-            if outcome == "gone" or not await self._progress(sync):
+            if outcome == "gone" or not await self._progress(sync, video=video):
                 return False
             if outcome == "stopped":
                 return True

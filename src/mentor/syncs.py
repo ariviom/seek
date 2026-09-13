@@ -37,6 +37,7 @@ class ClaimedSync:
     id: int
     channel_id: int
     youtube_channel_id: str
+    retry_failed: bool
     # As they were when the Sync started; changes apply from the next Sync.
     filters: ChannelFilters
 
@@ -188,28 +189,31 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
             id=row["sync_id"],
             channel_id=row["id"],
             youtube_channel_id=row["youtube_channel_id"],
+            retry_failed=bool(row["retry_failed"]),
             filters=mentors.read_filters(row),
         )
 
 
-def update_progress(conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None) -> bool:
-    """Refreshes the Sync's stage counts from its Channel's Videos; False if the Sync is gone."""
+def update_progress(conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None) -> Sync | None:
+    """Refreshes the Sync's stage counts from its Channel's Videos; None if the Sync is gone."""
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
         if row is None:
-            return False
+            return None
         conn.execute(
             "UPDATE syncs SET stage_counts = ?, new_videos = coalesce(?, new_videos) WHERE id = ?",
             (json.dumps(videos.stage_counts(conn, row["channel_id"])), new_videos, sync_id),
         )
-        return True
+        [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
+        return sync
 
 
-def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> None:
+def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> Sync | None:
+    """None if the Sync is gone."""
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
         if row is None:
-            return
+            return None
         conn.execute(
             "UPDATE syncs SET status = ?, error = ?, finished_at = ?, stage_counts = ? WHERE id = ?",
             (
@@ -220,3 +224,5 @@ def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> None:
                 sync_id,
             ),
         )
+        [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
+        return sync

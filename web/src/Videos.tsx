@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { api, errorText, type Video } from "./api";
-import { stageLabels, usePolling } from "./ui";
+import { useLiveList, type Reaction, type ServerEvent } from "./events";
+import { stageLabels } from "./ui";
 
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return "";
@@ -10,21 +11,26 @@ function formatDuration(seconds: number | null): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
+// The API's order: newest first, undated last.
+function newestFirst(a: Video, b: Video): number {
+  if (a.published_on !== b.published_on) {
+    if (a.published_on === null) return 1;
+    if (b.published_on === null) return -1;
+    return a.published_on < b.published_on ? 1 : -1;
+  }
+  return b.id - a.id;
+}
+
 export function ChannelVideos({ channelId }: { channelId: number }) {
-  const [videos, setVideos] = useState<Video[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => api.listVideos(channelId), [channelId]);
+  const react = (event: ServerEvent): Reaction<Video> => {
+    if (event.type === "videos" && event.channel_id === channelId) return "reload";
+    if (event.type !== "video" || event.channel_id !== channelId) return null;
+    return (videos) => [event.video, ...videos.filter((v) => v.id !== event.video.id)].sort(newestFirst);
+  };
+  const { items: videos, error } = useLiveList(load, react);
 
-  const load = useCallback(async () => {
-    try {
-      setVideos(await api.listVideos(channelId));
-      setError(null);
-    } catch (e) {
-      setError(`Could not load Videos: ${errorText(e)}`);
-    }
-  }, [channelId]);
-  usePolling(load, 2000);
-
-  if (error) return <p className="mt-2 text-sm text-red-800">{error}</p>;
+  if (error !== null) return <p className="mt-2 text-sm text-red-800">Could not load Videos: {errorText(error)}</p>;
   if (videos === null) return <p className="mt-2 text-sm text-stone-500">Loading Videos…</p>;
   if (videos.length === 0) return <p className="mt-2 text-sm text-stone-500">No Videos yet. Sync this Channel to discover them.</p>;
 

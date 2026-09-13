@@ -78,34 +78,41 @@ def _exclusion(rules: ExclusionRules, duration_seconds: int | None, published_on
     return None
 
 
+_VIDEO_SQL = f"""
+    SELECT videos.*, {_STAGE_SQL} AS stage, transcripts.source AS transcript_source
+    FROM videos LEFT JOIN transcripts ON transcripts.video_id = videos.id
+"""
+
+
+def _video(row: sqlite3.Row) -> Video:
+    return Video(
+        id=row["id"],
+        youtube_video_id=row["youtube_video_id"],
+        title=row["title"],
+        published_on=date.fromisoformat(row["published_on"]) if row["published_on"] else None,
+        duration_seconds=row["duration_seconds"],
+        chapters=[Chapter(**c) for c in json.loads(row["chapters"] or "[]")],
+        stage=row["stage"],
+        reason=row["excluded_reason"] or row["failure_reason"],
+        failure_stage=row["failure_stage"],
+        permanent_failure=None if row["failure_permanent"] is None else bool(row["failure_permanent"]),
+        language=row["language"],
+        transcript_source=row["transcript_source"],
+    )
+
+
 def list_channel_videos(conn: sqlite3.Connection, channel_id: int) -> list[Video]:
     _require_channel(conn, channel_id)
     rows = conn.execute(
-        f"""
-        SELECT videos.*, {_STAGE_SQL} AS stage, transcripts.source AS transcript_source
-        FROM videos LEFT JOIN transcripts ON transcripts.video_id = videos.id
-        WHERE videos.channel_id = ?
-        ORDER BY videos.published_on DESC NULLS LAST, videos.id DESC
-        """,
+        f"{_VIDEO_SQL} WHERE videos.channel_id = ? ORDER BY videos.published_on DESC NULLS LAST, videos.id DESC",
         (channel_id,),
     )
-    return [
-        Video(
-            id=row["id"],
-            youtube_video_id=row["youtube_video_id"],
-            title=row["title"],
-            published_on=date.fromisoformat(row["published_on"]) if row["published_on"] else None,
-            duration_seconds=row["duration_seconds"],
-            chapters=[Chapter(**c) for c in json.loads(row["chapters"] or "[]")],
-            stage=row["stage"],
-            reason=row["excluded_reason"] or row["failure_reason"],
-            failure_stage=row["failure_stage"],
-            permanent_failure=None if row["failure_permanent"] is None else bool(row["failure_permanent"]),
-            language=row["language"],
-            transcript_source=row["transcript_source"],
-        )
-        for row in rows
-    ]
+    return [_video(row) for row in rows]
+
+
+def get_video(conn: sqlite3.Connection, video_id: int) -> Video | None:
+    row = conn.execute(f"{_VIDEO_SQL} WHERE videos.id = ?", (video_id,)).fetchone()
+    return None if row is None else _video(row)
 
 
 def stage_counts(conn: sqlite3.Connection, channel_id: int) -> dict[str, int]:

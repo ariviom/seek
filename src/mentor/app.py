@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from mentor import db
 from mentor.config import Config
 from mentor.errors import Conflict, NotFound
+from mentor.events import Events
+from mentor.events_api import events_router
 from mentor.groups_api import groups_router
 from mentor.mentors_api import mentors_router
 from mentor.ports import ChannelNotFound, Embedder, ModelUnavailable, SourceUnavailable, TranscriptSource
@@ -39,9 +41,11 @@ def create_app(
     embedder: Embedder,
     static_dir: Path = PACKAGE_STATIC_DIR,
     sync_poll_seconds: float = 5.0,
+    events_keepalive_seconds: float = 15.0,
 ) -> FastAPI:
     database = db.Database(config.database_path)
-    worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds)
+    events = Events()
+    worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds, events)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -65,9 +69,10 @@ def create_app(
     async def health() -> dict[str, object]:
         return {"status": "ok", "database": app.state.database_info}
 
-    app.include_router(mentors_router(database, transcripts), prefix="/api")
+    app.include_router(mentors_router(database, transcripts, events), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
-    app.include_router(syncs_router(database, worker.wake), prefix="/api")
+    app.include_router(syncs_router(database, events, worker.wake), prefix="/api")
+    app.include_router(events_router(events, events_keepalive_seconds), prefix="/api")
 
     # Mounted last: a catch-all at "/" would shadow routes registered after it.
     if static_dir.is_dir():

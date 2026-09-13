@@ -20,7 +20,8 @@ def serve() -> None:
     # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
     embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension)
     app = create_app(config, YouTubeTranscriptSource(), embedder)
-    uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False)
+    # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
+    uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 
 
 def main() -> None:

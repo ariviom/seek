@@ -1,6 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { api, errorText, type Stage, type Sync } from "./api";
-import { stageLabels, usePolling } from "./ui";
+import { useLiveList, type ServerEvent, type Reaction } from "./events";
+import { stageLabels } from "./ui";
+
+// As many as the API lists.
+const SHOWN = 50;
 
 const statusClass: Record<Sync["status"], string> = {
   queued: "text-stone-500",
@@ -16,30 +20,27 @@ function countsSummary(counts: Record<Stage, number>): string {
     .join(" · ");
 }
 
-export function Syncs() {
-  const [syncs, setSyncs] = useState<Sync[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function react(event: ServerEvent): Reaction<Sync> {
+  if (event.type === "syncs") return "reload";
+  if (event.type !== "sync") return null;
+  return (syncs) =>
+    [event.sync, ...syncs.filter((s) => s.id !== event.sync.id)].sort((a, b) => b.id - a.id).slice(0, SHOWN);
+}
 
-  const load = useCallback(async () => {
-    try {
-      setSyncs(await api.listSyncs());
-      setError(null);
-    } catch (e) {
-      setError(`Could not load Syncs: ${errorText(e)}`);
-    }
-  }, []);
-  usePolling(load, 2000);
+export function Syncs() {
+  const load = useCallback(() => api.listSyncs(), []);
+  const { items: syncs, error } = useLiveList(load, react);
 
   return (
     <section className="mt-10">
       <h2 className="text-lg font-semibold">Syncs</h2>
-      {error && (
+      {error !== null && (
         <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
-          {error}
+          Could not load Syncs: {errorText(error)}
         </p>
       )}
       {syncs === null ? (
-        <p className="mt-4 text-sm text-stone-500">Loading…</p>
+        error === null && <p className="mt-4 text-sm text-stone-500">Loading…</p>
       ) : syncs.length === 0 ? (
         <p className="mt-4 text-sm text-stone-500">No Syncs yet. Use Sync on a Channel above.</p>
       ) : (

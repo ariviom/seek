@@ -1,7 +1,8 @@
 import asyncio
+import json
 import sqlite3
 import threading
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any, Literal
@@ -43,6 +44,98 @@ class Gate:
 
     async def wait_entered(self) -> None:
         assert await asyncio.to_thread(self.entered.wait, 5)
+
+
+class EventStream:
+    """The server-sent events of one open `GET /api/events` request."""
+
+    def __init__(self) -> None:
+        self.status: int | None = None
+        self.headers: dict[str, str] = {}
+        # Comment frames (keepalives) received so far.
+        self.comments = 0
+        self._chunks: asyncio.Queue[bytes] = asyncio.Queue()
+        self._buffer = ""
+
+    def _receive_start(self, status: int, headers: list[tuple[bytes, bytes]]) -> None:
+        self.status = status
+        self.headers = {name.decode().lower(): value.decode() for name, value in headers}
+
+    async def _frame(self) -> str:
+        while "\n\n" not in self._buffer:
+            self._buffer += (await self._chunks.get()).decode()
+        frame, self._buffer = self._buffer.split("\n\n", 1)
+        return frame
+
+    async def next_event(self) -> Json:
+        """The next data event, counting any comments before it."""
+        while True:
+            frame = await self._frame()
+            if frame.startswith(":"):
+                self.comments += 1
+                continue
+            assert frame.startswith("data: "), frame
+            event: Json = json.loads(frame.removeprefix("data: "))
+            return event
+
+    async def until(self, predicate: Callable[[Json], bool], timeout: float = 5.0) -> list[Json]:
+        """Events up to and including the first that matches."""
+        events: list[Json] = []
+        async with asyncio.timeout(timeout):
+            while not events or not predicate(events[-1]):
+                events.append(await self.next_event())
+        return events
+
+    async def wait_for_comments(self, count: int, timeout: float = 5.0) -> None:
+        """Waits until `count` more comments arrive; data events meanwhile are dropped."""
+        target = self.comments + count
+        async with asyncio.timeout(timeout):
+            while self.comments < target:
+                frame = await self._frame()
+                if frame.startswith(":"):
+                    self.comments += 1
+
+
+@asynccontextmanager
+async def event_stream(app: FastAPI) -> AsyncIterator[EventStream]:
+    """Opens the app's event stream, inside `running(app)`, once its first event says it is subscribed.
+
+    Drives the ASGI app directly: httpx's ASGI transport buffers a whole response, and this one never ends.
+    """
+    stream = EventStream()
+    disconnected = asyncio.Event()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/api/events",
+        "raw_path": b"/api/events",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"127.0.0.1:7337")],
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 7337),
+    }
+
+    async def receive() -> dict[str, Any]:
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            stream._receive_start(message["status"], message["headers"])
+        elif message["type"] == "http.response.body":
+            stream._chunks.put_nowait(message.get("body", b""))
+
+    task = asyncio.create_task(app(scope, receive, send))
+    try:
+        assert await asyncio.wait_for(stream.next_event(), 5) == {"type": "ready"}
+        yield stream
+    finally:
+        disconnected.set()
+        await asyncio.wait_for(task, 5)
 
 
 def fake_channel(transcripts: FakeTranscriptSource, youtube_channel_id: str) -> FakeChannel:

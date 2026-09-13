@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints,
 
 from mentor import mentors
 from mentor.db import Database
+from mentor.events import Events
 from mentor.mentors import Channel, ChannelFilters, Mentor
 from mentor.ports import ChannelInfo, TranscriptSource
 
@@ -53,7 +54,7 @@ class ChannelUpdate(BaseModel):
     filters: FiltersBody | None = None
 
 
-def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRouter:
+def mentors_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
     router = APIRouter()
 
     async def resolve(channel: str) -> ChannelInfo:
@@ -76,11 +77,15 @@ def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRout
 
     @router.patch("/mentors/{mentor_id}")
     async def rename_mentor(mentor_id: int, body: MentorRename) -> Mentor:
-        return await database.run(lambda conn: mentors.rename_mentor(conn, mentor_id, body.name))
+        mentor = await database.run(lambda conn: mentors.rename_mentor(conn, mentor_id, body.name))
+        # Syncs show their Mentor's name.
+        events.syncs()
+        return mentor
 
     @router.delete("/mentors/{mentor_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_mentor(mentor_id: int) -> None:
         await database.run(lambda conn: mentors.delete_mentor(conn, mentor_id))
+        events.syncs()
 
     @router.post("/mentors/{mentor_id}/channels", status_code=status.HTTP_201_CREATED)
     async def attach_channel(mentor_id: int, body: ChannelRef) -> Channel:
@@ -95,5 +100,6 @@ def mentors_router(database: Database, transcripts: TranscriptSource) -> APIRout
     @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def detach_channel(channel_id: int) -> None:
         await database.run(lambda conn: mentors.detach_channel(conn, channel_id))
+        events.syncs()
 
     return router

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { errorText, type Stage } from "./api";
 
 export const inputClass =
@@ -42,20 +42,3 @@ export const stageLabels: Record<Stage, string> = {
   failed: "Failed",
   excluded: "Excluded",
 };
-
-// Calls `load` now and again `intervalMs` after each call settles, until unmounted.
-export function usePolling(load: () => Promise<void>, intervalMs: number) {
-  useEffect(() => {
-    let active = true;
-    let timer: number | undefined;
-    const tick = async () => {
-      await load();
-      if (active) timer = window.setTimeout(tick, intervalMs);
-    };
-    void tick();
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [load, intervalMs]);
-}
