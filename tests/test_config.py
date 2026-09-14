@@ -238,3 +238,38 @@ def test_incomplete_or_invalid_cloudflare_access_settings_are_rejected(
 
     with pytest.raises(ConfigError):
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
+
+
+def test_listening_on_every_interface_is_off_by_default_and_needs_access_verification(tmp_path: Path) -> None:
+    write_config(
+        tmp_path,
+        'cf_access_team_domain = "woodshop.cloudflareaccess.com"\n'
+        'cf_access_aud = "4714c1358e65fe4b408ad6d432a5f878"\n'
+        "listen_all_interfaces = true\n",
+    )
+
+    default = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
+    from_file = load_config({"XDG_CONFIG_HOME": str(tmp_path)})
+    from_env = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_LISTEN_ALL_INTERFACES": " False "})
+
+    assert (default.listen_all_interfaces, default.listen_host) == (False, "127.0.0.1")
+    assert (from_file.listen_all_interfaces, from_file.listen_host) == (True, "0.0.0.0")
+    assert (from_env.listen_all_interfaces, from_env.listen_host) == (False, "127.0.0.1")
+
+
+@pytest.mark.parametrize(
+    ("file_text", "env"),
+    [
+        ("listen_all_interfaces = true\n", {}),
+        ("", {"MENTOR_LISTEN_ALL_INTERFACES": "true"}),
+        ('listen_all_interfaces = "yes"\n', {}),
+        ("", {"MENTOR_LISTEN_ALL_INTERFACES": "1"}),
+    ],
+)
+def test_listening_on_every_interface_without_access_verification_or_a_boolean_is_rejected(
+    tmp_path: Path, file_text: str, env: dict[str, str]
+) -> None:
+    write_config(tmp_path, file_text)
+
+    with pytest.raises(ConfigError, match="listen_all_interfaces"):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})

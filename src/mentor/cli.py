@@ -56,7 +56,7 @@ def serve() -> None:
     youtube = _youtube(config)
     app = create_app(config, youtube, embedder, reranker, _chat_engine(config))
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
-    uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
+    uvicorn.run(app, host=config.listen_host, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 
 
 def _service_active() -> bool:
@@ -153,7 +153,7 @@ def install(sync_schedule: str | None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mentor")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("serve", help=f"run the Mentor server on {HOST}")
+    commands.add_parser("serve", help="run the Mentor server")
     sync_parser = commands.add_parser(
         "sync", help="Sync Channels through the running server, or in this process when none is running"
     )

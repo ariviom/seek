@@ -129,7 +129,7 @@ allowed_hosts = ["mentor.example.com"]
 | Key | Default | Meaning |
 |---|---|---|
 | `data_dir` | `~/.local/share/mentor` | Where `mentor.db` lives (an absolute path) |
-| `port` | `7337` | Port on 127.0.0.1. The server never listens beyond localhost |
+| `port` | `7337` | Port on 127.0.0.1 (and every interface with `listen_all_interfaces`) |
 | `min_duration_seconds` | `120` | Shorter Videos, which covers Shorts, are excluded from ingestion |
 | `embedding_model` | `Qwen/Qwen3-Embedding-0.6B` | Hugging Face model for Segment vectors |
 | `embedding_dimension` | `1024` | Its vector size |
@@ -149,6 +149,7 @@ allowed_hosts = ["mentor.example.com"]
 | `claude_cli_path` | `claude` on PATH | The Claude CLI the web chat drives |
 | `cf_access_team_domain` | none | With `cf_access_aud`, requires a Cloudflare Access token on requests from outside this machine (see [Publishing](#publishing-through-a-reverse-proxy)) |
 | `cf_access_aud` | none | The Access application's Audience (AUD) tag |
+| `listen_all_interfaces` | `false` | Listen on every network interface, not only 127.0.0.1; needs the two Access keys (see [Publishing](#publishing-through-a-reverse-proxy)) |
 
 Notes:
 
@@ -177,8 +178,8 @@ Notes:
 
 ## Publishing through a reverse proxy
 
-mentor only listens on 127.0.0.1, so to reach it from elsewhere, publish it through a reverse proxy on this machine,
-with an identity gate such as Cloudflare Access in front. mentor has no login of its own: anyone who reaches a
+mentor listens on 127.0.0.1, so to reach it from elsewhere, publish it through a reverse proxy on this machine,
+with an identity gate such as Cloudflare Access in front, or [let Cloudflare reach it directly](#without-a-proxy). mentor has no login of its own: anyone who reaches a
 published URL gets the whole API, the web chat (on your Claude subscription), and the `sql` tool.
 
 1. Add the public hostname to `allowed_hosts`.
@@ -203,6 +204,22 @@ team's signing keys, which mentor fetches and caches. The exception is a request
 loopback, with no `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, or `Cf-*` headers, such as local agents, `mentor sync`,
 and a browser on this machine. Refused requests get 403, and 503 while mentor can't fetch the keys at all. If your session expires while the web UI is open, it says
 that live updates stopped; reload the page to sign in again.
+
+### Without a proxy
+
+If your Cloudflare-proxied hostname already reaches this machine's port (a router forwarding it, as for other apps
+on the machine), mentor can listen on every interface instead:
+
+```toml
+allowed_hosts = ["mentor.example.com"]
+cf_access_team_domain = "myteam.cloudflareaccess.com"
+cf_access_aud = "…"
+listen_all_interfaces = true
+```
+
+mentor refuses to start this way without the two Access keys. With them, a request from any other machine needs a
+valid Access token, so reaching the port directly (on your public IP or from the LAN) gets 403; only requests through
+Access, and requests made on this machine, get through. Restart the service after changing it.
 
 ## Register mentor with your agents
 

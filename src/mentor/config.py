@@ -72,10 +72,18 @@ class Config:
     # team domain (e.g. myteam.cloudflareaccess.com) and application audience tag.
     cf_access_team_domain: str | None = None
     cf_access_aud: str | None = None
+    # Listen on every network interface rather than loopback alone, e.g. for a router forwarding a port from
+    # Cloudflare. Allowed only with Access verification, which then refuses every request from another machine
+    # that carries no valid token.
+    listen_all_interfaces: bool = False
 
     @property
     def database_path(self) -> Path:
         return self.data_dir / "mentor.db"
+
+    @property
+    def listen_host(self) -> str:
+        return "0.0.0.0" if self.listen_all_interfaces else HOST
 
 
 def _xdg_dir(env: Mapping[str, str], var: str, fallback: str) -> Path:
@@ -97,6 +105,15 @@ def _text(key: str, value: object, source: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{source}: {key} must be a non-empty string")
     return value.strip()
+
+
+def _boolean(key: str, value: object, source: str) -> bool:
+    """A TOML boolean, or true/false as an environment variable gives."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    raise ConfigError(f"{source}: {key} must be true or false")
 
 
 def _absolute_path(key: str, value: object, source: str) -> Path:
@@ -234,6 +251,14 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     audience = _text("cf_access_aud", *raw["cf_access_aud"]) if "cf_access_aud" in raw else None
     if (team_domain is None) != (audience is None):
         raise ConfigError("cf_access_team_domain and cf_access_aud must be set together")
+    listen_all = False
+    if "listen_all_interfaces" in raw:
+        listen_all = _boolean("listen_all_interfaces", *raw["listen_all_interfaces"])
+    if listen_all and team_domain is None:
+        raise ConfigError(
+            "listen_all_interfaces needs cf_access_team_domain and cf_access_aud: mentor has no login of its own, so "
+            "without Access verification anyone who reaches the port gets everything"
+        )
     return Config(
         data_dir=data_dir,
         port=port,
@@ -256,4 +281,5 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         claude_cli_path=claude_cli_path,
         cf_access_team_domain=team_domain,
         cf_access_aud=audience,
+        listen_all_interfaces=listen_all,
     )
