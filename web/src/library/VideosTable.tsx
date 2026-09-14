@@ -1,8 +1,10 @@
 import { useCallback, useState } from "react";
 import { api, errorText, type Video } from "@/lib/api";
 import { useLiveList, type Reaction, type ServerEvent } from "@/lib/events";
-import { inputClass, quietButtonClass, stageFill } from "./ui";
 import { formatDuration, stageLabels } from "@/lib/format";
+import { stageFill } from "@/syncs/StageRule";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Shown = "all" | "failed" | "excluded";
 const shownLabels: Record<Shown, string> = { all: "All", failed: "Failed", excluded: "Excluded" };
@@ -17,7 +19,7 @@ function newestFirst(a: Video, b: Video): number {
   return b.id - a.id;
 }
 
-export function ChannelVideos({ channelId }: { channelId: number }) {
+export function VideosTable({ channelId }: { channelId: number }) {
   const load = useCallback(() => api.listVideos(channelId), [channelId]);
   const react = (event: ServerEvent): Reaction<Video> => {
     if (event.type === "videos" && event.channel_id === channelId) return "reload";
@@ -42,38 +44,37 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
     }
   }
 
-  const note = "mt-3 border-t border-border pt-3 text-sm";
-  if (error !== null) return <p className={`${note} text-destructive`}>Could not load Videos: {errorText(error)}</p>;
-  if (videos === null) return <p className={`${note} text-muted-foreground`}>Loading Videos…</p>;
-  if (videos.length === 0) return <p className={`${note} text-muted-foreground`}>No Videos yet. Sync this Channel to find them.</p>;
+  if (error !== null) return <p className="text-sm text-destructive">Could not load videos: {errorText(error)}</p>;
+  if (videos === null) return <p className="text-sm text-muted-foreground">Loading videos…</p>;
+  if (videos.length === 0) {
+    return <p className="text-sm text-muted-foreground">No videos yet. Sync this channel to find them.</p>;
+  }
 
   const listed = shown === "all" ? videos : videos.filter((video) => video.stage === shown);
 
   return (
-    <div className="mt-3 border-t border-border pt-2">
+    <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          Show
-          <select
-            className={`${inputClass} py-1 text-sm`}
-            value={shown}
-            onChange={(e) => setShown(e.target.value as Shown)}
-          >
+        <Select value={shown} onValueChange={(value) => setShown(value as Shown)}>
+          <SelectTrigger size="sm" className="w-44" aria-label="Show videos">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
             {(Object.keys(shownLabels) as Shown[]).map((option) => (
-              <option key={option} value={option}>
+              <SelectItem key={option} value={option}>
                 {shownLabels[option]}
                 {option !== "all" && ` (${videos.filter((video) => video.stage === option).length})`}
-              </option>
+              </SelectItem>
             ))}
-          </select>
-        </label>
-        {retryError && <p className="text-sm text-destructive">{retryError}</p>}
+          </SelectContent>
+        </Select>
+        {retryError !== null && <p className="text-sm text-destructive">{retryError}</p>}
       </div>
       {listed.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">No {shownLabels[shown].toLowerCase()} Videos.</p>
+        <p className="mt-3 text-sm text-muted-foreground">No {shownLabels[shown].toLowerCase()} videos.</p>
       ) : (
-        <div className="mt-2 max-h-[28rem] overflow-y-auto">
-          <table className="w-full text-left text-[13px]">
+        <div className="mt-3 max-h-[28rem] overflow-y-auto">
+          <table className="w-full text-left text-xs">
             <thead className="sticky top-0 bg-card text-muted-foreground">
               <tr>
                 <th className="py-1.5 pr-3 font-medium">Video</th>
@@ -84,10 +85,10 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
             </thead>
             <tbody>
               {listed.map((video) => (
-                <tr key={video.id} className="border-t border-border align-top">
+                <tr key={video.id} className="border-t align-top">
                   <td className="py-1.5 pr-3">
                     <a
-                      className="text-foreground decoration-primary/50 underline-offset-2 hover:underline"
+                      className="underline-offset-2 hover:underline"
                       href={`https://www.youtube.com/watch?v=${video.youtube_video_id}`}
                       target="_blank"
                       rel="noreferrer"
@@ -95,32 +96,44 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
                       {video.title}
                     </a>
                   </td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-muted-foreground tabular-nums">{video.published_on ?? ""}</td>
+                  <td className="py-1.5 pr-3 whitespace-nowrap text-muted-foreground tabular-nums">
+                    {video.published_on ?? ""}
+                  </td>
                   <td className="py-1.5 pr-3 text-right whitespace-nowrap text-muted-foreground tabular-nums">
                     {formatDuration(video.duration_seconds)}
                   </td>
                   <td className="min-w-40 py-1.5">
                     <span className="flex items-center gap-1.5">
-                      <span aria-hidden className={`size-2.5 shrink-0 rounded-[1px] ${stageFill[video.stage]}`} />
-                      <span className={video.stage === "failed" ? "text-destructive" : video.stage === "excluded" ? "text-muted-foreground" : ""}>
+                      <span aria-hidden className={`size-2 shrink-0 rounded-full ${stageFill[video.stage]}`} />
+                      <span
+                        className={
+                          video.stage === "failed"
+                            ? "text-destructive"
+                            : video.stage === "excluded"
+                              ? "text-muted-foreground"
+                              : ""
+                        }
+                      >
                         {stageLabels[video.stage]}
                       </span>
                     </span>
-                    {video.reason && (
+                    {video.reason !== null && (
                       <span className="mt-0.5 block text-muted-foreground">
                         {video.reason}
-                        {video.stage === "failed" && video.permanent_failure === false && " (retried on the next Sync)"}
+                        {video.stage === "failed" && video.permanent_failure === false && " (retried on the next sync)"}
                       </span>
                     )}
                     {video.stage === "failed" && (
-                      <button
-                        className={`${quietButtonClass} -ml-2 text-[13px]`}
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="-ml-2 mt-1"
                         type="button"
                         onClick={() => void retry(video)}
                         disabled={retrying !== null}
                       >
                         {retrying === video.id ? "Retrying…" : "Retry"}
-                      </button>
+                      </Button>
                     )}
                   </td>
                 </tr>

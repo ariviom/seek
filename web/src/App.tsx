@@ -15,12 +15,15 @@ import { ListColumn } from "@/shell/ListColumn";
 import { MainHeader } from "@/shell/MainHeader";
 import { ClaudeNotice, describeModel, ModelNotice, ServerNotice } from "@/shell/Notices";
 import { Rail } from "@/shell/Rail";
-import { Channels } from "./Channels";
 import { Chat, type ChatScope } from "./Chat";
 import { Conversations } from "./Conversations";
-import { Groups } from "./Groups";
+import { LibraryList } from "./library/LibraryList";
+import { LibraryMain } from "./library/LibraryMain";
 import { Search } from "./Search";
-import { Syncs } from "./Syncs";
+import { SyncList } from "./syncs/SyncList";
+import { SyncsMain } from "./syncs/SyncsMain";
+import { useSyncAll } from "./syncs/useSyncs";
+import { Button } from "@/components/ui/button";
 import { hintClass } from "./ui";
 
 type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
@@ -90,10 +93,29 @@ export function App() {
 
   // Search's scopes, the Conversations filter, and a chat's scope name all need the lists, so they are loaded up
   // front instead of waiting for the Library view to mount its sections, which report their own load errors.
-  useEffect(() => {
-    void api.listChannels().then(setChannels, () => undefined);
-    void api.listGroups().then(groupsLoaded, () => undefined);
+  const reloadChannels = useCallback(async () => {
+    await api.listChannels().then(setChannels, () => undefined);
+  }, []);
+  const reloadGroups = useCallback(async () => {
+    await api.listGroups().then(groupsLoaded, () => undefined);
   }, [groupsLoaded]);
+  useEffect(() => {
+    void reloadChannels();
+    void reloadGroups();
+  }, [reloadChannels, reloadGroups]);
+
+  // Channel counts follow Syncs and Video changes, at most one reload a second while they stream in, so they stay
+  // fresh whichever view is open.
+  const countsTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(countsTimer.current), []);
+  useServerEvents((event) => {
+    if (event.type !== "sync" && event.type !== "videos" && event.type !== "ready") return;
+    if (countsTimer.current !== undefined) return;
+    countsTimer.current = window.setTimeout(() => {
+      countsTimer.current = undefined;
+      void reloadChannels();
+    }, 1000);
+  });
 
   useServerEvents((event) => {
     // Models may have progressed while the stream was down.
@@ -108,6 +130,7 @@ export function App() {
   });
 
   const liveUpdatesStopped = useLiveUpdatesStopped();
+  const syncAll = useSyncAll();
 
   // ⌘K/Ctrl+K goes to Search and puts the cursor in the question. Search owns its own input, so it is found by the
   // label it already carries; ticket 05 replaces this with a ref.
@@ -154,7 +177,7 @@ export function App() {
   // Each section's list column and main pane. Library and Syncs get their real lists in tickets 04 and 05; for now
   // the old sections stay whole in the main pane and the column says where they are going.
   const placeholder = (text: string) => <p className={`mt-2 ${hintClass}`}>{text}</p>;
-  const sections: Record<typeof view, { title: string; list: ReactNode; main: ReactNode }> = {
+  const sections: Record<typeof view, { title: string; actions?: ReactNode; list: ReactNode; main: ReactNode }> = {
     chats: {
       title: "Chats",
       list: placeholder("Chats are filed here from ticket 04."),
@@ -190,27 +213,44 @@ export function App() {
     },
     library: {
       title: "Library",
-      list: placeholder("Channels and Groups are listed here from ticket 03's Library phase."),
+      list: (
+        <LibraryList
+          channels={channels}
+          groups={groups}
+          selection={selection}
+          select={select}
+          reloadChannels={reloadChannels}
+          reloadGroups={reloadGroups}
+        />
+      ),
       main: (
-        <>
-          <Channels onLoaded={setChannels} />
-          <Groups
-            channels={channels}
-            onLoaded={groupsLoaded}
-            onAsk={(group) => openChat({ kind: "group", id: group.id }, null)}
-          />
-        </>
+        <LibraryMain
+          channels={channels}
+          groups={groups}
+          selection={selection}
+          select={select}
+          reloadChannels={reloadChannels}
+          reloadGroups={reloadGroups}
+          onNewChat={(scope) => openChat(scope, null)}
+        />
       ),
     },
     syncs: {
       title: "Syncs",
-      list: placeholder("Syncs are listed here from ticket 03's Syncs phase."),
-      main: <Syncs />,
+      actions: (
+        <Button variant="ghost" size="sm" disabled={syncAll.starting} onClick={() => void syncAll.run()}>
+          Sync all
+        </Button>
+      ),
+      list: <SyncList selection={selection} select={select} syncAllError={syncAll.error} />,
+      main: <SyncsMain selection={selection} />,
     },
   };
   const section = sections[view];
   const listColumn = (
-    <ListColumn title={section.title}>{section.list}</ListColumn>
+    <ListColumn title={section.title} actions={section.actions}>
+      {section.list}
+    </ListColumn>
   );
 
   return (
