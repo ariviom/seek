@@ -275,6 +275,38 @@ async def test_syncs_run_one_at_a_time_in_queue_order_and_a_queued_channel_is_qu
     assert fetched(transcripts) == ["v-wright", "v-rex", "v-vlog"]
 
 
+async def test_syncing_all_queues_every_indexed_channel_once(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    gate = Gate()
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-wright", "Wright video", before_fetch=gate))
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex video"))
+    fake_channel(transcripts, "UC-wright-vlog").videos.append(fake_video("v-vlog", "Vlog video"))
+    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
+    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    await client.patch(f"/api/channels/{vlog['id']}", json={"indexed": False})
+
+    running_sync = await start_sync(client, wright["channels"][0]["id"])
+    await gate.wait_entered()
+    rex_queued = await start_sync(client, rex["channels"][0]["id"])
+    response = await client.post("/api/syncs")
+    gate.released.set()
+    finished = await wait_for_syncs(client)
+
+    assert response.status_code == 202
+    queued = response.json()
+    assert [(s["channel_name"], s["status"]) for s in queued] == [("Wood By Wright", "queued"), ("Rex Krueger", "queued")]
+    assert queued[1]["id"] == rex_queued["id"]
+    assert [(s["channel_name"], s["status"]) for s in finished] == [
+        ("Wood By Wright", "done"),
+        ("Rex Krueger", "done"),
+        ("Wood By Wright", "done"),
+    ]
+    assert finished[2]["id"] == running_sync["id"]
+    assert "v-vlog" not in fetched(transcripts)
+
+
 async def test_a_channel_deleted_mid_sync_is_skipped_without_leaving_rows(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
 ) -> None:

@@ -19,6 +19,14 @@ def syncs_router(database: Database, events: Events, wake_worker: Callable[[], N
         wake_worker()
         return sync
 
+    @router.post("/syncs", status_code=status.HTTP_202_ACCEPTED)
+    async def start_all_syncs() -> list[Sync]:
+        queued = await database.run(syncs.enqueue_all)
+        for sync in queued:
+            events.sync(sync)
+        wake_worker()
+        return queued
+
     @router.post("/channels/{channel_id}/retry-failed", status_code=status.HTTP_202_ACCEPTED)
     async def retry_failed(channel_id: int) -> Sync:
         sync = await database.run(lambda conn: syncs.retry_failed(conn, channel_id))

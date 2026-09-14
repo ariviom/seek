@@ -77,6 +77,13 @@ def enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
         return _enqueue(conn, channel_id, retry_failed=False)
 
 
+def enqueue_all(conn: sqlite3.Connection) -> list[Sync]:
+    """Queues a Sync for every indexed Channel, as enqueue does for one."""
+    with transaction(conn):
+        channel_ids = [row["id"] for row in conn.execute("SELECT id FROM channels WHERE indexed = 1 ORDER BY id")]
+        return [_enqueue(conn, channel_id, retry_failed=False) for channel_id in channel_ids]
+
+
 def retry_failed(conn: sqlite3.Connection, channel_id: int) -> Sync:
     """Queues a Sync that retries every failed Video of the Channel, permanent failures too.
 
@@ -119,6 +126,12 @@ def _enqueue(conn: sqlite3.Connection, channel_id: int, retry_failed: bool) -> S
 def list_syncs(conn: sqlite3.Connection, limit: int = 50) -> list[Sync]:
     """The most recent Syncs, newest first."""
     return _select(conn, "ORDER BY syncs.id DESC LIMIT ?", (limit,))
+
+
+def get_syncs(conn: sqlite3.Connection, sync_ids: list[int]) -> list[Sync]:
+    """The Syncs with these ids that still exist, oldest first."""
+    placeholders = ", ".join("?" * len(sync_ids))
+    return _select(conn, f"WHERE syncs.id IN ({placeholders}) ORDER BY syncs.id", tuple(sync_ids))
 
 
 def has_work(conn: sqlite3.Connection) -> bool:

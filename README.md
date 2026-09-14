@@ -54,6 +54,32 @@ Recorded variables override the config file, like any `MENTOR_*` variable. That 
 
 Status: `systemctl --user status mentor`. Logs: `journalctl --user -u mentor`.
 
+## Sync from the command line or on a schedule
+
+```sh
+mentor sync --all                        # every indexed Channel
+mentor sync --channel "Wood By Wright"   # one Channel, by its YouTube name or channel id
+```
+
+When the server is running, `mentor sync` queues the Syncs there and returns; their progress and any failures show in
+the web UI. When it isn't, `mentor sync` loads the embedding model and runs the Syncs itself, returning when they finish
+(it exits 1 if any failed). If the service is running but not answering yet, it waits up to 30 seconds for the server
+first. Only one process runs Syncs at a time: a server started meanwhile waits for it, and a `mentor sync` started
+while another process runs Syncs waits for that process to run its Syncs too.
+
+To Sync every indexed Channel on a schedule, install the service with a timer:
+
+```sh
+mentor install-service --timer                    # daily at midnight
+mentor install-service --timer "Mon *-*-* 04:00"   # any systemd calendar expression
+```
+
+This also writes `mentor-sync.service` and `mentor-sync.timer`, with the same recorded environment. A run missed while
+the machine was off happens at the next chance. Rerunning `mentor install-service` without `--timer` keeps an
+installed timer's schedule and updates its recorded environment; pass `--timer` again to change the schedule. Next
+run: `systemctl --user list-timers mentor-sync.timer`. Logs: `journalctl --user -u mentor-sync`. To turn it off:
+`systemctl --user disable --now mentor-sync.timer`.
+
 ## Data
 
 Your data lives in `~/.local/share/mentor/` (or `$XDG_DATA_HOME/mentor`, or the `data_dir` setting):

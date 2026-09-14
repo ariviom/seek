@@ -62,6 +62,18 @@ class SyncWorker:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), self._poll_seconds)
 
+    async def run_until_finished(self, sync_ids: list[int]) -> list[Sync]:
+        """Runs queued Syncs until these have finished, waiting while another process holds the lease; returns
+        those that still exist."""
+        while True:
+            self._wake.clear()
+            await self._drain()
+            current = await self._database.run(lambda conn: syncs.get_syncs(conn, sync_ids))
+            if all(sync.status in ("done", "failed") for sync in current):
+                return current
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), self._poll_seconds)
+
     async def _drain(self) -> None:
         if not await self._database.run(syncs.has_work):
             return

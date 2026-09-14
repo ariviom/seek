@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
 
+# The server listens on loopback only; remote access goes through a reverse proxy.
+HOST = "127.0.0.1"
 DEFAULT_PORT = 7337
 DEFAULT_MIN_DURATION_SECONDS = 120
 DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"

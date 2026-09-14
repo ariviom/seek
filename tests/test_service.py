@@ -72,6 +72,85 @@ WantedBy=default.target
     ]
 
 
+def test_a_timer_runs_a_sync_of_all_channels_on_the_schedule_with_the_same_environment(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    executable(bin_dir, "claude")
+    executable(bin_dir, "deno")
+    env = {"PATH": f"{bin_dir}:/usr/bin", "HF_HOME": "/models/hf", "MENTOR_PORT": "7400"}
+    systemctl = Systemctl()
+
+    installed = install_service(
+        Config(data_dir=tmp_path / "data"),
+        env,
+        Path("/tools/bin/mentor"),
+        tmp_path / "units",
+        systemctl,
+        sync_schedule="Mon *-*-* 04:00",
+    )
+
+    assert installed.timer_path == tmp_path / "units" / "mentor-sync.timer"
+    assert (tmp_path / "units" / "mentor-sync.service").read_text() == f"""\
+[Unit]
+Description=mentor scheduled Sync of every indexed Channel
+After=mentor.service
+
+[Service]
+Type=oneshot
+ExecStart="/tools/bin/mentor" sync --all
+Environment="PATH={bin_dir}:/usr/bin"
+Environment="HF_HOME=/models/hf"
+Environment="MENTOR_PORT=7400"
+Environment="MENTOR_CLAUDE_CLI_PATH={bin_dir / "claude"}"
+UnsetEnvironment=ANTHROPIC_API_KEY
+"""
+    assert installed.timer_path.read_text() == """\
+[Unit]
+Description=mentor scheduled Sync of every indexed Channel
+
+[Timer]
+OnCalendar=Mon *-*-* 04:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    assert systemctl.calls == [
+        ["daemon-reload"],
+        ["enable", "mentor.service"],
+        ["restart", "mentor.service"],
+        ["enable", "mentor-sync.timer"],
+        ["restart", "mentor-sync.timer"],
+    ]
+
+
+def test_reinstalling_without_a_schedule_refreshes_the_sync_environment_and_keeps_the_timer(tmp_path: Path) -> None:
+    units = tmp_path / "units"
+    install_service(
+        Config(data_dir=tmp_path / "data"), {"PATH": "/old/bin"}, Path("/tools/bin/mentor"), units, Systemctl(),
+        sync_schedule="weekly",
+    )
+    timer = (units / "mentor-sync.timer").read_text()
+    systemctl = Systemctl()
+
+    installed = install_service(
+        Config(data_dir=tmp_path / "data"), {"PATH": "/new/bin"}, Path("/tools/bin/mentor"), units, systemctl
+    )
+
+    assert installed.timer_path is None
+    assert 'Environment="PATH=/new/bin"' in (units / "mentor-sync.service").read_text()
+    assert (units / "mentor-sync.timer").read_text() == timer
+    assert systemctl.calls == [["daemon-reload"], ["enable", "mentor.service"], ["restart", "mentor.service"]]
+
+
+def test_without_a_schedule_no_timer_is_installed(tmp_path: Path) -> None:
+    installed = install_service(
+        Config(data_dir=tmp_path / "data"), {"PATH": "/usr/bin"}, Path("/tools/bin/mentor"), tmp_path / "units", Systemctl()
+    )
+
+    assert installed.timer_path is None
+    assert sorted(p.name for p in (tmp_path / "units").iterdir()) == ["mentor.service"]
+
+
 def test_a_claude_cli_path_in_the_config_file_is_left_to_it(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     executable(bin_dir, "claude")
