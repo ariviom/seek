@@ -1,18 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, errorText, type Channel, type Group } from "./api";
-import {
-  alertClass,
-  buttonClass,
-  chipClass,
-  dangerButtonClass,
-  hintClass,
-  inputClass,
-  outlineButtonClass,
-  quietButtonClass,
-  sectionHeadingClass,
-  useChanges,
-  type Act,
-} from "./ui";
+import { api, errorText, type Channel, type Group } from "@/lib/api";
+import { alertClass, buttonClass, chipClass, dangerButtonClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import { useChanges, type Act } from "@/lib/changes";
 
 // `channels` is null until the Channels section has loaded. `onLoaded` receives every Group list loaded.
 export function Groups({
@@ -130,12 +119,12 @@ function GroupCard({
   }
 
   return (
-    <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
+    <li className="rounded-md bg-card px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         {renaming === null ? (
-          <h3 className="font-condensed text-[1.375rem] leading-tight font-semibold">
+          <h3 className="font-semibold tracking-tight text-[1.375rem] leading-tight font-semibold">
             {group.name}{" "}
-            <span className="font-sans text-sm font-normal text-pencil">
+            <span className="font-sans text-sm font-normal text-muted-foreground">
               {group.channels.length} {group.channels.length === 1 ? "Channel" : "Channels"}
             </span>
           </h3>

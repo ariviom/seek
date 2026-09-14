@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorText, type Channel, type ConversationSummary, type Group, type Scope } from "./api";
-import {
-  alertClass,
-  buttonClass,
-  dangerButtonClass,
-  hintClass,
-  inputClass,
-  outlineButtonClass,
-  quietButtonClass,
-  sectionHeadingClass,
-  useChanges,
-} from "./ui";
+import { api, errorText, type Channel, type ConversationSummary, type Group, type Scope } from "@/lib/api";
+import { alertClass, buttonClass, dangerButtonClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import { useChanges } from "@/lib/changes";
 
 function parseFilter(value: string): Scope | null {
   const [kind, id] = value.split(":");
@@ -87,7 +78,7 @@ export function Conversations({
           Conversations
         </h2>
         {((groups?.length ?? 0) > 0 || (channels?.length ?? 0) > 0) && (
-          <label className="flex items-center gap-2 text-sm text-pencil">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Show
             <select className={inputClass} value={shownFilter} onChange={(e) => setFilter(e.target.value)}>
               <option value="">Everything</option>
@@ -128,7 +119,7 @@ export function Conversations({
           No Conversations yet. Choose Ask on a Group, or Ask about a search result.
         </p>
       ) : (
-        <ul className="mt-5 divide-y divide-rule/70 rounded-md bg-panel px-4 sm:px-5">
+        <ul className="mt-5 divide-y divide-border rounded-md bg-card px-4 sm:px-5">
           {conversations.map((conversation) => (
             <li key={conversation.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3">
               <div className="min-w-0">
@@ -147,9 +138,9 @@ export function Conversations({
                     </button>
                   </form>
                 ) : (
-                  <p className="truncate text-[15px] text-ink">{conversation.title}</p>
+                  <p className="truncate text-[15px] text-foreground">{conversation.title}</p>
                 )}
-                <p className="text-[13px] text-pencil tabular-nums">
+                <p className="text-[13px] text-muted-foreground tabular-nums">
                   {conversation.scope.kind === "channel" ? "Channel" : "Group"} {conversation.scope.name}
                   {conversation.scope.id === null && " (deleted, read-only)"} ·{" "}
                   {new Date(conversation.last_message_at ?? conversation.created_at).toLocaleDateString()} ·{" "}

@@ -8,18 +8,10 @@ import {
   type ClaudeCli,
   type ConversationDetail,
   type Scope,
-} from "./api";
+} from "@/lib/api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
-import {
-  alertClass,
-  buttonClass,
-  formatDuration,
-  hintClass,
-  inputClass,
-  outlineButtonClass,
-  quietButtonClass,
-  sectionHeadingClass,
-} from "./ui";
+import { alertClass, buttonClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import { formatDuration } from "@/lib/format";
 
 type ToolActivity = {
   callId: string;
@@ -271,7 +263,7 @@ export function Chat({
   }
 
   return (
-    <section aria-labelledby="chat-heading" className="rounded-md bg-panel px-4 py-4 sm:px-5">
+    <section aria-labelledby="chat-heading" className="rounded-md bg-card px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="chat-heading" className={sectionHeadingClass}>
           Ask {scopeName}
@@ -355,7 +347,7 @@ export function Chat({
             )}
           </div>
           {conversationId === null ? (
-            <label className="flex items-center gap-2 text-sm text-pencil">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
               Model
               <select
                 className={inputClass}
@@ -380,7 +372,7 @@ export function Chat({
 
 function Question({ text }: { text: string }) {
   return (
-    <p className="ml-auto w-fit max-w-[85%] rounded-md bg-machine/10 px-3 py-2 text-[15px] whitespace-pre-wrap">
+    <p className="ml-auto w-fit max-w-[85%] rounded-md bg-muted px-3 py-2 text-[15px] whitespace-pre-wrap">
       {text}
     </p>
   );
@@ -418,7 +410,7 @@ function AnswerView({
             <li
               key={tool.callId}
               className={`rounded-full border px-2.5 py-0.5 text-[13px] ${
-                tool.state === "error" ? "border-oxide/50 text-oxide" : "border-rule text-pencil"
+                tool.state === "error" ? "border-destructive/50 text-destructive" : "border-border text-muted-foreground"
               }`}
             >
               {toolLabel(tool)}
@@ -427,13 +419,13 @@ function AnswerView({
           ))}
         </ul>
       )}
-      {consulted.length > 0 && <p className="text-[13px] text-pencil">Consulted: {consulted.join("; ")}</p>}
+      {consulted.length > 0 && <p className="text-[13px] text-muted-foreground">Consulted: {consulted.join("; ")}</p>}
       {answer.text !== "" && (
         <div className="space-y-2 text-[15px] leading-relaxed">{renderMarkdown(answer.text, answer.citations, onPlay)}</div>
       )}
       {answer.citations.length > 0 && (
-        <div className="border-t border-rule/70 pt-2">
-          <h3 className="text-[13px] font-medium text-pencil">Sources</h3>
+        <div className="border-t border-border pt-2">
+          <h3 className="text-[13px] font-medium text-muted-foreground">Sources</h3>
           <ol className="mt-1 space-y-0.5 text-[13px]">
             {answer.citations.map((citation) => (
               <li key={`${citation.youtube_video_id}@${citation.seconds}`}>
@@ -447,7 +439,7 @@ function AnswerView({
                 >
                   {citation.video_title}
                 </a>
-                <span className="text-pencil tabular-nums">
+                <span className="text-muted-foreground tabular-nums">
                   {" "}
                   · {citation.channel_name}
                   {citation.published_on && ` · ${citation.published_on}`} · at {formatDuration(citation.seconds)}
@@ -470,7 +462,7 @@ function AnswerView({
   );
 }
 
-const linkClass = "text-machine underline decoration-machine/40 underline-offset-2 hover:decoration-machine";
+const linkClass = "text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary";
 
 // Enough inline Markdown for grounded answers: links, bare URLs, bold, italics, and inline code. Everything else shows
 // as written. A bare URL leaves off sentence punctuation that follows it; an underscore inside a word isn't italics.
@@ -595,7 +587,7 @@ function renderInline(text: string, citations: Citation[], onPlay: (citation: Ci
       parts.push(<em key={key}>{renderInline(starred ?? underscored ?? "", citations, onPlay)}</em>);
     } else {
       parts.push(
-        <code key={key} className="rounded-[2px] bg-ink/5 px-1 text-[14px]">
+        <code key={key} className="rounded-[2px] bg-muted px-1 text-[14px]">
           {code}
         </code>,
       );

@@ -74,16 +74,22 @@ async def test_add_a_channel_sync_search_and_watch_citations(
             )
             await page.goto(base_url)
 
+            # The v1 sections now live under the rail's sections, so each is opened before it is driven.
+            rail = page.get_by_role("navigation", name="Sections")
+            await rail.get_by_role("button", name="Library").click()
             await page.get_by_label("YouTube Channel URL or handle").fill("@woodbywright")
             await page.get_by_role("button", name="Look up").click()
             await page.get_by_label("Channel name").fill("Wright")
             await page.get_by_role("button", name="Add Channel").click()
 
             await page.get_by_role("button", name="Sync", exact=True).click()
+            await rail.get_by_role("button", name="Syncs").click()
             await expect(page.get_by_role("region", name="Syncs").get_by_text("Done", exact=True)).to_be_visible()
 
+            await rail.get_by_role("button", name="Search").click()
+            search = page.get_by_role("region", name="Search")
             await page.get_by_label("Question", exact=True).fill("plane across the grain")
-            await page.get_by_role("button", name="Search", exact=True).click()
+            await search.get_by_role("button", name="Search", exact=True).click()
             result = (
                 page.get_by_role("list", name="Results for plane across the grain")
                 .get_by_role("listitem")
@@ -93,6 +99,7 @@ async def test_add_a_channel_sync_search_and_watch_citations(
             embed = ("www.youtube-nocookie.com", "/embed/bench-flat1")
             assert await embedded_at(result.locator("iframe")) == (*embed, ["15"])
 
+            await rail.get_by_role("button", name="Library").click()
             await page.get_by_label("Group name", exact=True).fill("Benches")
             await page.get_by_role("button", name="Create Group").click()
             member = page.get_by_role("list", name="Channels in Benches").get_by_label("Wright")

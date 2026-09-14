@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import type { Citation } from "./api";
-import { formatDuration, quietButtonClass } from "./ui";
+import type { Citation } from "@/lib/api";
+import { quietButtonClass } from "./ui";
+import { formatDuration } from "@/lib/format";
 
 // What the player needs of a Citation. A search result at a second is one too.
 export type PlayerCitation = Pick<Citation, "youtube_video_id" | "seconds" | "video_title" | "channel_name">;
@@ -46,7 +47,7 @@ export function CitationPlayer({
 
   return (
     <figure ref={figure} className="mt-3">
-      <div className="aspect-video overflow-hidden rounded-md bg-ink">
+      <div className="aspect-video overflow-hidden rounded-md bg-black">
         <iframe
           key={opening}
           className="size-full"
@@ -58,7 +59,7 @@ export function CitationPlayer({
           referrerPolicy="strict-origin-when-cross-origin"
         />
       </div>
-      <figcaption className="mt-1 flex items-baseline justify-between gap-3 text-[13px] text-pencil">
+      <figcaption className="mt-1 flex items-baseline justify-between gap-3 text-[13px] text-muted-foreground">
         <span className="min-w-0 truncate">
           {citation.channel_name} · {citation.video_title} at <span className="tabular-nums">{at}</span>
         </span>

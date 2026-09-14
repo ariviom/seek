@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Models, Sync, Video } from "./api";
+import type { Models, Sync, Video } from "@/lib/api";
 
 export type ServerEvent =
   | { type: "ready" }

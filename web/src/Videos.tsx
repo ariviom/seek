@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
-import { api, errorText, type Video } from "./api";
-import { useLiveList, type Reaction, type ServerEvent } from "./events";
-import { formatDuration, inputClass, quietButtonClass, stageFill, stageLabels } from "./ui";
+import { api, errorText, type Video } from "@/lib/api";
+import { useLiveList, type Reaction, type ServerEvent } from "@/lib/events";
+import { inputClass, quietButtonClass, stageFill } from "./ui";
+import { formatDuration, stageLabels } from "@/lib/format";
 
 type Shown = "all" | "failed" | "excluded";
 const shownLabels: Record<Shown, string> = { all: "All", failed: "Failed", excluded: "Excluded" };
@@ -41,17 +42,17 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
     }
   }
 
-  const note = "mt-3 border-t border-rule pt-3 text-sm";
-  if (error !== null) return <p className={`${note} text-oxide`}>Could not load Videos: {errorText(error)}</p>;
-  if (videos === null) return <p className={`${note} text-pencil`}>Loading Videos…</p>;
-  if (videos.length === 0) return <p className={`${note} text-pencil`}>No Videos yet. Sync this Channel to find them.</p>;
+  const note = "mt-3 border-t border-border pt-3 text-sm";
+  if (error !== null) return <p className={`${note} text-destructive`}>Could not load Videos: {errorText(error)}</p>;
+  if (videos === null) return <p className={`${note} text-muted-foreground`}>Loading Videos…</p>;
+  if (videos.length === 0) return <p className={`${note} text-muted-foreground`}>No Videos yet. Sync this Channel to find them.</p>;
 
   const listed = shown === "all" ? videos : videos.filter((video) => video.stage === shown);
 
   return (
-    <div className="mt-3 border-t border-rule pt-2">
+    <div className="mt-3 border-t border-border pt-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="flex items-center gap-2 text-sm text-pencil">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
           Show
           <select
             className={`${inputClass} py-1 text-sm`}
@@ -66,14 +67,14 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
             ))}
           </select>
         </label>
-        {retryError && <p className="text-sm text-oxide">{retryError}</p>}
+        {retryError && <p className="text-sm text-destructive">{retryError}</p>}
       </div>
       {listed.length === 0 ? (
-        <p className="mt-2 text-sm text-pencil">No {shownLabels[shown].toLowerCase()} Videos.</p>
+        <p className="mt-2 text-sm text-muted-foreground">No {shownLabels[shown].toLowerCase()} Videos.</p>
       ) : (
         <div className="mt-2 max-h-[28rem] overflow-y-auto">
           <table className="w-full text-left text-[13px]">
-            <thead className="sticky top-0 bg-panel text-pencil">
+            <thead className="sticky top-0 bg-card text-muted-foreground">
               <tr>
                 <th className="py-1.5 pr-3 font-medium">Video</th>
                 <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Published</th>
@@ -83,10 +84,10 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
             </thead>
             <tbody>
               {listed.map((video) => (
-                <tr key={video.id} className="border-t border-rule/60 align-top">
+                <tr key={video.id} className="border-t border-border align-top">
                   <td className="py-1.5 pr-3">
                     <a
-                      className="text-ink decoration-machine/50 underline-offset-2 hover:underline"
+                      className="text-foreground decoration-primary/50 underline-offset-2 hover:underline"
                       href={`https://www.youtube.com/watch?v=${video.youtube_video_id}`}
                       target="_blank"
                       rel="noreferrer"
@@ -94,19 +95,19 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
                       {video.title}
                     </a>
                   </td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-pencil tabular-nums">{video.published_on ?? ""}</td>
-                  <td className="py-1.5 pr-3 text-right whitespace-nowrap text-pencil tabular-nums">
+                  <td className="py-1.5 pr-3 whitespace-nowrap text-muted-foreground tabular-nums">{video.published_on ?? ""}</td>
+                  <td className="py-1.5 pr-3 text-right whitespace-nowrap text-muted-foreground tabular-nums">
                     {formatDuration(video.duration_seconds)}
                   </td>
                   <td className="min-w-40 py-1.5">
                     <span className="flex items-center gap-1.5">
                       <span aria-hidden className={`size-2.5 shrink-0 rounded-[1px] ${stageFill[video.stage]}`} />
-                      <span className={video.stage === "failed" ? "text-oxide" : video.stage === "excluded" ? "text-pencil" : ""}>
+                      <span className={video.stage === "failed" ? "text-destructive" : video.stage === "excluded" ? "text-muted-foreground" : ""}>
                         {stageLabels[video.stage]}
                       </span>
                     </span>
                     {video.reason && (
-                      <span className="mt-0.5 block text-pencil">
+                      <span className="mt-0.5 block text-muted-foreground">
                         {video.reason}
                         {video.stage === "failed" && video.permanent_failure === false && " (retried on the next Sync)"}
                       </span>

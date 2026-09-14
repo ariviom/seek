@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import { api, errorText, type Sync } from "./api";
-import { useLiveList, type Reaction, type ServerEvent } from "./events";
+import { api, errorText, type Sync } from "@/lib/api";
+import { useLiveList, type Reaction, type ServerEvent } from "@/lib/events";
 import { StageRule } from "./StageRule";
 import { alertClass, hintClass, quietButtonClass, sectionHeadingClass } from "./ui";
 
@@ -8,10 +8,10 @@ import { alertClass, hintClass, quietButtonClass, sectionHeadingClass } from "./
 const SHOWN = 50;
 
 const status: Record<Sync["status"], { label: string; className: string }> = {
-  queued: { label: "Queued", className: "text-pencil" },
-  running: { label: "Running", className: "text-[#9a6c00]" },
-  done: { label: "Done", className: "text-machine" },
-  failed: { label: "Failed", className: "text-oxide" },
+  queued: { label: "Queued", className: "text-muted-foreground" },
+  running: { label: "Running", className: "text-amber-600" },
+  done: { label: "Done", className: "text-emerald-600" },
+  failed: { label: "Failed", className: "text-destructive" },
 };
 
 function react(event: ServerEvent): Reaction<Sync> {
@@ -69,7 +69,7 @@ export function Syncs() {
           {syncs.map((sync) => {
             const active = sync.status === "queued" || sync.status === "running";
             return (
-              <li key={sync.id} className={active ? "rounded-md bg-panel p-4" : "px-1 py-2"}>
+              <li key={sync.id} className={active ? "rounded-md bg-card p-4" : "px-1 py-2"}>
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-medium">{sync.channel_name}</p>
@@ -79,14 +79,14 @@ export function Syncs() {
                   </span>
                 </div>
                 {sync.status === "running" && sync.fetching && (
-                  <p className="mt-1 truncate text-[13px] text-pencil" title={sync.fetching}>
+                  <p className="mt-1 truncate text-[13px] text-muted-foreground" title={sync.fetching}>
                     Fetching {sync.fetching}
                   </p>
                 )}
                 <div className="mt-2">
                   <StageRule counts={sync.stage_counts} detailed={active} />
                 </div>
-                <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 text-[13px] text-pencil">
+                <div className="mt-1.5 flex flex-wrap justify-between gap-x-3 text-[13px] text-muted-foreground">
                   <span>{when(sync)}</span>
                   {sync.new_videos > 0 && (
                     <span>
@@ -94,7 +94,7 @@ export function Syncs() {
                     </span>
                   )}
                 </div>
-                {sync.error && <p className="mt-1 text-[13px] text-oxide">{sync.error}</p>}
+                {sync.error && <p className="mt-1 text-[13px] text-destructive">{sync.error}</p>}
               </li>
             );
           })}

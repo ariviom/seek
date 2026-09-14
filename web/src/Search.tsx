@@ -8,19 +8,10 @@ import {
   type PreferRecent,
   type Scope,
   type SearchResult,
-} from "./api";
+} from "@/lib/api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
-import {
-  alertClass,
-  buttonClass,
-  chipClass,
-  formatDuration,
-  hintClass,
-  inputClass,
-  outlineButtonClass,
-  quietButtonClass,
-  sectionHeadingClass,
-} from "./ui";
+import { alertClass, buttonClass, chipClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import { formatDuration } from "@/lib/format";
 
 const recencyLabels: Record<PreferRecent, string> = {
   off: "Ignore age",
@@ -92,7 +83,7 @@ export function Search({
     setChosen((ids) => (ticked ? [...ids, channelId] : ids.filter((id) => id !== channelId)));
   }
 
-  const labelClass = "flex flex-col gap-1 text-sm text-pencil";
+  const labelClass = "flex flex-col gap-1 text-sm text-muted-foreground";
 
   return (
     <section aria-labelledby="search-heading">
@@ -232,15 +223,15 @@ function Result({
   }
 
   return (
-    <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] text-pencil">
+    <li className="rounded-md bg-card px-4 py-4 sm:px-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] text-muted-foreground">
         <p>
-          <span className="font-medium text-ink">{result.channel_name}</span>
+          <span className="font-medium text-foreground">{result.channel_name}</span>
         </p>
         <p className="tabular-nums">Published {result.published_on}</p>
       </div>
-      <h3 className="mt-1 font-condensed text-[1.375rem] leading-tight font-semibold">{result.video_title}</h3>
-      {result.chapter_title && <p className="text-[13px] text-pencil">Chapter: {result.chapter_title}</p>}
+      <h3 className="mt-1 font-semibold tracking-tight text-[1.375rem] leading-tight font-semibold">{result.video_title}</h3>
+      {result.chapter_title && <p className="text-[13px] text-muted-foreground">Chapter: {result.chapter_title}</p>}
       {open && context !== null ? (
         <TranscriptContext context={context} onPlay={onPlay} />
       ) : (
@@ -298,7 +289,7 @@ function TranscriptContext({ context, onPlay }: { context: Expansion; onPlay: (s
   return (
     <ol
       ref={list}
-      className="relative mt-2 max-h-72 space-y-0.5 overflow-y-auto border-l-2 border-rule pl-3"
+      className="relative mt-2 max-h-72 space-y-0.5 overflow-y-auto border-l-2 border-border pl-3"
       aria-label={`Transcript around this moment in ${context.video_title}`}
     >
       {context.cues.map((cue, index) => {
@@ -308,10 +299,10 @@ function TranscriptContext({ context, onPlay }: { context: Expansion; onPlay: (s
           <li
             key={index}
             ref={index === firstIndex ? firstInSegment : undefined}
-            className={`grid grid-cols-[3.5rem_1fr] gap-2 text-[15px] leading-relaxed ${inSegment ? "text-ink" : "text-pencil"}`}
+            className={`grid grid-cols-[3.5rem_1fr] gap-2 text-[15px] leading-relaxed ${inSegment ? "text-foreground" : "text-muted-foreground"}`}
           >
             <button
-              className="text-left text-[13px] leading-[1.6rem] text-machine tabular-nums underline-offset-2 hover:underline"
+              className="text-left text-[13px] leading-[1.6rem] text-primary tabular-nums underline-offset-2 hover:underline"
               type="button"
               onClick={() => onPlay(start)}
               aria-label={`Watch at ${formatDuration(start)}`}

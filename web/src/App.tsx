@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
   errorText,
@@ -6,13 +6,18 @@ import {
   type Group,
   type Health,
   type Models,
-  type ModelStatus,
   type Scope,
-} from "./api";
+} from "@/lib/api";
+import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
+import { useUrlState } from "@/lib/url-state";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ListColumn } from "@/shell/ListColumn";
+import { MainHeader } from "@/shell/MainHeader";
+import { ClaudeNotice, describeModel, ModelNotice, ServerNotice } from "@/shell/Notices";
+import { Rail } from "@/shell/Rail";
 import { Channels } from "./Channels";
 import { Chat, type ChatScope } from "./Chat";
 import { Conversations } from "./Conversations";
-import { useLiveUpdatesStopped, useServerEvents } from "./events";
 import { Groups } from "./Groups";
 import { Search } from "./Search";
 import { Syncs } from "./Syncs";
@@ -22,42 +27,6 @@ type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind
 
 const modelRoles = ["embedding", "reranker"] as const;
 const modelLabels: Record<keyof Models, string> = { embedding: "embedding model", reranker: "reranking model" };
-// What can't run until each model is ready.
-const modelWaiters: Record<keyof Models, string> = { embedding: "Search and Syncs wait", reranker: "Search waits" };
-
-function megabytes(bytes: number): string {
-  return String(Math.floor(bytes / 1_000_000));
-}
-
-function describeModel(status: ModelStatus): string {
-  switch (status.state) {
-    case "downloading":
-      return status.total_bytes === null
-        ? `downloading, ${megabytes(status.downloaded_bytes ?? 0)} MB`
-        : `downloading, ${megabytes(status.downloaded_bytes ?? 0)} of ${megabytes(status.total_bytes)} MB`;
-    default:
-      return status.state;
-  }
-}
-
-function ModelNotice({ models }: { models: Models }) {
-  const role = modelRoles.find((r) => models[r].state !== "ready");
-  if (role === undefined) return null;
-  const status = models[role];
-  if (status.state === "failed") {
-    // The server's message names the model and says what to do.
-    return (
-      <p role="alert" className="text-sm text-oxide">
-        {status.error ?? `The ${modelLabels[role]} failed to load`}
-      </p>
-    );
-  }
-  return (
-    <p role="status" className={hintClass}>
-      The {modelLabels[role]} is {describeModel(status)}. {modelWaiters[role]} until it’s ready.
-    </p>
-  );
-}
 
 // The scope with its latest name and the Channels that answer; null once it is gone or the lists haven't loaded.
 function resolveScope(scope: Scope | null, groups: Group[] | null, channels: Channel[] | null): ChatScope | null {
@@ -74,6 +43,8 @@ export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [channels, setChannels] = useState<Channel[] | null>(null);
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const [healthOpen, setHealthOpen] = useState(false);
+  const { view, selection, setView, select } = useUrlState();
   // The open chat: a Group's or Channel's new Conversation, or a saved one (whose scope may be gone), with any
   // prefilled question. `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
   const [chat, setChat] = useState<{
@@ -89,7 +60,8 @@ export function App() {
   const openings = useRef(0);
   const openChat = (scope: Scope | null, conversationId: number | null, draft = "") => {
     setChat({ scope, conversationId, draft, opening: ++openings.current });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setView("chats");
+    select({ conversation: conversationId ?? undefined });
   };
   const groupsLoaded = useCallback((loaded: Group[]) => {
     setGroups(loaded);
@@ -116,6 +88,13 @@ export function App() {
     void loadHealth();
   }, [loadHealth]);
 
+  // Search's scopes, the Conversations filter, and a chat's scope name all need the lists, so they are loaded up
+  // front instead of waiting for the Library view to mount its sections, which report their own load errors.
+  useEffect(() => {
+    void api.listChannels().then(setChannels, () => undefined);
+    void api.listGroups().then(groupsLoaded, () => undefined);
+  }, [groupsLoaded]);
+
   useServerEvents((event) => {
     // Models may have progressed while the stream was down.
     if (event.type === "ready") void loadHealth();
@@ -130,55 +109,65 @@ export function App() {
 
   const liveUpdatesStopped = useLiveUpdatesStopped();
 
-  return (
-    <div className="min-h-screen">
-      <header className="border-b border-rule bg-panel">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
-          <h1 className="font-condensed text-3xl leading-none font-semibold">mentor</h1>
-          {state.kind === "error" && (
-            <p role="alert" className="text-sm text-oxide">
-              Server unavailable: {state.message}
-            </p>
-          )}
-          {state.kind !== "error" && liveUpdatesStopped && (
-            <p role="alert" className="text-sm text-oxide">
-              Live updates stopped. Reload the page, and sign in again if asked.
-            </p>
-          )}
-          {state.kind === "ok" && !liveUpdatesStopped && <ModelNotice models={state.health.models} />}
-        </div>
-      </header>
-      <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
-        <main className="min-w-0 space-y-12">
-          {/* A new chat whose Group or Channel was deleted before its first question just closes. */}
-          {chat !== null && groups !== null && channels !== null && (chatScope !== null || chat.conversationId !== null) && (
-            <Chat
-              key={chat.opening}
-              scope={chatScope}
-              conversationId={chat.conversationId}
-              claude={state.kind === "ok" ? state.health.claude_cli : null}
-              draft={chat.draft}
-              onClose={() => setChat(null)}
-              onChanged={(conversationId) => {
-                // A chat replaced mid-answer still finishes its turn; it mustn't retarget the chat now open.
-                const opening = chat.opening;
-                setChat((current) => (current?.opening === opening ? { ...current, conversationId } : current));
-                setConversationsVersion((v) => v + 1);
-              }}
-            />
-          )}
-          <Search channels={channels} groups={groups} onAsk={(scope, draft) => openChat(scope, null, draft)} />
-          <Channels onLoaded={setChannels} />
-          <Groups
-            channels={channels}
-            onLoaded={groupsLoaded}
-            onAsk={(group) => openChat({ kind: "group", id: group.id }, null)}
-          />
+  // ⌘K/Ctrl+K goes to Search and puts the cursor in the question. Search owns its own input, so it is found by the
+  // label it already carries; ticket 05 replaces this with a ref.
+  const [focusSearch, setFocusSearch] = useState(0);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      setView("search");
+      setFocusSearch((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setView]);
+  useEffect(() => {
+    if (focusSearch === 0) return;
+    document.querySelector<HTMLInputElement>('input[aria-label="Question"]')?.focus();
+  }, [focusSearch, view]);
+
+  const openedChat = chat !== null &&
+    groups !== null &&
+    channels !== null &&
+    (chatScope !== null || chat.conversationId !== null) && (
+      <Chat
+        key={chat.opening}
+        scope={chatScope}
+        conversationId={chat.conversationId}
+        claude={state.kind === "ok" ? state.health.claude_cli : null}
+        draft={chat.draft}
+        onClose={() => {
+          setChat(null);
+          select({ conversation: undefined });
+        }}
+        onChanged={(conversationId) => {
+          // A chat replaced mid-answer still finishes its turn; it mustn't retarget the chat now open.
+          const opening = chat.opening;
+          setChat((current) => (current?.opening === opening ? { ...current, conversationId } : current));
+          select({ conversation: conversationId });
+          setConversationsVersion((v) => v + 1);
+        }}
+      />
+    );
+
+  // Each section's list column and main pane. Library and Syncs get their real lists in tickets 04 and 05; for now
+  // the old sections stay whole in the main pane and the column says where they are going.
+  const placeholder = (text: string) => <p className={`mt-2 ${hintClass}`}>{text}</p>;
+  const sections: Record<typeof view, { title: string; list: ReactNode; main: ReactNode }> = {
+    chats: {
+      title: "Chats",
+      list: placeholder("Chats are filed here from ticket 04."),
+      main: (
+        <>
+          {state.kind === "ok" && <ModelNotice models={state.health.models} />}
+          {state.kind === "ok" && <ClaudeNotice claude={state.health.claude_cli} />}
+          {openedChat}
           <Conversations
             groups={groups}
             channels={channels}
             version={conversationsVersion}
-            openId={chat?.conversationId ?? null}
+            openId={selection.conversation ?? null}
             onOpen={(conversation) =>
               // A deleted scope has no id left, so the Conversation opens read-only.
               openChat(
@@ -186,54 +175,97 @@ export function App() {
                 conversation.id,
               )
             }
-            onDeleted={(conversationId) =>
-              setChat((current) => (current?.conversationId === conversationId ? null : current))
-            }
+            onDeleted={(conversationId) => {
+              setChat((current) => (current?.conversationId === conversationId ? null : current));
+              if (selection.conversation === conversationId) select({ conversation: undefined });
+            }}
           />
-        </main>
-        <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
-          <Syncs />
-        </aside>
-      </div>
-      <footer className="mx-auto max-w-6xl px-5 pb-8 sm:px-8">
-        {state.kind === "ok" && (
-          <dl className="flex flex-wrap gap-x-6 gap-y-1 border-t border-rule pt-3 text-[13px] text-pencil">
-            <div className="flex gap-1.5">
-              <dt>Server</dt>
-              <dd className="text-ink">{state.health.status}</dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt>sqlite-vec</dt>
-              <dd className="text-ink">{state.health.database.sqlite_vec}</dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt>FTS5</dt>
-              <dd className="text-ink">{state.health.database.fts5 ? "available" : "missing"}</dd>
-            </div>
-            {modelRoles.map((role) => (
-              <div key={role} className="flex min-w-0 gap-1.5">
-                <dt className="first-letter:uppercase">{modelLabels[role]}</dt>
-                <dd className="truncate text-ink" title={state.health.models[role].error ?? undefined}>
-                  {state.health.models[role].name} ({describeModel(state.health.models[role])})
-                </dd>
-              </div>
-            ))}
-            <div className="flex min-w-0 gap-1.5">
-              <dt>Claude CLI</dt>
-              <dd
-                className={`truncate ${state.health.claude_cli.state === "ready" ? "text-ink" : "text-oxide"}`}
-                title={state.health.claude_cli.message ?? state.health.claude_cli.cli_path ?? undefined}
-              >
-                {state.health.claude_cli.state.replace("_", " ")}
-              </dd>
-            </div>
-            <div className="flex min-w-0 gap-1.5">
-              <dt>Knowledge base</dt>
-              <dd className="truncate text-ink">{state.health.database.path}</dd>
-            </div>
-          </dl>
-        )}
-      </footer>
+        </>
+      ),
+    },
+    search: {
+      title: "Search",
+      list: placeholder("The search form moves here in ticket 05."),
+      main: <Search channels={channels} groups={groups} onAsk={(scope, draft) => openChat(scope, null, draft)} />,
+    },
+    library: {
+      title: "Library",
+      list: placeholder("Channels and Groups are listed here from ticket 03's Library phase."),
+      main: (
+        <>
+          <Channels onLoaded={setChannels} />
+          <Groups
+            channels={channels}
+            onLoaded={groupsLoaded}
+            onAsk={(group) => openChat({ kind: "group", id: group.id }, null)}
+          />
+        </>
+      ),
+    },
+    syncs: {
+      title: "Syncs",
+      list: placeholder("Syncs are listed here from ticket 03's Syncs phase."),
+      main: <Syncs />,
+    },
+  };
+  const section = sections[view];
+  const listColumn = (
+    <ListColumn title={section.title}>{section.list}</ListColumn>
+  );
+
+  return (
+    <div className="flex h-screen">
+      <Rail
+        view={view}
+        onView={setView}
+        models={state.kind === "ok" ? state.health.models : null}
+        claude={state.kind === "ok" ? state.health.claude_cli : null}
+        onShowHealth={() => setHealthOpen(true)}
+      />
+      <div className="hidden h-full lg:flex">{listColumn}</div>
+      <main className="flex min-w-0 flex-1 flex-col">
+        <MainHeader title={section.title} list={{ title: section.title, content: listColumn }} />
+        <div className="min-h-0 flex-1 overflow-y-auto pb-14 md:pb-0">
+          <div className="mx-auto max-w-3xl space-y-8 px-6 py-5">
+            <ServerNotice state={state} liveUpdatesStopped={liveUpdatesStopped} />
+            {section.main}
+          </div>
+        </div>
+      </main>
+      {/* Tickets 04 and 05 mount the Sources Inspector here. */}
+      <Dialog open={healthOpen} onOpenChange={setHealthOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Server health</DialogTitle>
+          </DialogHeader>
+          {state.kind === "ok" && (
+            <dl className="grid gap-1 text-sm">
+              <Fact term="Server" value={state.health.status} />
+              <Fact term="sqlite-vec" value={state.health.database.sqlite_vec} />
+              <Fact term="FTS5" value={state.health.database.fts5 ? "available" : "missing"} />
+              {modelRoles.map((role) => (
+                <Fact
+                  key={role}
+                  term={modelLabels[role]}
+                  value={`${state.health.models[role].name} (${describeModel(state.health.models[role])})`}
+                />
+              ))}
+              <Fact term="Claude CLI" value={state.health.claude_cli.state.replace("_", " ")} />
+              <Fact term="Knowledge base" value={state.health.database.path} />
+            </dl>
+          )}
+          {state.kind === "error" && <p className="text-sm text-destructive">Server unavailable: {state.message}</p>}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function Fact({ term, value }: { term: string; value: string }) {
+  return (
+    <div className="flex min-w-0 gap-2">
+      <dt className="text-muted-foreground first-letter:uppercase">{term}</dt>
+      <dd className="min-w-0 truncate">{value}</dd>
     </div>
   );
 }

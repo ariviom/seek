@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { api, type Channel, type ChannelFilters } from "./api";
-import { buttonClass, hintClass, inputClass, quietButtonClass, type Act } from "./ui";
+import { api, type Channel, type ChannelFilters } from "@/lib/api";
+import { buttonClass, hintClass, inputClass, quietButtonClass } from "./ui";
+import { type Act } from "@/lib/changes";
 
 const noFilters: ChannelFilters = { published_after: null, published_before: null, playlist_id: null, most_recent: null };
 
@@ -35,9 +36,9 @@ export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel;
     });
   }
 
-  const label = "flex flex-col gap-1 text-sm text-pencil";
+  const label = "flex flex-col gap-1 text-sm text-muted-foreground";
   return (
-    <form onSubmit={submit} className="mt-3 border-t border-rule pt-3">
+    <form onSubmit={submit} className="mt-3 border-t border-border pt-3">
       <p className={hintClass}>Only Videos matching every filter are ingested. Leave a field empty to skip it.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className={label}>
@@ -80,7 +81,7 @@ export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel;
         <button className={quietButtonClass} type="button" onClick={onDone}>
           Cancel
         </button>
-        <span className="text-[13px] text-pencil">The next Sync applies them.</span>
+        <span className="text-[13px] text-muted-foreground">The next Sync applies them.</span>
       </div>
     </form>
   );

@@ -6,6 +6,9 @@ export default defineConfig({
   // Relative base so the bundle works behind a reverse-proxy path prefix.
   base: "./",
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { "@": new URL("./src", import.meta.url).pathname },
+  },
   build: {
     outDir: "../src/mentor/static",
     emptyOutDir: true,

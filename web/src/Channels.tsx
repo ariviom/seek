@@ -1,19 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, errorText, type Channel, type ChannelProposal } from "./api";
-import {
-  alertClass,
-  buttonClass,
-  dangerButtonClass,
-  hintClass,
-  inputClass,
-  outlineButtonClass,
-  quietButtonClass,
-  sectionHeadingClass,
-  useChanges,
-  type Act,
-} from "./ui";
+import { api, errorText, type Channel, type ChannelProposal } from "@/lib/api";
+import { alertClass, buttonClass, dangerButtonClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import { useChanges, type Act } from "@/lib/changes";
 import { ChannelFiltersForm, filtersSummary } from "./ChannelFilters";
-import { useServerEvents } from "./events";
+import { useServerEvents } from "@/lib/events";
 import { ChannelVideos } from "./Videos";
 
 export function Channels({ onLoaded }: { onLoaded: (channels: Channel[]) => void }) {
@@ -111,7 +101,7 @@ function AddChannel({ act, onError }: { act: Act; onError: (message: string | nu
 
   if (proposal) {
     return (
-      <form onSubmit={create} className="mt-4 rounded-md border border-machine/40 bg-panel p-4">
+      <form onSubmit={create} className="mt-4 rounded-md border border-border bg-card p-4">
         <p className="text-[15px]">
           Found the channel <strong className="font-semibold">{proposal.name}</strong>. Name it as you'd like it
           shown:
@@ -175,13 +165,13 @@ function ChannelRow({ channel, act }: { channel: Channel; act: Act }) {
   }
 
   return (
-    <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
+    <li className="rounded-md bg-card px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
           {renaming === null ? (
-            <p className={`font-medium ${channel.indexed ? "" : "text-pencil"}`}>
+            <p className={`font-medium ${channel.indexed ? "" : "text-muted-foreground"}`}>
               <a
-                className="decoration-machine/50 underline-offset-2 hover:underline"
+                className="decoration-primary/50 underline-offset-2 hover:underline"
                 href={`https://www.youtube.com/channel/${channel.youtube_channel_id}`}
                 target="_blank"
                 rel="noreferrer"
@@ -205,8 +195,8 @@ function ChannelRow({ channel, act }: { channel: Channel; act: Act }) {
               </button>
             </form>
           )}
-          <p className="text-[13px] text-pencil tabular-nums">{channelCounts(channel)}</p>
-          {filters && <p className="text-[13px] text-pencil">Filtered to {filters}</p>}
+          <p className="text-[13px] text-muted-foreground tabular-nums">{channelCounts(channel)}</p>
+          {filters && <p className="text-[13px] text-muted-foreground">Filtered to {filters}</p>}
         </div>
         <button className={outlineButtonClass} onClick={() => void act(() => api.startSync(channel.id))}>
           Sync
@@ -225,7 +215,7 @@ function ChannelRow({ channel, act }: { channel: Channel; act: Act }) {
         <button className={quietButtonClass} onClick={() => setRenaming(renaming === null ? channel.name : null)}>
           {renaming === null ? "Rename" : "Cancel"}
         </button>
-        <label className="ml-1 flex items-center gap-1.5 px-1 text-[15px] text-pencil">
+        <label className="ml-1 flex items-center gap-1.5 px-1 text-[15px] text-muted-foreground">
           <input
             type="checkbox"
             checked={channel.indexed}
