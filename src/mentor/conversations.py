@@ -9,6 +9,7 @@ from typing import Literal
 from mentor.db import now_iso, transaction
 from mentor.errors import Conflict, NotFound
 from mentor.ports import PastMessage
+from mentor.sources import watch_url
 
 
 @dataclass(frozen=True)
@@ -223,7 +224,7 @@ def _citations(conn: sqlite3.Connection, group_id: int, links: Sequence[tuple[st
             video_title=video["title"],
             mentor_name=video["mentor_name"],
             channel_name=video["channel_name"],
-            url=f"https://www.youtube.com/watch?v={youtube_video_id}&t={seconds}s",
+            url=watch_url(youtube_video_id, seconds),
         )
         for youtube_video_id, seconds in links
         if (video := videos.get(youtube_video_id)) is not None

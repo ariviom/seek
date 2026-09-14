@@ -58,8 +58,10 @@ _IN_GROUP = """(
 )"""
 
 
-def _watch_url(youtube_video_id: str) -> str:
-    return f"https://www.youtube.com/watch?v={youtube_video_id}"
+def watch_url(youtube_video_id: str, seconds: int | None = None) -> str:
+    """The Video's YouTube watch link, at the whole second when given."""
+    url = f"https://www.youtube.com/watch?v={youtube_video_id}"
+    return url if seconds is None else f"{url}&t={seconds}s"
 
 
 def expand(
@@ -98,7 +100,7 @@ def expand(
         published_on=date.fromisoformat(row["published_on"]) if row["published_on"] else None,
         channel_name=row["channel_name"],
         mentor_name=row["mentor_name"],
-        url=f"{_watch_url(row['youtube_video_id'])}&t={int(row['start_seconds'])}s",
+        url=watch_url(row["youtube_video_id"], int(row["start_seconds"])),
         # Whitespace collapsed and blank cues dropped, as in Segment text.
         cues=[
             TimedLine(start_seconds=c.start, text=" ".join(c.text.split()))
@@ -132,5 +134,5 @@ def get_video(conn: sqlite3.Connection, video_id: int, group_id: int | None = No
         duration_seconds=row["duration_seconds"],
         chapters=[Chapter(**c) for c in json.loads(row["chapters"] or "[]")],
         description=row["description"],
-        url=_watch_url(row["youtube_video_id"]),
+        url=watch_url(row["youtube_video_id"]),
     )

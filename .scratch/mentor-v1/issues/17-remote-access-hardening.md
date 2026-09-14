@@ -20,3 +20,6 @@ From ticket 07 review: behind Cloudflare Access, an expired session answers the 
 From ticket 11 review:
 - The MCP app is added as a `Route("/mcp", ...)` in `app.py` wrapping the SDK's Starlette app, whose own route is also `/mcp`; check it still matches under a root path prefix. `/mcp/` answers 405 from the static mount.
 - Only `/mcp` has DNS-rebinding protection (Host and Origin allowlists from `LOOPBACK_HOSTS` plus `mcp_allowed_hosts`); `/api`, including mutating endpoints, checks neither, and the loopback exemption would let a rebinding page in a local browser reach it.
+
+From ticket 14 review:
+- The Citation player embeds `https://www.youtube-nocookie.com/embed/...` in an iframe. Any CSP added here needs `frame-src https://www.youtube-nocookie.com`, and a `Referrer-Policy` of `no-referrer` breaks it (YouTube refuses embeds without a referrer).

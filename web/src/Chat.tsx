@@ -4,10 +4,12 @@ import {
   errorText,
   type ChatMessage,
   type ChatStreamEvent,
+  type Citation,
   type ClaudeCli,
   type ConversationDetail,
   type MentorGroup,
 } from "./api";
+import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
 import { alertClass, buttonClass, hintClass, inputClass, quietButtonClass, sectionHeadingClass } from "./ui";
 
 type ToolActivity = {
@@ -18,7 +20,15 @@ type ToolActivity = {
 };
 type Entry =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; tools: ToolActivity[]; state: "streaming" | "done" | "failed"; error: string | null };
+  | {
+      role: "assistant";
+      text: string;
+      tools: ToolActivity[];
+      // Known once the answer is saved.
+      citations: Citation[];
+      state: "streaming" | "done" | "failed";
+      error: string | null;
+    };
 type Answer = Extract<Entry, { role: "assistant" }>;
 
 const defaultModelLabel = "Claude CLI default";
@@ -42,7 +52,7 @@ function entryOf(message: ChatMessage): Entry {
     arguments: tool.arguments,
     state: tool.is_error ? ("error" as const) : ("ok" as const),
   }));
-  return { role: "assistant", text: message.content, tools, state: "done", error: null };
+  return { role: "assistant", text: message.content, tools, citations: message.citations, state: "done", error: null };
 }
 
 // A chat with one Mentor Group: a new Conversation (created with the first question) or an existing one.
@@ -69,6 +79,8 @@ export function Chat({
   const [draft, setDraft] = useState("");
   const [answering, setAnswering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One player at a time, under the answer it was opened from (by entry index).
+  const player = usePlayer<number>();
   const list = useRef<HTMLOListElement>(null);
   const busy = useRef(false);
   // The Group's name as last seen, for when it is deleted while this chat is open.
@@ -128,7 +140,12 @@ export function Chat({
           ),
         }));
       case "done":
-        return updateAnswer((a) => ({ ...a, text: event.message.content, state: "done" }));
+        return updateAnswer((a) => ({
+          ...a,
+          text: event.message.content,
+          citations: event.message.citations,
+          state: "done",
+        }));
       case "error":
         return updateAnswer((a) => ({ ...a, state: "failed", error: event.message }));
     }
@@ -153,7 +170,7 @@ export function Chat({
       setEntries((current) => [
         ...current,
         { role: "user", text: question },
-        { role: "assistant", text: "", tools: [], state: "streaming", error: null },
+        { role: "assistant", text: "", tools: [], citations: [], state: "streaming", error: null },
       ]);
       shown = true;
       setDraft("");
@@ -213,7 +230,18 @@ export function Chat({
       {entries.length > 0 && (
         <ol ref={list} className="mt-4 max-h-[36rem] space-y-4 overflow-y-auto" aria-label="Conversation">
           {entries.map((entry, index) => (
-            <li key={index}>{entry.role === "user" ? <Question text={entry.text} /> : <AnswerView answer={entry} />}</li>
+            <li key={index}>
+              {entry.role === "user" ? (
+                <Question text={entry.text} />
+              ) : (
+                <AnswerView
+                  answer={entry}
+                  player={player.playing?.where === index ? player.playing : null}
+                  onPlay={(citation) => player.play(index, citation)}
+                  onClosePlayer={player.close}
+                />
+              )}
+            </li>
           ))}
         </ol>
       )}
@@ -286,7 +314,17 @@ function toolLabel(tool: ToolActivity): string {
   return toolLabels[tool.name]?.(tool.arguments) ?? tool.name;
 }
 
-function AnswerView({ answer }: { answer: Answer }) {
+function AnswerView({
+  answer,
+  player,
+  onPlay,
+  onClosePlayer,
+}: {
+  answer: Answer;
+  player: { citation: PlayerCitation; opening: number } | null;
+  onPlay: (citation: Citation) => void;
+  onClosePlayer: () => void;
+}) {
   return (
     <div className="space-y-2">
       {answer.tools.length > 0 && (
@@ -305,8 +343,9 @@ function AnswerView({ answer }: { answer: Answer }) {
         </ul>
       )}
       {answer.text !== "" && (
-        <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{renderMarkdown(answer.text)}</div>
+        <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{renderMarkdown(answer.text, answer.citations, onPlay)}</div>
       )}
+      {player !== null && <CitationPlayer {...player} onClose={onClosePlayer} />}
       {answer.state === "streaming" && answer.text === "" && answer.tools.length === 0 && (
         <p className={hintClass}>Thinking…</p>
       )}
@@ -319,31 +358,54 @@ function AnswerView({ answer }: { answer: Answer }) {
   );
 }
 
-// Enough Markdown for grounded answers: links (the Citations), bare URLs, bold, and inline code. Everything else shows
-// as written. A bare URL leaves off sentence punctuation that follows it.
+// Enough Markdown for grounded answers: links, bare URLs, bold, and inline code. Everything else shows as written. A
+// bare URL leaves off sentence punctuation that follows it.
 const inline = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s)]*[^\s).,;:!?])|\*\*([^*]+)\*\*|`([^`]+)`/g;
 
-function renderMarkdown(text: string): ReactNode {
+// The watch link forms the server reads Citations from (`chat.citation_links`), matched the same way.
+const youtubeLink = /(?:https?:\/\/)?(?:(?:www\.|m\.)?youtube\.com\/watch\?([^\s)\]>"']+)|youtu\.be\/([\w-]+)(?:\?([^\s)\]>"']*))?)/;
+const timestamp = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/;
+
+// The saved Citation a link points to, if any: links to Videos outside the Group, or made up, are plain links.
+function citationOf(href: string, citations: Citation[]): Citation | undefined {
+  const link = youtubeLink.exec(href);
+  if (link === null) return undefined;
+  const [, query, shortId, shortQuery] = link;
+  const params = new URLSearchParams((query ?? shortQuery ?? "").replace(/[.,;:!?]+$/, "").replaceAll("&amp;", "&"));
+  const videoId = shortId ?? params.get("v") ?? "";
+  const time = timestamp.exec(params.get("t") ?? "");
+  if (!/^[\w-]+$/.test(videoId) || time === null) return undefined;
+  const [, hours, minutes, secs] = time;
+  const seconds = Number(hours ?? 0) * 3600 + Number(minutes ?? 0) * 60 + Number(secs ?? 0);
+  return citations.find((c) => c.youtube_video_id === videoId && c.seconds === seconds);
+}
+
+function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: Citation) => void): ReactNode {
   const parts: ReactNode[] = [];
   let last = 0;
   for (const match of text.matchAll(inline)) {
     parts.push(text.slice(last, match.index));
     const [whole, label, labelled, bare, bold, code] = match;
     const key = match.index;
-    if (labelled !== undefined || bare !== undefined) {
+    const href = labelled ?? bare;
+    if (href !== undefined) {
+      const citation = citationOf(href, citations);
       parts.push(
         <a
           key={key}
           className="text-machine underline decoration-machine/40 underline-offset-2 hover:decoration-machine"
-          href={labelled ?? bare}
+          href={href}
           target="_blank"
           rel="noreferrer"
+          title={citation && "Plays here; Ctrl- or ⌘-click opens YouTube"}
+          onClick={(e) => citation && playOnPlainClick(e, () => onPlay(citation))}
         >
           {label ?? bare}
         </a>,
       );
     } else if (bold !== undefined) {
-      parts.push(<strong key={key}>{bold}</strong>);
+      // Models often bold a cited claim, link included.
+      parts.push(<strong key={key}>{renderMarkdown(bold, citations, onPlay)}</strong>);
     } else {
       parts.push(
         <code key={key} className="rounded-[2px] bg-ink/5 px-1 text-[14px]">

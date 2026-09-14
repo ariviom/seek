@@ -17,6 +17,7 @@ from mentor.errors import NotFound
 from mentor.ports import Embedder, Reranker
 from mentor.ranking import Recency, fuse, matched_seconds, recency_score
 from mentor.segmentation import SegmentCue
+from mentor.sources import watch_url
 
 type PreferRecent = Literal["off", "gentle", "strong"]
 
@@ -144,7 +145,7 @@ def _unscored(query: str, row: sqlite3.Row) -> SearchResult:
         channel_name=row["channel_name"],
         mentor_name=row["mentor_name"],
         score=0.0,
-        url=f"https://www.youtube.com/watch?v={row['youtube_video_id']}&t={int(matched)}s",
+        url=watch_url(row["youtube_video_id"], int(matched)),
     )
 
 

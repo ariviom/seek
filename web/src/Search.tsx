@@ -8,6 +8,7 @@ import {
   type PreferRecent,
   type SearchResult,
 } from "./api";
+import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
 import {
   alertClass,
   buttonClass,
@@ -38,6 +39,8 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
+  // One player at a time, in the result it was opened from (by Segment id).
+  const player = usePlayer<number>();
 
   // Ticked Mentors and a chosen Group that have since been deleted are dropped rather than sent.
   const chosenIds = chosen.filter((id) => mentors?.some((m) => m.id === id));
@@ -49,6 +52,7 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
     event.preventDefault();
     setError(null);
     setSearching(true);
+    player.close();
     try {
       const results = await api.search({
         query,
@@ -155,7 +159,13 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
         ) : (
           <ol className="mt-5 space-y-4" aria-label={`Results for ${outcome.query}`}>
             {outcome.results.map((result) => (
-              <Result key={result.segment_id} result={result} />
+              <Result
+                key={result.segment_id}
+                result={result}
+                playing={player.playing?.where === result.segment_id ? player.playing : null}
+                onPlay={(seconds) => player.play(result.segment_id, { ...result, seconds })}
+                onClosePlayer={player.close}
+              />
             ))}
           </ol>
         ))}
@@ -163,11 +173,22 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
   );
 }
 
-function Result({ result }: { result: SearchResult }) {
+function Result({
+  result,
+  playing,
+  onPlay,
+  onClosePlayer,
+}: {
+  result: SearchResult;
+  playing: { citation: PlayerCitation; opening: number } | null;
+  onPlay: (seconds: number) => void;
+  onClosePlayer: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<Expansion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const matched = Math.floor(result.matched_seconds);
 
   async function toggleContext() {
     const opening = !open;
@@ -197,7 +218,7 @@ function Result({ result }: { result: SearchResult }) {
       <h3 className="mt-1 font-condensed text-[1.375rem] leading-tight font-semibold">{result.video_title}</h3>
       {result.chapter_title && <p className="text-[13px] text-pencil">Chapter: {result.chapter_title}</p>}
       {open && context !== null ? (
-        <TranscriptContext context={context} />
+        <TranscriptContext context={context} onPlay={onPlay} />
       ) : (
         <p className="mt-2 text-[15px] leading-relaxed">{result.text}</p>
       )}
@@ -207,19 +228,27 @@ function Result({ result }: { result: SearchResult }) {
         </p>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <a className={outlineButtonClass} href={result.url} target="_blank" rel="noreferrer">
-          Watch at {formatDuration(Math.floor(result.matched_seconds))}
+        <a
+          className={outlineButtonClass}
+          href={result.url}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => playOnPlainClick(e, () => onPlay(matched))}
+        >
+          Watch at {formatDuration(matched)}
         </a>
         <button className={quietButtonClass} type="button" onClick={toggleContext} disabled={loading} aria-expanded={open}>
           {loading ? "Loading context…" : open ? "Hide context" : "Show context"}
         </button>
       </div>
+      {playing !== null && <CitationPlayer {...playing} onClose={onClosePlayer} />}
     </li>
   );
 }
 
-// The Transcript either side of a result, scrolled to where the Segment starts; the Segment's lines stand out.
-function TranscriptContext({ context }: { context: Expansion }) {
+// The Transcript either side of a result, scrolled to where the Segment starts; the Segment's lines stand out. Each
+// line's time plays the Video from there.
+function TranscriptContext({ context, onPlay }: { context: Expansion; onPlay: (seconds: number) => void }) {
   const firstInSegment = useRef<HTMLLIElement>(null);
   const list = useRef<HTMLOListElement>(null);
   const firstIndex = context.cues.findIndex((cue) => cue.start_seconds >= context.start_seconds);
@@ -236,6 +265,7 @@ function TranscriptContext({ context }: { context: Expansion }) {
       aria-label={`Transcript around this moment in ${context.video_title}`}
     >
       {context.cues.map((cue, index) => {
+        const start = Math.floor(cue.start_seconds);
         const inSegment = cue.start_seconds >= context.start_seconds && cue.start_seconds < context.end_seconds;
         return (
           <li
@@ -243,14 +273,14 @@ function TranscriptContext({ context }: { context: Expansion }) {
             ref={index === firstIndex ? firstInSegment : undefined}
             className={`grid grid-cols-[3.5rem_1fr] gap-2 text-[15px] leading-relaxed ${inSegment ? "text-ink" : "text-pencil"}`}
           >
-            <a
-              className="text-[13px] leading-[1.6rem] text-machine tabular-nums underline-offset-2 hover:underline"
-              href={`https://www.youtube.com/watch?v=${context.youtube_video_id}&t=${Math.floor(cue.start_seconds)}s`}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              className="text-left text-[13px] leading-[1.6rem] text-machine tabular-nums underline-offset-2 hover:underline"
+              type="button"
+              onClick={() => onPlay(start)}
+              aria-label={`Watch at ${formatDuration(start)}`}
             >
-              {formatDuration(Math.floor(cue.start_seconds))}
-            </a>
+              {formatDuration(start)}
+            </button>
             <span>{cue.text}</span>
           </li>
         );

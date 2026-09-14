@@ -1,5 +1,6 @@
 import asyncio
 import json
+import socket
 import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
@@ -8,6 +9,7 @@ from datetime import date
 from typing import Any, Literal
 
 import httpx
+import uvicorn
 from fastapi import FastAPI
 from mcp import Client
 
@@ -27,6 +29,25 @@ async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:7337") as client:
             yield client
+
+
+@asynccontextmanager
+async def serving(app: FastAPI) -> AsyncIterator[str]:
+    """Serves the app over HTTP on a free loopback port, for a browser; yields its base URL."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_graceful_shutdown=1))
+        task = asyncio.create_task(server.serve(sockets=[sock]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        raise RuntimeError("The server stopped while starting")
+                    await asyncio.sleep(0.05)
+            yield f"http://127.0.0.1:{sock.getsockname()[1]}/"
+        finally:
+            server.should_exit = True
+            await task
 
 
 def mcp_client(app: FastAPI) -> Client:

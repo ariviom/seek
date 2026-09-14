@@ -24,6 +24,7 @@ mentor = "mentor.cli:main"
 dev = [
     "httpx>=0.28",
     "mypy>=2.3",
+    "playwright>=1.62",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
     "types-tqdm>=4.70.0.20260906",
