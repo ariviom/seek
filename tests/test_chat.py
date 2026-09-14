@@ -5,7 +5,19 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import Json, add_mentor, fake_channel, fake_video, query, running, said, sync
+from harness import (
+    Json,
+    done_message,
+    new_group_conversation,
+    query,
+    running,
+    said,
+    send,
+    start_conversation,
+    stored_messages,
+    stream_events,
+    woodworkers,
+)
 from mcp import Client
 
 from mentor.app import create_app
@@ -14,56 +26,6 @@ from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.mcp_server import GROUNDED_ADVISOR
 from mentor.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
-
-
-def stream_events(response: httpx.Response) -> list[Json]:
-    """The data events of a finished server-sent event stream."""
-    assert response.headers["content-type"].startswith("text/event-stream"), response.text
-    frames = response.text.split("\n\n")
-    return [json.loads(frame.removeprefix("data: ")) for frame in frames if frame.startswith("data: ")]
-
-
-async def woodworkers(client: httpx.AsyncClient, transcripts: FakeTranscriptSource) -> tuple[Json, Json, Json]:
-    """Paul Wright in a Woodworking Group, and Rex Krueger outside it; both synced and saying something."""
-    fake_channel(transcripts, "UC-wright").videos.append(
-        fake_video("v-wright", "Sharpening chisels", cues=said("Sharpen the chisel on a fine stone"))
-    )
-    fake_channel(transcripts, "UC-rex").videos.append(
-        fake_video("v-rex", "Sharpening knives", cues=said("Sharpen the knife on a coarse stone"))
-    )
-    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
-    await sync(client, wright, rex)
-    group = (await client.post("/api/groups", json={"name": "Woodworking"})).json()
-    await client.put(f"/api/groups/{group['id']}/members", json={"mentor_ids": [wright["id"]]})
-    return group, wright, rex
-
-
-async def start_conversation(client: httpx.AsyncClient, group_id: int, model: str | None = None) -> Json:
-    response = await client.post(f"/api/groups/{group_id}/conversations", json={"model": model})
-    assert response.status_code == 201, response.text
-    conversation: Json = response.json()
-    return conversation
-
-
-async def new_group_conversation(client: httpx.AsyncClient, model: str | None = None) -> Json:
-    group = (await client.post("/api/groups", json={"name": "Woodworking"})).json()
-    return await start_conversation(client, group["id"], model)
-
-
-async def send(client: httpx.AsyncClient, conversation_id: int, message: str) -> httpx.Response:
-    return await client.post(f"/api/conversations/{conversation_id}/messages", json={"message": message})
-
-
-def stored_messages(config: Config, conversation_id: int) -> list[tuple[str, str]]:
-    rows = query(config, "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id", (conversation_id,))
-    return [(row["role"], row["content"]) for row in rows]
-
-
-def done_message(response: httpx.Response) -> Json:
-    [done] = [event for event in stream_events(response) if event["type"] == "done"]
-    message: Json = done["message"]
-    return message
 
 
 async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resumes_the_session(

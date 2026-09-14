@@ -32,9 +32,10 @@ def serve() -> None:
             cookie_file=config.youtube_cookie_file,
         )
     )
-    # The chat drives the Claude CLI on PATH, the one logged in to the user's subscription.
-    claude = shutil.which("claude")
-    chat = ClaudeChatEngine(config.data_dir / "chat", Path(claude) if claude else None)
+    # The chat drives the user's own Claude CLI, the one logged in to their subscription.
+    on_path = shutil.which("claude")
+    claude = config.claude_cli_path or (Path(on_path) if on_path else None)
+    chat = ClaudeChatEngine(config.data_dir / "chat", claude)
     app = create_app(config, youtube, embedder, reranker, chat)
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
     uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)

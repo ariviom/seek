@@ -8,6 +8,7 @@ from typing import Literal
 
 from mentor.db import now_iso, transaction
 from mentor.errors import Conflict, NotFound
+from mentor.ports import PastMessage
 
 
 @dataclass(frozen=True)
@@ -51,8 +52,21 @@ class Message:
 
 
 @dataclass(frozen=True)
+class ConversationSummary(Conversation):
+    # The first question, shortened.
+    title: str
+    message_count: int
+    last_message_at: str | None
+
+
+@dataclass(frozen=True)
+class ConversationDetail(Conversation):
+    messages: list[Message]
+
+
+@dataclass(frozen=True)
 class Turn:
-    """What a new turn needs: the Group it consults and the Claude session to resume."""
+    """What a new turn needs: the Group it consults, the Claude session to resume, and the messages before it."""
 
     conversation_id: int
     group_id: int
@@ -60,6 +74,70 @@ class Turn:
     mentor_names: list[str]
     model: str | None
     claude_session_id: str | None
+    history: list[PastMessage]
+
+
+TITLE_LENGTH = 80
+
+
+def _message(row: sqlite3.Row) -> Message:
+    return Message(
+        id=row["id"],
+        role=row["role"],
+        content=row["content"],
+        tool_calls=[ToolUse(**t) for t in json.loads(row["tool_calls"])],
+        citations=[Citation(**c) for c in json.loads(row["citations"])],
+        created_at=row["created_at"],
+    )
+
+
+def _title(question: str | None) -> str:
+    if question is None:
+        return "New Conversation"
+    words = " ".join(question.split())
+    return words if len(words) <= TITLE_LENGTH else words[: TITLE_LENGTH - 1].rstrip() + "…"
+
+
+def list_conversations(conn: sqlite3.Connection, group_id: int | None = None) -> list[ConversationSummary]:
+    """Every Conversation, or a Group's, most recently active first. Conversations of deleted Groups are included."""
+    rows = conn.execute(
+        """
+        SELECT conversations.*,
+               (SELECT content FROM messages WHERE conversation_id = conversations.id AND role = 'user'
+                ORDER BY id LIMIT 1) AS first_question,
+               (SELECT count(*) FROM messages WHERE conversation_id = conversations.id) AS message_count,
+               (SELECT max(created_at) FROM messages WHERE conversation_id = conversations.id) AS last_message_at,
+               (SELECT max(id) FROM messages WHERE conversation_id = conversations.id) AS last_message_id
+        FROM conversations
+        WHERE ?1 IS NULL OR group_id = ?1
+        -- Message ids order activity more finely than second-resolution timestamps; unused Conversations come last.
+        ORDER BY coalesce(last_message_id, 0) DESC, id DESC
+        """,
+        (group_id,),
+    )
+    return [
+        ConversationSummary(
+            id=row["id"],
+            group_id=row["group_id"],
+            group_name=row["group_name"],
+            model=row["model"],
+            created_at=row["created_at"],
+            title=_title(row["first_question"]),
+            message_count=row["message_count"],
+            last_message_at=row["last_message_at"],
+        )
+        for row in rows
+    ]
+
+
+def get_conversation(conn: sqlite3.Connection, conversation_id: int) -> ConversationDetail:
+    row = conn.execute(
+        "SELECT id, group_id, group_name, model, created_at FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    if row is None:
+        raise NotFound(f"Conversation {conversation_id} not found")
+    messages = conn.execute("SELECT * FROM messages WHERE conversation_id = ? ORDER BY id", (conversation_id,))
+    return ConversationDetail(**dict(row), messages=[_message(m) for m in messages])
 
 
 def create_conversation(conn: sqlite3.Connection, group_id: int, model: str | None) -> Conversation:
@@ -88,6 +166,12 @@ def begin_turn(conn: sqlite3.Connection, conversation_id: int, message: str) -> 
             raise NotFound(f"Conversation {conversation_id} not found")
         if row["group_id"] is None:
             raise Conflict(f"The Mentor Group {row['group_name']!r} was deleted, so this Conversation is read-only")
+        history = [
+            PastMessage(role=m["role"], content=m["content"])
+            for m in conn.execute(
+                "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id", (conversation_id,)
+            )
+        ]
         conn.execute(
             "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
             (conversation_id, message, now_iso()),
@@ -108,6 +192,7 @@ def begin_turn(conn: sqlite3.Connection, conversation_id: int, message: str) -> 
             mentor_names=[mentor["name"] for mentor in mentors],
             model=row["model"],
             claude_session_id=row["claude_session_id"],
+            history=history,
         )
 
 

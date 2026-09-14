@@ -60,6 +60,8 @@ class Config:
     # Host headers the MCP endpoint accepts besides loopback, such as a reverse proxy's public hostname; the rest are
     # refused to stop DNS rebinding. "host:*" allows any port.
     mcp_allowed_hosts: tuple[str, ...] = ()
+    # The Claude CLI the web chat drives; unset, the `claude` on PATH.
+    claude_cli_path: Path | None = None
 
     @property
     def database_path(self) -> Path:
@@ -175,6 +177,7 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
             "strong_recency_max_penalty_percent", *raw["strong_recency_max_penalty_percent"], 0, 100
         )
     mcp_allowed_hosts = _hosts("mcp_allowed_hosts", *raw["mcp_allowed_hosts"]) if "mcp_allowed_hosts" in raw else ()
+    claude_cli_path = _absolute_path("claude_cli_path", *raw["claude_cli_path"]) if "claude_cli_path" in raw else None
     return Config(
         data_dir=data_dir,
         port=port,
@@ -192,4 +195,5 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         strong_recency_half_life_days=strong_half_life,
         strong_recency_max_penalty_percent=strong_penalty,
         mcp_allowed_hosts=mcp_allowed_hosts,
+        claude_cli_path=claude_cli_path,
     )

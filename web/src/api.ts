@@ -7,9 +7,17 @@ export type ModelStatus = {
 };
 export type Models = { embedding: ModelStatus; reranker: ModelStatus };
 
+// Whether the web chat can run: the Claude CLI is present and logged in. `message` says what to do otherwise.
+export type ClaudeCli = {
+  state: "ready" | "missing" | "logged_out" | "unknown";
+  cli_path: string | null;
+  message: string | null;
+};
+
 export type Health = {
   status: string;
   models: Models;
+  claude_cli: ClaudeCli;
   database: {
     path: string;
     journal_mode: string;
@@ -133,6 +141,14 @@ export type ChatMessage = {
   citations: Citation[];
   created_at: string;
 };
+// `group_id` is null once the Group is deleted, which leaves the Conversation read-only.
+export type ConversationSummary = Conversation & {
+  // The first question, shortened.
+  title: string;
+  message_count: number;
+  last_message_at: string | null;
+};
+export type ConversationDetail = Conversation & { messages: ChatMessage[] };
 // One turn's stream: text and tool activity as it happens, then the saved answer or an error.
 export type ChatStreamEvent =
   | { type: "text"; text: string }
@@ -206,6 +222,10 @@ export const api = {
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
   createConversation: (groupId: number, model: string | null) =>
     request<Conversation>(`groups/${groupId}/conversations`, { method: "POST", body: { model } }),
+  // Every Conversation, or one Group's.
+  listConversations: (groupId: number | null) =>
+    request<ConversationSummary[]>(groupId === null ? "conversations" : `conversations?group_id=${groupId}`),
+  getConversation: (id: number) => request<ConversationDetail>(`conversations/${id}`),
   sendMessage,
 };
 

@@ -147,6 +147,15 @@ def test_invalid_search_settings_are_rejected(tmp_path: Path, env: dict[str, str
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
 
 
+def test_the_claude_cli_path_is_configurable_and_must_be_absolute(tmp_path: Path) -> None:
+    write_config(tmp_path, 'claude_cli_path = "/opt/claude/bin/claude"\n')
+
+    assert load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")}).claude_cli_path is None
+    assert load_config({"XDG_CONFIG_HOME": str(tmp_path)}).claude_cli_path == Path("/opt/claude/bin/claude")
+    with pytest.raises(ConfigError):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_CLAUDE_CLI_PATH": "bin/claude"})
+
+
 def test_mcp_allowed_hosts_come_from_a_list_or_a_comma_separated_variable(tmp_path: Path) -> None:
     write_config(tmp_path, 'mcp_allowed_hosts = ["mentor.example.com", "10.0.0.5:*"]\n')
 

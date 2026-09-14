@@ -7,6 +7,7 @@ from harness import running
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.ports import ChatEngineStatus
 
 
 async def test_health_reports_server_ok(client: httpx.AsyncClient) -> None:
@@ -25,6 +26,21 @@ async def test_health_reports_database_configuration(client: httpx.AsyncClient, 
     assert database["busy_timeout_ms"] > 0
     assert database["sqlite_vec"].startswith("v")
     assert database["fts5"] is True
+
+
+async def test_health_reports_whether_the_claude_cli_can_run_the_chat(
+    client: httpx.AsyncClient, engine: FakeChatEngine
+) -> None:
+    ready = (await client.get("/api/health")).json()["claude_cli"]
+    engine.engine_status = ChatEngineStatus("logged_out", "/usr/bin/claude", "Run `claude auth login` on the server")
+    logged_out = (await client.get("/api/health")).json()["claude_cli"]
+
+    assert ready == {"state": "ready", "cli_path": "/usr/bin/claude", "message": None}
+    assert logged_out == {
+        "state": "logged_out",
+        "cli_path": "/usr/bin/claude",
+        "message": "Run `claude auth login` on the server",
+    }
 
 
 async def test_server_refuses_to_start_when_the_data_dir_is_unusable(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ from pydantic import BaseModel, StringConstraints
 
 from mentor import conversations
 from mentor.chat import Chat
-from mentor.conversations import Conversation
+from mentor.conversations import Conversation, ConversationDetail, ConversationSummary
 from mentor.db import Database
 from mentor.events_api import SSE_HEADERS
 
@@ -31,6 +31,14 @@ def chat_router(database: Database, chat: Chat, keepalive_seconds: float) -> API
     @router.post("/groups/{group_id}/conversations", status_code=status.HTTP_201_CREATED)
     async def create_conversation(group_id: int, body: NewConversation) -> Conversation:
         return await database.run(lambda conn: conversations.create_conversation(conn, group_id, body.model))
+
+    @router.get("/conversations")
+    async def list_conversations(group_id: int | None = None) -> list[ConversationSummary]:
+        return await database.run(lambda conn: conversations.list_conversations(conn, group_id))
+
+    @router.get("/conversations/{conversation_id}")
+    async def get_conversation(conversation_id: int) -> ConversationDetail:
+        return await database.run(lambda conn: conversations.get_conversation(conn, conversation_id))
 
     @router.post("/conversations/{conversation_id}/messages")
     async def send_message(conversation_id: int, body: NewMessage) -> StreamingResponse:

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, type Health, type Mentor, type MentorGroup, type Models, type ModelStatus } from "./api";
 import { Chat } from "./Chat";
+import { Conversations } from "./Conversations";
 import { useServerEvents } from "./events";
 import { Groups } from "./Groups";
 import { Mentors } from "./Mentors";
@@ -53,9 +54,25 @@ export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
   const [groups, setGroups] = useState<MentorGroup[] | null>(null);
-  const [chatGroupId, setChatGroupId] = useState<number | null>(null);
-  // Shown with the Group's latest name and Mentors; closed if the Group is deleted.
-  const chatGroup = groups?.find((g) => g.id === chatGroupId) ?? null;
+  // The open chat: a Group's new Conversation, or a saved one (whose Group may be gone). `opening` remounts the chat
+  // for each Ask or Open, but not when a new Conversation gets its id.
+  const [chat, setChat] = useState<{ groupId: number | null; conversationId: number | null; opening: number } | null>(
+    null,
+  );
+  const [conversationsVersion, setConversationsVersion] = useState(0);
+  // Shown with the Group's latest name and Mentors; read-only once the Group is deleted.
+  const chatGroup = groups?.find((g) => g.id === chat?.groupId) ?? null;
+
+  const openings = useRef(0);
+  const openChat = (groupId: number | null, conversationId: number | null) => {
+    setChat({ groupId, conversationId, opening: ++openings.current });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const groupsLoaded = useCallback((loaded: MentorGroup[]) => {
+    setGroups(loaded);
+    // A deleted or renamed Group changes how its Conversations are listed.
+    setConversationsVersion((v) => v + 1);
+  }, []);
   // The newest model statuses from the event stream, and how many have arrived, so a Health response that was
   // already in flight can't undo them.
   const latestModels = useRef<Models | null>(null);
@@ -103,16 +120,30 @@ export function App() {
       </header>
       <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <main className="min-w-0 space-y-12">
-          {chatGroup && <Chat key={chatGroup.id} group={chatGroup} onClose={() => setChatGroupId(null)} />}
+          {/* A new chat whose Group was deleted before its first question just closes. */}
+          {chat !== null && groups !== null && (chatGroup !== null || chat.conversationId !== null) && (
+            <Chat
+              key={chat.opening}
+              group={chatGroup}
+              conversationId={chat.conversationId}
+              claude={state.kind === "ok" ? state.health.claude_cli : null}
+              onClose={() => setChat(null)}
+              onChanged={(conversationId) => {
+                // A chat replaced mid-answer still finishes its turn; it mustn't retarget the chat now open.
+                const opening = chat.opening;
+                setChat((current) => (current?.opening === opening ? { ...current, conversationId } : current));
+                setConversationsVersion((v) => v + 1);
+              }}
+            />
+          )}
           <Search mentors={mentors} groups={groups} />
           <Mentors onLoaded={setMentors} />
-          <Groups
-            mentors={mentors}
-            onLoaded={setGroups}
-            onAsk={(group) => {
-              setChatGroupId(group.id);
-              window.scrollTo({ top: 0, behavior: "smooth" });
-            }}
+          <Groups mentors={mentors} onLoaded={groupsLoaded} onAsk={(group) => openChat(group.id, null)} />
+          <Conversations
+            groups={groups}
+            version={conversationsVersion}
+            openId={chat?.conversationId ?? null}
+            onOpen={(conversation) => openChat(conversation.group_id, conversation.id)}
           />
         </main>
         <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
@@ -142,6 +173,15 @@ export function App() {
                 </dd>
               </div>
             ))}
+            <div className="flex min-w-0 gap-1.5">
+              <dt>Claude CLI</dt>
+              <dd
+                className={`truncate ${state.health.claude_cli.state === "ready" ? "text-ink" : "text-oxide"}`}
+                title={state.health.claude_cli.message ?? state.health.claude_cli.cli_path ?? undefined}
+              >
+                {state.health.claude_cli.state.replace("_", " ")}
+              </dd>
+            </div>
             <div className="flex min-w-0 gap-1.5">
               <dt>Knowledge base</dt>
               <dd className="truncate text-ink">{state.health.database.path}</dd>

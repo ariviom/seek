@@ -108,47 +108,58 @@ class Chat:
             system_prompt=system_prompt(turn.group_name, turn.mentor_names, datetime.now(UTC).date().isoformat()),
             model=turn.model,
             resume_session_id=turn.claude_session_id,
+            history=turn.history,
             tools=create_group_server(self._database, self._search, turn.group_id),
             tool_names=GROUP_TOOL_NAMES,
         )
-        answer: list[str] = []
-        uses: dict[str, ToolUse] = {}
-        # Text written after a tool call starts a new paragraph; the model's separate steps don't end in whitespace.
-        after_tool = False
         try:
-            # Closed on return, so the engine stops its CLI process now rather than whenever it's garbage collected.
-            async with contextlib.aclosing(self._engine.stream(request)) as stream:
-                async for event in stream:
-                    match event:
-                        case TextDelta(text):
-                            if after_tool and answer:
-                                text = "\n\n" + text
-                            after_tool = False
-                            answer.append(text)
-                            events.put_nowait({"type": "text", "text": text})
-                        case ToolCall(call_id, name, arguments):
-                            after_tool = True
-                            uses[call_id] = ToolUse(name, arguments, is_error=False)
-                            events.put_nowait({"type": "tool_call", **asdict(event)})
-                        case ToolResult(call_id, _, is_error):
-                            if call_id in uses:
-                                uses[call_id] = replace(uses[call_id], is_error=is_error)
-                            events.put_nowait({"type": "tool_result", **asdict(event)})
-                        case ChatDone(session_id):
-                            content = "".join(answer)
-                            saved = await self._database.run(
-                                lambda conn: conversations.record_answer(
-                                    conn, turn, content, list(uses.values()), citation_links(content), session_id
-                                )
-                            )
-                            events.put_nowait({"type": "done", "message": asdict(saved)})
-                            return
-                        case ChatFailed(failure):
-                            events.put_nowait({"type": "error", "message": failure})
-                            return
-            events.put_nowait({"type": "error", "message": "The answer stopped before it finished"})
+            if await self._answer(turn, request, events):
+                # The Claude session is gone (expired or cleaned up): start a new one, replaying the Conversation.
+                log.info("Conversation %s's Claude session was lost; replaying it", turn.conversation_id)
+                await self._answer(turn, replace(request, resume_session_id=None), events)
         except Exception:
             log.exception("Chat turn for Conversation %s failed", turn.conversation_id)
             events.put_nowait({"type": "error", "message": "The chat failed unexpectedly; see the server log"})
         finally:
             events.put_nowait(None)
+
+    async def _answer(self, turn: Turn, request: ChatRequest, events: asyncio.Queue[TurnEvent | None]) -> bool:
+        """Streams one attempt at the turn's answer, saving it when done. True if the session to resume is gone."""
+        answer: list[str] = []
+        uses: dict[str, ToolUse] = {}
+        # Text written after a tool call starts a new paragraph; the model's separate steps don't end in whitespace.
+        after_tool = False
+        # Closed on return, so the engine stops its CLI process now rather than whenever it's garbage collected.
+        async with contextlib.aclosing(self._engine.stream(request)) as stream:
+            async for event in stream:
+                match event:
+                    case TextDelta(text):
+                        if after_tool and answer:
+                            text = "\n\n" + text
+                        after_tool = False
+                        answer.append(text)
+                        events.put_nowait({"type": "text", "text": text})
+                    case ToolCall(call_id, name, arguments):
+                        after_tool = True
+                        uses[call_id] = ToolUse(name, arguments, is_error=False)
+                        events.put_nowait({"type": "tool_call", **asdict(event)})
+                    case ToolResult(call_id, _, is_error):
+                        if call_id in uses:
+                            uses[call_id] = replace(uses[call_id], is_error=is_error)
+                        events.put_nowait({"type": "tool_result", **asdict(event)})
+                    case ChatDone(session_id):
+                        content = "".join(answer)
+                        saved = await self._database.run(
+                            lambda conn: conversations.record_answer(
+                                conn, turn, content, list(uses.values()), citation_links(content), session_id
+                            )
+                        )
+                        events.put_nowait({"type": "done", "message": asdict(saved)})
+                        return False
+                    case ChatFailed(failure, session_lost):
+                        if session_lost and request.resume_session_id is not None:
+                            return True
+                        events.put_nowait({"type": "error", "message": failure})
+                        return False
+        events.put_nowait({"type": "error", "message": "The answer stopped before it finished"})
+        return False

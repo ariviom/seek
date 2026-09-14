@@ -185,6 +185,7 @@ def create_app(
             "status": "ok",
             "database": app.state.database_info,
             "models": _statuses(models),
+            "claude_cli": await chat_engine.status(),
         }
 
     app.include_router(mentors_router(database, transcripts, events), prefix="/api")

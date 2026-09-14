@@ -10,6 +10,7 @@ from mentor.ports import (
     ChannelInfo,
     ChannelNotFound,
     ChatDone,
+    ChatEngineStatus,
     ChatEvent,
     ChatRequest,
     ModelStatus,
@@ -183,6 +184,11 @@ class FakeChatEngine:
     respond: Callable[[ChatRequest], AsyncIterator[ChatEvent]] | None = None
     # Every request, in order.
     requests: list[ChatRequest] = field(default_factory=list)
+    # What status() reports.
+    engine_status: ChatEngineStatus = field(default_factory=lambda: ChatEngineStatus("ready", "/usr/bin/claude"))
+
+    async def status(self) -> ChatEngineStatus:
+        return self.engine_status
 
     async def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]:
         self.requests.append(request)

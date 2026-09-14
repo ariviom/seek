@@ -159,12 +159,20 @@ class Reranker(Model, Protocol):
 
 
 @dataclass(frozen=True)
+class PastMessage:
+    role: Literal["user", "assistant"]
+    content: str
+
+
+@dataclass(frozen=True)
 class ChatRequest:
     message: str
     system_prompt: str
     # None uses the Claude CLI's default model.
     model: str | None
     resume_session_id: str | None
+    # The Conversation's earlier messages, oldest first. The engine replays them when there is no session to resume.
+    history: Sequence[PastMessage]
     # The only tools the model may use: served in-process under the name "mentor", already bound to one Mentor Group.
     tools: MCPServer
     tool_names: Sequence[str]
@@ -197,10 +205,29 @@ class ChatDone:
 @dataclass(frozen=True)
 class ChatFailed:
     message: str
+    # The session to resume no longer exists; the turn can be retried without it, replaying the history.
+    session_lost: bool = False
 
 
 type ChatEvent = TextDelta | ToolCall | ToolResult | ChatDone | ChatFailed
 
 
+# api_key: logged in, but through an API key that would be billed instead of the subscription.
+type ChatEngineState = Literal["ready", "missing", "logged_out", "api_key", "unknown"]
+
+
+@dataclass(frozen=True)
+class ChatEngineStatus:
+    state: ChatEngineState
+    # The Claude CLI checked, if one was found.
+    cli_path: str | None
+    # What to do about a state other than ready, for the user.
+    message: str | None = None
+
+
 class ChatEngine(Protocol):
     def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]: ...
+
+    async def status(self) -> ChatEngineStatus:
+        """Whether chat can run: the Claude CLI is present and logged in. Never raises."""
+        ...

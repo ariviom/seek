@@ -1,7 +1,11 @@
 from pathlib import Path
+from uuid import uuid4
 
+import pytest
 from claude_agent_sdk import (
     AssistantMessage,
+    ProcessError,
+    ResultError,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -11,8 +15,9 @@ from claude_agent_sdk import (
 )
 from mcp.server.mcpserver import MCPServer
 
-from mentor.claude_chat import chat_events, chat_options
-from mentor.ports import ChatDone, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
+from mentor import claude_chat
+from mentor.claude_chat import ClaudeChatEngine, chat_events, chat_options, failure, prompt
+from mentor.ports import ChatDone, ChatFailed, ChatRequest, PastMessage, TextDelta, ToolCall, ToolResult
 
 
 def request(**changes: object) -> ChatRequest:
@@ -21,6 +26,7 @@ def request(**changes: object) -> ChatRequest:
         "system_prompt": "Answer only from Segments.",
         "model": None,
         "resume_session_id": None,
+        "history": (),
         "tools": MCPServer("mentor"),
         "tool_names": ("list_groups", "search", "expand", "get_video"),
     }
@@ -52,6 +58,108 @@ def test_the_model_can_use_nothing_but_the_requests_mentor_tools(tmp_path: Path)
     assert (options.setting_sources, options.skills, options.plugins) == ([], [], [])
     assert (options.agents, options.hooks) == (None, None)
     assert options.cwd == tmp_path / "chat"
+
+
+def test_a_new_session_is_given_the_conversation_so_far_and_a_resumed_one_is_not() -> None:
+    history = (PastMessage("user", "Which stone?"), PastMessage("assistant", "A 1000 grit waterstone."))
+
+    fresh = prompt(request(history=history, message="And then?"))
+
+    assert prompt(request(history=history, resume_session_id="session-1", message="And then?")) == "And then?"
+    assert prompt(request(message="Which stone?")) == "Which stone?"
+    assert fresh.endswith(
+        "<earlier_conversation>\nUser: Which stone?\n\nYou: A 1000 grit waterstone.\n</earlier_conversation>\n\n"
+        "And then?"
+    )
+
+
+def test_a_replay_keeps_the_most_recent_messages_that_fit() -> None:
+    history = [PastMessage("user", "old " * 30_000), PastMessage("assistant", "recent answer")]
+
+    replayed = prompt(request(history=history, message="Next?"))
+
+    assert "(Earlier messages left out.)\n\nYou: recent answer" in replayed
+    assert "old old" not in replayed
+
+
+def test_a_session_the_cli_cant_resume_is_reported_as_lost() -> None:
+    # The CLI's refusal reaches the SDK as a failed result: raised as a ResultError, or streamed as a result message.
+    refused = {"subtype": "error_during_execution", "errors": ["No conversation found with session ID: abc"]}
+    raised = failure(ResultError("Claude Code returned an error result: " + refused["errors"][0], refused))
+    streamed = chat_events(
+        ResultMessage(
+            subtype="error_during_execution",
+            is_error=True,
+            errors=["Failed to resume session: abc"],
+            duration_ms=1,
+            duration_api_ms=0,
+            num_turns=0,
+            session_id="abc",
+        )
+    )
+    other = failure(ProcessError("Command failed", exit_code=1))
+
+    assert raised.session_lost and streamed == [ChatFailed("Failed to resume session: abc", session_lost=True)]
+    assert (other.session_lost, other.message) == (False, "Claude Code failed: Command failed (exit code: 1)")
+
+
+async def test_a_session_with_no_transcript_is_lost_before_the_cli_starts(tmp_path: Path) -> None:
+    cli = tmp_path / "claude"
+    cli.write_text("#!/bin/sh\nexit 1\n")
+    cli.chmod(0o755)
+    engine = ClaudeChatEngine(tmp_path / "chat", cli)
+
+    events = [event async for event in engine.stream(request(resume_session_id=str(uuid4())))]
+
+    assert [(type(e), getattr(e, "session_lost", None)) for e in events] == [(ChatFailed, True)]
+
+
+@pytest.mark.parametrize(
+    ("output", "state"),
+    [
+        ('{"loggedIn": true, "authMethod": "claude.ai", "apiKeySource": null}', "ready"),
+        ('{"loggedIn": false}', "logged_out"),
+        # The chat inherits mentor's environment, where an API key would be billed instead of the subscription.
+        ('{"loggedIn": true, "apiKeySource": "ANTHROPIC_API_KEY"}', "api_key"),
+        ("not json", "unknown"),
+    ],
+)
+async def test_status_asks_the_cli_whether_it_is_logged_in(tmp_path: Path, output: str, state: str) -> None:
+    cli = tmp_path / "claude"
+    cli.write_text(f"#!/bin/sh\n[ \"$*\" = 'auth status --json' ] && echo '{output}'\n")
+    cli.chmod(0o755)
+
+    status = await ClaudeChatEngine(tmp_path / "chat", cli).status()
+
+    assert (status.state, status.cli_path) == (state, str(cli))
+    assert (status.message is None) == (state == "ready")
+
+
+async def test_status_gives_up_on_a_cli_that_doesnt_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claude_chat, "STATUS_TIMEOUT_SECONDS", 0.2)
+    cli = tmp_path / "claude"
+    cli.write_text("#!/bin/sh\nexec sleep 30\n")
+    cli.chmod(0o755)
+
+    status = await ClaudeChatEngine(tmp_path / "chat", cli).status()
+
+    assert status.state == "unknown" and "didn't answer" in (status.message or "")
+
+
+@pytest.mark.parametrize("configured", [None, Path("/opt/nowhere/claude")])
+async def test_status_and_turns_report_a_missing_cli(tmp_path: Path, configured: Path | None) -> None:
+    engine = ClaudeChatEngine(tmp_path / "chat", configured)
+
+    status = await engine.status()
+    events = [event async for event in engine.stream(request())]
+
+    where = f"at {configured}" if configured else "on PATH"
+    assert (status.state, status.cli_path) == ("missing", configured and str(configured))
+    assert status.message == (
+        f"The Claude CLI was not found {where}; install Claude Code and log in with `claude`, or set claude_cli_path "
+        "in mentor's config"
+    )
+    assert len(events) == 1 and isinstance(events[0], ChatFailed)
 
 
 def test_sdk_messages_become_chat_events() -> None:

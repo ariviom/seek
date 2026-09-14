@@ -15,3 +15,6 @@ From ticket 11 review:
 
 From ticket 12 review:
 - Saved Citations carry `video_id`, `youtube_video_id`, `seconds`, names, and a canonical `url`; answer text links are rendered by `renderMarkdown` in `web/src/Chat.tsx`, where the player should hook in (match links with the same forms `chat.citation_links` reads).
+
+From ticket 13 review:
+- `web/src/Chat.tsx` entries keep only text and tool activity: `entryOf` and the `done` handler drop `message.citations`, so the player needs them added to the assistant `Entry`.

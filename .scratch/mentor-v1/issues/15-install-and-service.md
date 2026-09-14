@@ -21,3 +21,8 @@ From ticket 08 review:
 From ticket 11 review:
 - README registration snippets must use the exact `/mcp` path: `/mcp/` falls through to the static mount and answers 405.
 - README: document `mcp_allowed_hosts` (TOML list or comma-separated `MENTOR_MCP_ALLOWED_HOSTS`; `host:*` allows any port). Loopback is always allowed.
+
+From ticket 13 review:
+- Record `claude_cli_path` (or `MENTOR_CLAUDE_CLI_PATH`) in the unit: a systemd user PATH usually lacks `~/.local/bin`. Point it at the `~/.local/bin/claude` link, not the resolved `versions/<x>` path, which Claude Code updates delete.
+- The chat inherits the service environment; an `ANTHROPIC_API_KEY` there bills the API (Health reports `api_key`). Don't set one in the unit.
+- README: document `claude_cli_path` and the Health `claude_cli` states.
