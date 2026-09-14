@@ -10,10 +10,10 @@ from dataclasses import dataclass
 
 from pydantic import TypeAdapter, ValidationError
 
-from mentor import db, mentors, syncs
+from mentor import channels, db, syncs
+from mentor.channels import Channel
 from mentor.config import HOST, Config
 from mentor.events import Events
-from mentor.mentors import Channel, Mentor
 from mentor.ports import Embedder, TranscriptSource
 from mentor.sync_worker import SyncWorker
 from mentor.syncs import Sync
@@ -69,19 +69,14 @@ def answers(url: str, seconds: float) -> bool:
             time.sleep(1)
 
 
-def _find_channel(mentor_list: list[Mentor], ref: str) -> Channel:
-    channels = [
-        c
-        for m in mentor_list
-        for c in m.channels
-        if c.youtube_channel_id == ref or c.name.casefold() == ref.casefold()
-    ]
-    if not channels:
+def _find_channel(listed: list[Channel], ref: str) -> Channel:
+    matching = [c for c in listed if c.youtube_channel_id == ref or c.name.casefold() == ref.casefold()]
+    if not matching:
         raise SyncCommandError(f"No Channel named {ref!r}; give a Channel's name or its YouTube channel id")
-    if len(channels) > 1:
-        ids = ", ".join(c.youtube_channel_id for c in channels)
+    if len(matching) > 1:
+        ids = ", ".join(c.youtube_channel_id for c in matching)
         raise SyncCommandError(f"More than one Channel is named {ref!r}; give one of their YouTube channel ids: {ids}")
-    return channels[0]
+    return matching[0]
 
 
 def request(url: str, method: str = "GET", payload: dict[str, object] | None = None) -> bytes:
@@ -106,7 +101,7 @@ def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
     try:
         if channel is None:
             return TypeAdapter(list[Sync]).validate_json(request(f"{url}api/syncs", "POST", options))
-        found = _find_channel(TypeAdapter(list[Mentor]).validate_json(request(f"{url}api/mentors")), channel)
+        found = _find_channel(TypeAdapter(list[Channel]).validate_json(request(f"{url}api/channels")), channel)
         return [
             TypeAdapter(Sync).validate_json(request(f"{url}api/channels/{found.id}/syncs", "POST", options))
         ]
@@ -135,7 +130,7 @@ async def _run_here(
     def enqueue(conn: sqlite3.Connection) -> list[Sync]:
         if channel is None:
             return syncs.enqueue_all(conn, reindex)
-        return [syncs.enqueue(conn, _find_channel(mentors.list_mentors(conn), channel).id, reindex)]
+        return [syncs.enqueue(conn, _find_channel(channels.list_channels(conn), channel).id, reindex)]
 
     queued = await database.run(enqueue)
     if not queued:

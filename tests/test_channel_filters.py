@@ -3,7 +3,7 @@ from datetime import date
 import httpx
 from harness import (
     Json,
-    add_mentor,
+    add_channel,
     fake_channel,
     fake_video,
     fetched,
@@ -38,14 +38,14 @@ def stages(videos: dict[str, Json]) -> dict[str, str]:
 
 
 async def test_channel_filters_are_editable_without_touching_indexed(client: httpx.AsyncClient) -> None:
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await client.patch(f"/api/channels/{channel_id}", json={"indexed": False})
     filtered = await set_filters(
         client, channel_id, published_after="2023-01-01", published_before="2024-12-31", playlist_id="PL-joinery_1", most_recent=25
     )
-    [listed] = (await client.get("/api/mentors")).json()
+    [listed] = (await client.get("/api/channels")).json()
     reindexed = await client.patch(f"/api/channels/{channel_id}", json={"indexed": True})
     cleared = await set_filters(client, channel_id)
 
@@ -65,14 +65,14 @@ async def test_channel_filters_are_editable_without_touching_indexed(client: htt
             "most_recent": 25,
         },
     }
-    assert listed["channels"] == [filtered]
+    assert listed == filtered
     assert reindexed.json() == filtered | {"indexed": True}
     assert cleared == filtered | {"indexed": True, "filters": NO_FILTERS}
 
 
 async def test_invalid_channel_filters_are_rejected(client: httpx.AsyncClient) -> None:
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     invalid: list[Json] = [
         {"published_after": "2024-06-01", "published_before": "2024-01-01"},
         {"published_after": "last spring"},
@@ -89,8 +89,8 @@ async def test_invalid_channel_filters_are_rejected(client: httpx.AsyncClient) -
 
     assert [r.status_code for r in responses] == [422] * len(invalid)
     assert unknown.status_code == 404
-    [listed] = (await client.get("/api/mentors")).json()
-    assert listed["channels"][0]["filters"] == NO_FILTERS
+    [listed] = (await client.get("/api/channels")).json()
+    assert listed["filters"] == NO_FILTERS
     # A playlist URL from the address bar gives its id.
     from_url = await set_filters(client, channel_id, playlist_id="https://www.youtube.com/playlist?list=PL1&si=x")
     assert from_url["filters"]["playlist_id"] == "PL1"
@@ -107,8 +107,8 @@ async def test_date_filters_exclude_videos_published_outside_the_range(
         # Its date is only known once its details are fetched.
         fake_video("v-undated", "Undated old", published_on=date(2021, 1, 1), date_listed=False),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     await set_filters(client, channel_id, published_after="2023-01-01", published_before="2024-12-31")
 
     finished = await sync(client, channel_id)
@@ -138,8 +138,8 @@ async def test_a_playlist_filter_keeps_only_the_channels_videos_in_that_playlist
         fake_video("v-mortise", "Mortise and tenon"),
     ]
     transcripts.playlists["PL-joinery"] = ["v-mortise", "v-someone-elses", "v-dovetails"]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await set_filters(client, channel_id, playlist_id="PL-joinery")
     finished = await sync(client, channel_id)
@@ -171,8 +171,8 @@ async def test_most_recent_n_keeps_the_newest_eligible_videos_in_listing_order(
         fake_video("v-mid", "Middle episode"),
         fake_video("v-old", "Old episode"),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     await set_filters(client, channel_id, most_recent=2)
 
     finished = await sync(client, channel_id)
@@ -195,8 +195,8 @@ async def test_every_sync_reapplies_the_current_filters_and_lifting_an_exclusion
 ) -> None:
     videos_tab = fake_channel(transcripts, "UC-wright").videos
     videos_tab += [fake_video("v-new", "New", published_on=date(2025, 1, 1)), fake_video("v-old", "Old", published_on=date(2020, 1, 1))]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await set_filters(client, channel_id, published_after="2024-01-01")
     narrow = await sync(client, channel_id)
@@ -232,8 +232,8 @@ async def test_most_recent_n_keeps_its_videos_when_a_listing_comes_back_short(
 ) -> None:
     videos_tab = fake_channel(transcripts, "UC-wright").videos
     videos_tab += [fake_video(f"v-{i}", f"Episode {4 - i}", published_on=date(2025 - i, 1, 1)) for i in range(4)]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     await set_filters(client, channel_id, most_recent=2)
     await sync(client, channel_id)
     first = stages(await list_videos(client, channel_id))
@@ -255,8 +255,8 @@ async def test_most_recent_n_fills_up_in_one_sync_when_details_exclude_a_video_a
         fake_video(f"v-{year}", f"From {year}", published_on=date(year, 1, 1), date_listed=False)
         for year in (2025, 2024, 2021, 2020)
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await set_filters(client, channel_id, published_before="2022-06-01", most_recent=2)
     filtered = await sync(client, channel_id)

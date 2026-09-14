@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from harness import (
     Gate,
     Json,
-    add_mentor,
+    add_channel,
     event_stream,
     fake_channel,
     fake_video,
@@ -58,8 +58,8 @@ async def test_sync_progress_and_video_stages_stream_live_while_the_sync_runs(
     app = make_app(config, transcripts, tmp_path)
 
     async with running(app) as client, event_stream(app) as stream:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         queued = await start_sync(client, channel_id)
         await gate.wait_entered()
         before_release = await stream.until(lambda e: e["type"] == "sync" and e["sync"]["stage_counts"]["done"] == 1)
@@ -91,8 +91,8 @@ async def test_failures_and_retry_failed_stream_over_events(
     app = make_app(config, transcripts, tmp_path)
 
     async with running(app) as client, event_stream(app) as stream:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         await start_sync(client, channel_id)
         first_sync = await stream.until(sync_status("done"))
         live.failure = None
@@ -122,20 +122,20 @@ async def test_the_event_stream_is_proxy_safe(
     assert stream.headers["x-accel-buffering"] == "no"
 
 
-async def test_renaming_or_removing_mentors_and_channels_asks_clients_to_reload_syncs(
+async def test_renaming_or_removing_channels_asks_clients_to_reload_syncs(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     app = make_app(config, transcripts, tmp_path)
     reload = {"type": "syncs"}
 
     async with running(app) as client, event_stream(app) as stream:
-        wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
-        await client.patch(f"/api/mentors/{wright['id']}", json={"name": "Wright"})
+        wright = await add_channel(client, "@woodbywright", "Wood By Wright")
+        vlog = await add_channel(client, "@wrightvlogs")
+        await client.patch(f"/api/channels/{wright['id']}", json={"name": "Wright"})
         renamed = await stream.until(lambda e: e == reload)
         await client.delete(f"/api/channels/{vlog['id']}")
         detached = await stream.until(lambda e: e == reload)
-        await client.delete(f"/api/mentors/{wright['id']}")
+        await client.delete(f"/api/channels/{wright['id']}")
         deleted = await stream.until(lambda e: e == reload)
 
     assert [renamed, detached, deleted] == [[reload], [reload], [reload]]
@@ -149,8 +149,8 @@ async def test_a_running_sync_names_the_video_it_is_fetching(
     app = make_app(config, transcripts, tmp_path)
 
     async with running(app) as client, event_stream(app) as stream:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
         fetching = await stream.until(lambda e: e["type"] == "sync" and e["sync"]["fetching"] is not None)
         gate.released.set()
         finished = await stream.until(sync_status("done"))

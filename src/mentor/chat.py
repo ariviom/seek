@@ -1,4 +1,4 @@
-"""Web chat turns: a Conversation's question answered by the ChatEngine, using tools bound to its Mentor Group."""
+"""Web chat turns: a Conversation's question answered by the ChatEngine, using tools bound to its Group or Channel."""
 
 import asyncio
 import contextlib
@@ -12,8 +12,9 @@ from mentor import conversations
 from mentor.conversations import ToolUse, Turn
 from mentor.db import Database
 from mentor.errors import Conflict, NotFound
-from mentor.mcp_server import GROUNDED_ADVISOR, GROUP_TOOL_NAMES, create_group_server
+from mentor.mcp_server import GROUNDED_ADVISOR, bound_tool_names, create_scope_server
 from mentor.ports import ChatDone, ChatEngine, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
+from mentor.scope import Scope
 from mentor.search import Search
 
 log = logging.getLogger(__name__)
@@ -29,16 +30,19 @@ _YOUTUBE_LINK = re.compile(
 _TIMESTAMP = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?")
 
 
-def system_prompt(group_name: str, mentor_names: list[str], today: str) -> str:
-    mentors = ", ".join(mentor_names) if mentor_names else "none yet"
+def system_prompt(scope: Scope, scope_name: str, channel_names: list[str], today: str) -> str:
+    if scope.kind == "group":
+        consulted = f"the Group {scope_name!r} (Channels: {', '.join(channel_names) or 'none yet'})"
+    else:
+        consulted = f"the Channel {scope_name!r}"
     return f"""\
-You answer questions in a web chat by consulting the Mentor Group {group_name!r} (Mentors: {mentors}) through \
-tools that search the Transcripts of their YouTube Videos. Today is {today}.
+You answer questions in a web chat by consulting {consulted} through tools that search the Transcripts of its \
+YouTube Videos. Today is {today}.
 
 {GROUNDED_ADVISOR}
 
 Use search first and expand when a Segment needs more context. Cite each claim as a Markdown link whose text names \
-the Mentor, the Video title, and the timestamp, pointing at the url a tool returned; for another line of an \
+the Channel, the Video title, and the timestamp, pointing at the url a tool returned; for another line of an \
 expanded Transcript, set t to that line's start_seconds in whole seconds."""
 
 
@@ -115,12 +119,14 @@ class Chat:
     async def _run(self, turn: Turn, message: str, events: asyncio.Queue[TurnEvent | None]) -> None:
         request = ChatRequest(
             message=message,
-            system_prompt=system_prompt(turn.group_name, turn.mentor_names, datetime.now(UTC).date().isoformat()),
+            system_prompt=system_prompt(
+                turn.scope, turn.scope_name, turn.channel_names, datetime.now(UTC).date().isoformat()
+            ),
             model=turn.model,
             resume_session_id=turn.claude_session_id,
             history=turn.history,
-            tools=create_group_server(self._database, self._search, turn.group_id),
-            tool_names=GROUP_TOOL_NAMES,
+            tools=create_scope_server(self._database, self._search, turn.scope),
+            tool_names=bound_tool_names(turn.scope),
         )
         try:
             if await self._answer(turn, request, events):

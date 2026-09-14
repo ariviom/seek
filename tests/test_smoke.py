@@ -21,7 +21,7 @@ async def embedded_at(player: Locator) -> tuple[str, str, list[str]]:
     return src.netloc, src.path, parse_qs(src.query)["start"]
 
 
-async def test_add_a_mentor_sync_search_and_watch_citations(
+async def test_add_a_channel_sync_search_and_watch_citations(
     config: Config,
     transcripts: FakeTranscriptSource,
     embedder: FakeEmbedder,
@@ -76,8 +76,8 @@ async def test_add_a_mentor_sync_search_and_watch_citations(
 
             await page.get_by_label("YouTube Channel URL or handle").fill("@woodbywright")
             await page.get_by_role("button", name="Look up").click()
-            await page.get_by_label("Mentor name").fill("Wright")
-            await page.get_by_role("button", name="Add Mentor").click()
+            await page.get_by_label("Channel name").fill("Wright")
+            await page.get_by_role("button", name="Add Channel").click()
 
             await page.get_by_role("button", name="Sync", exact=True).click()
             await expect(page.get_by_role("region", name="Syncs").get_by_text("Done", exact=True)).to_be_visible()
@@ -95,7 +95,7 @@ async def test_add_a_mentor_sync_search_and_watch_citations(
 
             await page.get_by_label("Mentor Group name", exact=True).fill("Benches")
             await page.get_by_role("button", name="Create Group").click()
-            member = page.get_by_role("list", name="Mentors in Benches").get_by_label("Wright")
+            member = page.get_by_role("list", name="Channels in Benches").get_by_label("Wright")
             # Ticked once the server has saved it.
             await member.click()
             await expect(member).to_be_checked()

@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 from harness import (
     Gate,
-    add_mentor,
+    add_channel,
     fake_channel,
     fake_video,
     fetched,
@@ -46,8 +46,8 @@ async def test_a_sync_discovers_videos_and_fetches_their_transcripts_and_metadat
         ),
         fake_video("v-planes", "Tuning a hand plane", duration=900, listed_duration=900, published_on=date(2024, 6, 9)),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     queued = await start_sync(client, channel_id)
     [finished] = await wait_for_syncs(client)
@@ -57,7 +57,7 @@ async def test_a_sync_discovers_videos_and_fetches_their_transcripts_and_metadat
     assert finished["id"] == queued["id"]
     assert finished["status"] == "done"
     assert finished["error"] is None
-    assert (finished["channel_name"], finished["mentor_name"]) == ("Wood By Wright", "Wood By Wright")
+    assert finished["channel_name"] == "Wood By Wright"
     assert finished["started_at"] is not None and finished["finished_at"] is not None
     assert finished["new_videos"] == 2
     assert finished["stage_counts"] == NO_COUNTS | {"done": 2}
@@ -91,8 +91,8 @@ async def test_videos_under_the_minimum_duration_are_excluded_and_not_processed(
         fake_video("v-unlisted-length", "Glue-up in a minute", listed_duration=None, duration=60),
         fake_video("v-episode", "Full episode", listed_duration=None, duration=1200),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await start_sync(client, channel_id)
     [sync] = await wait_for_syncs(client)
@@ -138,8 +138,8 @@ async def test_unavailable_videos_fail_with_a_reason_and_the_sync_carries_on(
         ),
         fake_video("v-ok", "Sharpening chisels"),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await start_sync(client, channel_id)
     [sync] = await wait_for_syncs(client)
@@ -178,8 +178,8 @@ async def test_a_misbehaving_or_non_english_video_fails_alone_and_transient_fail
         fake_video("v-german", "Holzverbindungen", language="de"),
         fake_video("v-ok", "Sharpening chisels"),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await start_sync(client, channel_id)
     [first] = await wait_for_syncs(client)
@@ -218,10 +218,10 @@ async def test_the_minimum_duration_is_configurable(
     )
 
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
         await wait_for_syncs(client)
-        videos = await list_videos(client, mentor["channels"][0]["id"])
+        videos = await list_videos(client, channel["id"])
 
     assert {title: v["stage"] for title, v in videos.items()} == {"Short": "excluded", "Medium": "done"}
     assert "30" in videos["Short"]["reason"]
@@ -232,8 +232,8 @@ async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(
 ) -> None:
     videos_tab = fake_channel(transcripts, "UC-wright").videos
     videos_tab.append(fake_video("v-first", "First video"))
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     await start_sync(client, channel_id)
     await wait_for_syncs(client)
 
@@ -258,8 +258,7 @@ async def test_discovery_lists_past_streams_too_and_later_syncs_may_stop_at_the_
     channel = fake_channel(transcripts, "UC-wright")
     channel.videos.append(fake_video("v-first", "First video"))
     channel.streams.append(fake_video("v-stream", "Shop livestream"))
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel_id = (await add_channel(client, "@woodbywright", "Wood By Wright"))["id"]
 
     await start_sync(client, channel_id)
     [first] = await wait_for_syncs(client)
@@ -279,8 +278,8 @@ async def test_a_reindex_sync_cuts_and_embeds_the_indexed_videos_again_without_f
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-first", "First video"))
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     await start_sync(client, channel_id)
     await wait_for_syncs(client)
 
@@ -300,15 +299,15 @@ async def test_syncs_run_one_at_a_time_in_queue_order_and_a_queued_channel_is_qu
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-wright", "Wright video", before_fetch=gate))
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex video"))
     fake_channel(transcripts, "UC-wright-vlog").videos.append(fake_video("v-vlog", "Vlog video"))
-    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    wright = await add_channel(client, "@woodbywright", "Wood By Wright")
+    vlog = await add_channel(client, "@wrightvlogs")
+    rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
 
-    first = await start_sync(client, wright["channels"][0]["id"])
+    first = await start_sync(client, wright["id"])
     await gate.wait_entered()
-    second = await start_sync(client, rex["channels"][0]["id"])
+    second = await start_sync(client, rex["id"])
     third = await start_sync(client, vlog["id"])
-    second_again = await start_sync(client, rex["channels"][0]["id"])
+    second_again = await start_sync(client, rex["id"])
     while_running = {s["id"]: s["status"] for s in (await client.get("/api/syncs")).json()}
     gate.released.set()
     finished = await wait_for_syncs(client)
@@ -327,14 +326,14 @@ async def test_syncing_all_queues_every_indexed_channel_once(
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-wright", "Wright video", before_fetch=gate))
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex video"))
     fake_channel(transcripts, "UC-wright-vlog").videos.append(fake_video("v-vlog", "Vlog video"))
-    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    wright = await add_channel(client, "@woodbywright", "Wood By Wright")
+    vlog = await add_channel(client, "@wrightvlogs")
+    rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
     await client.patch(f"/api/channels/{vlog['id']}", json={"indexed": False})
 
-    running_sync = await start_sync(client, wright["channels"][0]["id"])
+    running_sync = await start_sync(client, wright["id"])
     await gate.wait_entered()
-    rex_queued = await start_sync(client, rex["channels"][0]["id"])
+    rex_queued = await start_sync(client, rex["id"])
     response = await client.post("/api/syncs")
     gate.released.set()
     finished = await wait_for_syncs(client)
@@ -361,13 +360,13 @@ async def test_a_channel_deleted_mid_sync_is_skipped_without_leaving_rows(
         fake_video("v-rex-2", "Rex two"),
     ]
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-wright", "Wright video"))
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
-    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
+    wright = await add_channel(client, "@woodbywright", "Wood By Wright")
 
-    await start_sync(client, rex["channels"][0]["id"])
+    await start_sync(client, rex["id"])
     await gate.wait_entered()
-    wright_sync = await start_sync(client, wright["channels"][0]["id"])
-    deleted = await client.delete(f"/api/mentors/{rex['id']}")
+    wright_sync = await start_sync(client, wright["id"])
+    deleted = await client.delete(f"/api/channels/{rex['id']}")
     gate.released.set()
     finished = await wait_for_syncs(client)
 
@@ -392,8 +391,8 @@ async def test_a_sync_stops_with_the_reason_when_youtube_is_unavailable(
         fake_video("v-one", "One", before_fetch=rate_limited),
         fake_video("v-two", "Two"),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await start_sync(client, channel_id)
     [during_fetch] = await wait_for_syncs(client)
@@ -421,13 +420,13 @@ async def test_a_sync_waits_while_another_process_holds_the_lease(
     app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02)
 
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
         conn = sqlite3.connect(config.database_path, autocommit=True)
         try:
             conn.execute(
                 "INSERT INTO sync_lease (id, holder, expires_at) VALUES (1, 'another process', ?)", (time.time() + 60,)
             )
-            sync = await start_sync(client, mentor["channels"][0]["id"])
+            sync = await start_sync(client, channel["id"])
             await asyncio.sleep(0.3)
             waiting = [s["status"] for s in (await client.get("/api/syncs")).json()]
             conn.execute("UPDATE sync_lease SET expires_at = ?", (time.time() - 1,))
@@ -446,14 +445,14 @@ async def test_a_sync_left_running_by_a_stopped_server_resumes_at_startup(
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", before_fetch=gate))
 
     async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        sync = await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        sync = await start_sync(client, channel["id"])
         await gate.wait_entered()
     gate.released.set()
 
     async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
         [finished] = await wait_for_syncs(client)
-        videos = await list_videos(client, mentor["channels"][0]["id"])
+        videos = await list_videos(client, channel["id"])
 
     assert (finished["id"], finished["status"]) == (sync["id"], "done")
     assert videos["One"]["stage"] == "done"

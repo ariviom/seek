@@ -7,7 +7,19 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import FastAPI
-from harness import Json, add_mentor, fake_channel, fake_video, list_videos, mcp_client, query, running, said, sync
+from harness import (
+    Json,
+    add_channel,
+    add_group,
+    fake_channel,
+    fake_video,
+    list_videos,
+    mcp_client,
+    query,
+    running,
+    said,
+    sync,
+)
 from mcp.types import CallToolResult, TextContent
 
 from mentor.app import create_app
@@ -15,7 +27,7 @@ from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import Chapter
 
-TOOLS = {"list_groups", "search", "expand", "get_video", "sql"}
+TOOLS = {"list_groups", "list_channels", "search", "expand", "get_video", "sql"}
 
 type Served = tuple[httpx.AsyncClient, FastAPI]
 
@@ -64,9 +76,9 @@ async def test_mcp_clients_see_the_tools_and_grounded_advisor_guidance(served: S
         instructions = mcp.instructions
 
     assert {tool.name for tool in tools} == TOOLS
-    # Story 34: answer only from Segments, cite every claim, name the Mentor, surface disagreements, flag old
+    # Story 34: answer only from Segments, cite every claim, name the Channel, surface disagreements, flag old
     # sources, and admit gaps; in the instructions and again in every tool, since clients may drop either.
-    guidance = ["only from", "cite", "name the mentor", "disagree", "old", "not covered"]
+    guidance = ["only from", "cite", "name the channel", "disagree", "old", "not covered"]
     assert instructions is not None
     for text in [instructions, *(tool.description or "" for tool in tools)]:
         assert [phrase for phrase in guidance if phrase not in text.lower()] == []
@@ -82,13 +94,12 @@ async def test_the_search_tool_returns_what_the_search_api_returns(
     fake_channel(transcripts, "UC-rex").videos.append(
         fake_video("v-rex", "Honing", cues=said("Sharpen the knife on a coarse stone"))
     )
-    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    rex = await add_channel(client, "@rexkrueger")
     await sync(client, wright, rex)
-    group = (await client.post("/api/groups", json={"name": "Joinery"})).json()
-    await client.put(f"/api/groups/{group['id']}/members", json={"mentor_ids": [wright["id"]]})
+    group = await add_group(client, "Joinery", wright)
 
-    for scope in ({}, {"group": group["id"]}, {"group": "joinery"}, {"mentors": [rex["id"]]}):
+    for scope in ({}, {"group": group["id"]}, {"group": "joinery"}, {"channels": [rex["id"]]}):
         arguments: Json = {"query": "sharpen a chisel", "limit": 5, "prefer_recent": "strong", **scope}
         api = (await client.post("/api/search", json=arguments)).json()
         assert api != []
@@ -98,22 +109,22 @@ async def test_the_search_tool_returns_what_the_search_api_returns(
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
-        ({"query": "chisel", "group": 1, "mentors": [1]}, "not both"),
+        ({"query": "chisel", "group": 1, "channels": [1]}, "not both"),
         ({"query": "   "}, "query"),
-        ({"query": "chisel", "mentors": []}, "mentors"),
+        ({"query": "chisel", "channels": []}, "channels"),
         ({"query": "chisel", "limit": 51}, "limit"),
         ({"query": "chisel", "prefer_recent": "always"}, "prefer_recent"),
-        ({"query": "chisel", "group": "Nobody"}, "Mentor Group 'Nobody' not found"),
-        # Strict like the API: nothing is coerced into a Group id, a Mentor id, or a limit.
+        ({"query": "chisel", "group": "Nobody"}, "Group 'Nobody' not found"),
+        # Strict like the API: nothing is coerced into a Group id, a Channel id, or a limit.
         ({"query": "chisel", "group": True}, "group"),
-        ({"query": "chisel", "mentors": ["1"]}, "mentors"),
+        ({"query": "chisel", "channels": ["1"]}, "channels"),
         ({"query": "chisel", "limit": 5.0}, "limit"),
     ],
 )
 async def test_invalid_searches_are_tool_errors(served: Served, arguments: Json, message: str) -> None:
     client, app = served
-    await client.post("/api/groups", json={"name": "Joinery"})
-    await add_mentor(client, "Paul Wright", "@woodbywright")
+    await add_group(client, "Joinery")
+    await add_channel(client, "@woodbywright", "Paul Wright")
 
     assert message in error_text(await call_tool(app, "search", arguments))
     assert (await client.post("/api/search", json=arguments)).status_code in (404, 422)
@@ -121,42 +132,48 @@ async def test_invalid_searches_are_tool_errors(served: Served, arguments: Json,
 
 async def test_search_reports_a_model_still_loading_as_a_tool_error(served: Served, embedder: FakeEmbedder) -> None:
     client, app = served
-    await add_mentor(client, "Paul Wright", "@woodbywright")
+    await add_channel(client, "@woodbywright", "Paul Wright")
     embedder.unavailable = "The model is still loading"
 
     assert "The model is still loading" in error_text(await call_tool(app, "search", {"query": "chisel"}))
 
 
-async def test_list_groups_shows_each_groups_mentors_and_their_searchable_video_counts(
+async def test_list_groups_and_list_channels_show_channels_with_their_searchable_video_counts(
     served: Served, transcripts: FakeTranscriptSource
 ) -> None:
     client, app = served
     fake_channel(transcripts, "UC-wright").videos += [fake_video("v-1", "One"), fake_video("v-2", "Two")]
     fake_channel(transcripts, "UC-wright-vlog").videos.append(fake_video("v-vlog", "Vlog"))
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex"))
-    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
-    vlog = (await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})).json()
-    wright["channels"].append(vlog)
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
-    await sync(client, wright)
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    vlog = await add_channel(client, "@wrightvlogs")
+    rex = await add_channel(client, "@rexkrueger")
+    await sync(client, wright, vlog)
     # Rex is never synced, and the vlog Channel stops being indexed.
     await client.patch(f"/api/channels/{vlog['id']}", json={"indexed": False})
-    both = (await client.post("/api/groups", json={"name": "Woodworking"})).json()
-    await client.put(f"/api/groups/{both['id']}/members", json={"mentor_ids": [wright["id"], rex["id"]]})
-    empty = (await client.post("/api/groups", json={"name": "Blacksmithing"})).json()
+    both = await add_group(client, "Woodworking", wright, vlog, rex)
+    empty = await add_group(client, "Blacksmithing")
 
     assert await call(app, "list_groups") == {
         "result": [
-            {"id": empty["id"], "name": "Blacksmithing", "video_count": 0, "mentors": []},
+            {"id": empty["id"], "name": "Blacksmithing", "video_count": 0, "channels": []},
             {
                 "id": both["id"],
                 "name": "Woodworking",
                 "video_count": 2,
-                "mentors": [
+                "channels": [
                     {"id": wright["id"], "name": "Paul Wright", "video_count": 2},
                     {"id": rex["id"], "name": "Rex Krueger", "video_count": 0},
+                    {"id": vlog["id"], "name": "Wright Vlogs", "video_count": 0},
                 ],
             },
+        ]
+    }
+    # Only indexed Channels are listed on their own: the others answer nothing.
+    assert await call(app, "list_channels") == {
+        "result": [
+            {"id": wright["id"], "name": "Paul Wright", "video_count": 2},
+            {"id": rex["id"], "name": "Rex Krueger", "video_count": 0},
         ]
     }
 
@@ -171,7 +188,8 @@ async def test_expand_returns_the_transcript_around_a_segment_in_the_api_and_ove
     fake_channel(transcripts, "UC-wright").videos.append(
         fake_video("v-tenons", "Tenons", published_on=date(2024, 5, 17), cues=said(*lines, every=10))
     )
-    await sync(client, await add_mentor(client, "Paul Wright", "@woodbywright"))
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    await sync(client, wright)
     results = (await client.post("/api/search", json={"query": "tenon cheeks rip saw"})).json()
     hit = next(r for r in results if "tenon cheeks" in r["text"])
     # No API gives a Segment's end.
@@ -199,8 +217,8 @@ async def test_expand_returns_the_transcript_around_a_segment_in_the_api_and_ove
         "youtube_video_id": "v-tenons",
         "video_title": "Tenons",
         "published_on": "2024-05-17",
-        "channel_name": "Wood By Wright",
-        "mentor_name": "Paul Wright",
+        "channel_id": wright["id"],
+        "channel_name": "Paul Wright",
         "url": f"https://www.youtube.com/watch?v=v-tenons&t={int(start)}s",
         "cues": [],
     }
@@ -213,7 +231,7 @@ async def test_expand_defaults_to_a_minute_either_side_and_rejects_unknown_segme
     fake_channel(transcripts, "UC-wright").videos.append(
         fake_video("v-long", "Long", cues=said(*(f"line {n}" for n in range(100)), every=10))
     )
-    await sync(client, await add_mentor(client, "Paul Wright", "@woodbywright"))
+    await sync(client, await add_channel(client, "@woodbywright", "Paul Wright"))
     [middle] = query(config, "SELECT id, start_seconds, end_seconds FROM segments WHERE start_seconds >= 400 LIMIT 1")
 
     expanded = await call(app, "expand", segment_id=middle["id"])
@@ -239,16 +257,16 @@ async def test_get_video_returns_its_metadata_chapters_description_and_link(
             chapters=[Chapter(title="Marking", start=0, end=120), Chapter(title="Sawing", start=120, end=754)],
         )
     )
-    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
     await sync(client, wright)
-    video = (await list_videos(client, wright["channels"][0]["id"]))["Hand-cut dovetails"]
+    video = (await list_videos(client, wright["id"]))["Hand-cut dovetails"]
 
     assert await call(app, "get_video", video_id=video["id"]) == {
         "video_id": video["id"],
         "youtube_video_id": "v-dovetails",
         "title": "Hand-cut dovetails",
-        "mentor_name": "Paul Wright",
-        "channel_name": "Wood By Wright",
+        "channel_id": wright["id"],
+        "channel_name": "Paul Wright",
         "published_on": "2024-05-17",
         "duration_seconds": 754,
         "chapters": [{"title": "Marking", "start": 0.0, "end": 120.0}, {"title": "Sawing", "start": 120.0, "end": 754.0}],
@@ -263,10 +281,10 @@ async def test_expand_and_get_video_leave_out_not_indexed_channels(
 ) -> None:
     client, app = served
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-vlog", "Vlog", cues=said("at the cabin")))
-    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
     await sync(client, wright)
     [hit] = (await client.post("/api/search", json={"query": "cabin"})).json()
-    await client.patch(f"/api/channels/{wright['channels'][0]['id']}", json={"indexed": False})
+    await client.patch(f"/api/channels/{wright['id']}", json={"indexed": False})
 
     assert (await client.get(f"/api/segments/{hit['segment_id']}/expand")).status_code == 404
     assert (await call_tool(app, "expand", {"segment_id": hit["segment_id"]})).is_error
@@ -281,7 +299,7 @@ async def test_sql_answers_read_only_questions_across_the_knowledge_base_includi
         fake_video("v-1", "Planes", cues=said("a jack plane flattens")),
         fake_video("v-2", "Saws", cues=said("a rip saw cuts along the grain")),
     ]
-    await sync(client, await add_mentor(client, "Paul Wright", "@woodbywright"))
+    await sync(client, await add_channel(client, "@woodbywright", "Paul Wright"))
 
     counted = await call(app, "sql", query="SELECT count(*) AS videos FROM videos WHERE pipeline_stage = 'done'")
     lexical = await call(app, "sql", query="SELECT count(*) FROM segments_fts WHERE segments_fts MATCH 'plane'")
@@ -312,10 +330,10 @@ async def test_sql_caps_rows_text_and_result_size(served: Served) -> None:
 @pytest.mark.parametrize(
     ("statement", "message"),
     [
-        ("DELETE FROM mentors", "only read"),
-        ("INSERT INTO mentor_groups (name) VALUES ('x')", "only read"),
-        ("UPDATE mentors SET name = 'x'", "only read"),
-        ("DROP TABLE mentors", "only read"),
+        ("DELETE FROM channels", "only read"),
+        ("INSERT INTO groups (name) VALUES ('x')", "only read"),
+        ("UPDATE channels SET name = 'x'", "only read"),
+        ("DROP TABLE channels", "only read"),
         ("CREATE TABLE scratch (a)", "only read"),
         ("CREATE TEMP TABLE scratch (a)", "only read"),
         ("ATTACH DATABASE '{scratch}/attached.db' AS other", "only read"),
@@ -324,7 +342,7 @@ async def test_sql_caps_rows_text_and_result_size(served: Served) -> None:
         ("BEGIN", "only read"),
         ("VACUUM INTO '{scratch}/copy.db'", "only read"),
         ("SELECT load_extension('{scratch}/evil.so')", "load_extension"),
-        ("SELECT 1; DELETE FROM mentors", "one statement"),
+        ("SELECT 1; DELETE FROM channels", "one statement"),
         ("SELECT * FROM no_such_table", "no such table"),
         (
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n",
@@ -336,14 +354,14 @@ async def test_sql_rejects_anything_but_one_read(
     served: Served, config: Config, tmp_path: Path, statement: str, message: str
 ) -> None:
     client, app = served
-    await add_mentor(client, "Paul Wright", "@woodbywright")
+    await add_channel(client, "@woodbywright", "Paul Wright")
     scratch = tmp_path / "scratch"
     scratch.mkdir()
 
     rejected = await call_tool(app, "sql", {"query": statement.format(scratch=scratch)})
 
     assert message in error_text(rejected).lower()
-    assert [row["name"] for row in query(config, "SELECT name FROM mentors")] == ["Paul Wright"]
+    assert [row["name"] for row in query(config, "SELECT name FROM channels")] == ["Paul Wright"]
     assert list(scratch.iterdir()) == []
 
 
@@ -378,7 +396,7 @@ async def test_the_mcp_endpoint_serves_tools_over_http_to_loopback_and_configure
         async def post(body: Json, **extra: str) -> httpx.Response:
             return await client.post("/mcp", json=body, headers=headers | extra)
 
-        await sync(client, await add_mentor(client, "Paul Wright", "@woodbywright"))
+        await sync(client, await add_channel(client, "@woodbywright", "Paul Wright"))
         api = (await client.post("/api/search", json={"query": "flatten the board"})).json()
         called = await post(search)
 

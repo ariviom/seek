@@ -3,7 +3,7 @@ import type { Citation } from "./api";
 import { formatDuration, quietButtonClass } from "./ui";
 
 // What the player needs of a Citation. A search result at a second is one too.
-export type PlayerCitation = Pick<Citation, "youtube_video_id" | "seconds" | "video_title" | "mentor_name">;
+export type PlayerCitation = Pick<Citation, "youtube_video_id" | "seconds" | "video_title" | "channel_name">;
 
 // The open player, if any, and where it was opened (e.g. which search result). `opening` counts plays, so playing the
 // same Citation again restarts it.
@@ -60,7 +60,7 @@ export function CitationPlayer({
       </div>
       <figcaption className="mt-1 flex items-baseline justify-between gap-3 text-[13px] text-pencil">
         <span className="min-w-0 truncate">
-          {citation.mentor_name} · {citation.video_title} at <span className="tabular-nums">{at}</span>
+          {citation.channel_name} · {citation.video_title} at <span className="tabular-nums">{at}</span>
         </span>
         <button className={quietButtonClass} type="button" onClick={onClose}>
           Close player

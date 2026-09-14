@@ -1,5 +1,5 @@
 """The MCP tools, the product's primary interface: served over Streamable HTTP at /mcp, and in-process to the web
-chat bound to one Mentor Group."""
+chat bound to one Group or Channel."""
 
 import asyncio
 from collections.abc import Iterator
@@ -13,10 +13,11 @@ from pydantic import Field, ValidationError
 from mentor import groups, sources
 from mentor.db import Database
 from mentor.errors import NotFound
-from mentor.groups import GroupSummary
+from mentor.groups import ChannelSummary, GroupSummary
 from mentor.ports import ModelUnavailable
+from mentor.scope import SCOPE_NOUN, Scope, ScopeKind
 from mentor.search import CANDIDATES, PreferRecent, Search, SearchResult
-from mentor.search_api import GroupRef, MentorIds, ResultLimit, SearchBody, SearchQuery
+from mentor.search_api import ChannelIds, GroupRef, ResultLimit, SearchBody, SearchQuery
 from mentor.sources import DEFAULT_EXPAND_SECONDS, MAX_EXPAND_SECONDS, Expansion, VideoInfo
 from mentor.sql import ROW_LIMIT, TEXT_LIMIT, QueryRejected, QueryResult, run_query
 
@@ -24,35 +25,45 @@ from mentor.sql import ROW_LIMIT, TEXT_LIMIT, QueryRejected, QueryResult, run_qu
 # the instructions to its model.
 GROUNDED_ADVISOR = (
     "Act as a grounded advisor: answer only from Segments these tools return, never from general knowledge. "
-    "Cite every claim with its Mentor, Video title, and timestamp link. Name the Mentor behind each piece of advice. "
-    "When Mentors disagree, say so and give each view. When the only support is old next to the Mentors' newest "
-    "Videos, say so. When a question is not covered by the Mentors, say so and stop rather than filling the gap."
+    "Cite every claim with its Channel, Video title, and timestamp link. Name the Channel behind each piece of "
+    "advice. When Channels disagree, say so and give each view. When the only support is old next to the Channels' "
+    "newest Videos, say so. When a question is not covered by the Channels, say so and stop rather than filling the "
+    "gap."
 )
 
 INSTRUCTIONS = f"""\
-This server searches the Transcripts of YouTube creators the user trusts, called Mentors, organised into Mentor \
-Groups. Each Mentor owns Channels, and each Video's Transcript is cut into timestamped Segments.
+This server searches the Transcripts of YouTube Channels the user trusts, which can be organised into Groups. Each \
+Video's Transcript is cut into timestamped Segments.
 
 {GROUNDED_ADVISOR}
 
-Start with search (after list_groups when a Group should scope it), use expand when a Segment needs more context, \
-get_video for a Video's chapters and description, and sql only for counting or listing questions."""
+Start with search (after list_groups or list_channels when one should scope it), use expand when a Segment needs \
+more context, get_video for a Video's chapters and description, and sql only for counting or listing questions."""
 
-GROUP_INSTRUCTIONS = f"""\
-This server searches the Transcripts of one Mentor Group's Mentors: YouTube creators the user trusts. Each Video's \
-Transcript is cut into timestamped Segments.
+_SCOPE_INSTRUCTIONS = f"""\
+This server searches the Transcripts of {{consulted}} the user trusts. Each Video's Transcript is cut into \
+timestamped Segments.
 
 {GROUNDED_ADVISOR}
 
 Start with search, use expand when a Segment needs more context, and get_video for a Video's chapters and \
 description."""
 
-# sql reads every Group's data, so a chat bound to one Group goes without it.
-GROUP_TOOL_NAMES = ("list_groups", "search", "expand", "get_video")
+GROUP_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted="one Group of YouTube Channels")
+CHANNEL_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted="one YouTube Channel")
+
+# sql reads every Channel's data, so a chat bound to a scope goes without it; list_groups only means something for
+# a Group.
+GROUP_TOOL_NAMES = ("list_groups", "list_channels", "search", "expand", "get_video")
+CHANNEL_TOOL_NAMES = ("list_channels", "search", "expand", "get_video")
+_BOUND: dict[ScopeKind, tuple[str, tuple[str, ...]]] = {
+    "group": (GROUP_INSTRUCTIONS, GROUP_TOOL_NAMES),
+    "channel": (CHANNEL_INSTRUCTIONS, CHANNEL_TOOL_NAMES),
+}
 
 _SEARCH_RESULTS = (
     f"limit is 1 to {CANDIDATES} (default 10). prefer_recent is off, gentle (default), or strong. Each result has the "
-    "Segment's text, Mentor, Channel, Video title and ids, publish date, chapter, and url: a link to the moment that "
+    "Segment's text, Channel, Video title and ids, publish date, chapter, and url: a link to the moment that "
     "best matched, for citing."
 )
 
@@ -81,81 +92,100 @@ def _tool_errors() -> Iterator[None]:
         raise ToolError(str(e)) from e
 
 
+def bound_tool_names(scope: Scope) -> tuple[str, ...]:
+    return _BOUND[scope.kind][1]
+
+
 def create_mcp_server(database: Database, search: Search, sql_time_limit_seconds: float) -> MCPServer:
-    """Every tool, over every Group."""
+    """Every tool, over every Channel."""
     return _server(database, search, None, sql_time_limit_seconds)
 
 
-def create_group_server(database: Database, search: Search, group_id: int) -> MCPServer:
-    """The tools a chat with one Group may use: search covers only the Group, Segments and Videos outside it aren't
-    found, and there is no sql."""
-    return _server(database, search, group_id, None)
+def create_scope_server(database: Database, search: Search, scope: Scope) -> MCPServer:
+    """The tools a chat with one Group or Channel may use: search covers only the scope, Segments and Videos outside
+    it aren't found, and there is no sql."""
+    return _server(database, search, scope, None)
 
 
-# Given a Group, sql_time_limit_seconds is None: sql would read every Group.
-def _server(
-    database: Database, search: Search, group_id: int | None, sql_time_limit_seconds: float | None
-) -> MCPServer:
+# Given a scope, sql_time_limit_seconds is None: sql would read every Channel.
+def _server(database: Database, search: Search, scope: Scope | None, sql_time_limit_seconds: float | None) -> MCPServer:
+    instructions = INSTRUCTIONS if scope is None else _BOUND[scope.kind][0]
     # The SDK configures root logging at this level; INFO would log every library's chatter.
-    instructions = INSTRUCTIONS if group_id is None else GROUP_INSTRUCTIONS
     server = MCPServer("mentor", instructions=instructions, log_level="WARNING")
+
+    if scope is None or scope.kind == "group":
+        group_id = None if scope is None else scope.id
+
+        @server.tool(
+            name="list_groups",
+            description=_describe(
+                "The Groups, each with its Channels and how many searchable Videos each has. Scope search with a "
+                "Group's id or name, or with Channel ids."
+                if scope is None
+                else "The Group this Conversation consults, with its Channels and how many searchable Videos each "
+                "has."
+            ),
+        )
+        async def list_groups() -> list[GroupSummary]:
+            return await database.run(lambda conn: groups.group_summaries(conn, group_id))
+
     @server.tool(
-        name="list_groups",
+        name="list_channels",
         description=_describe(
-            "The Mentor Groups, each with its Mentors and how many searchable Videos each has. Scope search with a "
-            "Group's id or name, or with Mentor ids."
-            if group_id is None
-            else "The Mentor Group this Conversation consults, with its Mentors and how many searchable Videos each "
-            "has."
+            "Every indexed Channel, with how many searchable Videos each has. Scope search with Channel ids."
+            if scope is None
+            else "The Channels this Conversation consults, with how many searchable Videos each has."
         ),
     )
-    async def list_groups() -> list[GroupSummary]:
-        return await database.run(lambda conn: groups.group_summaries(conn, group_id))
+    async def list_channels() -> list[ChannelSummary]:
+        return await database.run(lambda conn: groups.channel_summaries(conn, scope))
 
-    if group_id is None:
+    if scope is None:
 
         @server.tool(
             name="search",
             description=_describe(
                 "Find the Transcript Segments that best answer a question, matched by meaning and by exact words, "
                 "reranked, with newer Videos preferred on near-ties. Scope it with at most one of group (a number is "
-                "a Group id, a string is a Group name) or mentors (Mentor ids); give neither to search every Mentor. "
-                + _SEARCH_RESULTS
+                "a Group id, a string is a Group name) or channels (Channel ids); give neither to search every "
+                "Channel. " + _SEARCH_RESULTS
             ),
         )
         async def search_segments(
             query: SearchQuery,
             group: GroupRef | None = None,
-            mentors: MentorIds | None = None,
+            channels: ChannelIds | None = None,
             limit: ResultLimit = 10,
             prefer_recent: PreferRecent = "gentle",
         ) -> list[SearchResult]:
             with _tool_errors():
                 # The arguments are already valid one by one; the body adds the rule that they give one scope.
-                body = SearchBody(query=query, group=group, mentors=mentors, limit=limit, prefer_recent=prefer_recent)
+                body = SearchBody(query=query, group=group, channels=channels, limit=limit, prefer_recent=prefer_recent)
                 return await search.search(
                     body.query,
                     group=body.group,
-                    mentor_ids=body.mentors,
+                    channel_ids=body.channels,
                     limit=body.limit,
                     prefer_recent=body.prefer_recent,
                 )
 
     else:
+        # A name of its own, so the closure below sees it as a Scope rather than Scope | None.
+        bound = scope
 
         @server.tool(
             name="search",
             description=_describe(
-                "Find the Transcript Segments of this Conversation's Mentor Group that best answer a question, "
-                "matched by meaning and by exact words, reranked, with newer Videos preferred on near-ties. "
-                + _SEARCH_RESULTS
+                f"Find the Transcript Segments of this Conversation's {SCOPE_NOUN[bound.kind]} that best answer a "
+                "question, matched by meaning and by exact words, reranked, with newer Videos preferred on "
+                "near-ties. " + _SEARCH_RESULTS
             ),
         )
-        async def search_group(
+        async def search_scope(
             query: SearchQuery, limit: ResultLimit = 10, prefer_recent: PreferRecent = "gentle"
         ) -> list[SearchResult]:
             with _tool_errors():
-                return await search.search(query, group=group_id, limit=limit, prefer_recent=prefer_recent)
+                return await search.search(query, scope=bound, limit=limit, prefer_recent=prefer_recent)
 
     @server.tool(
         name="expand",
@@ -173,19 +203,19 @@ def _server(
     ) -> Expansion:
         with _tool_errors():
             return await database.run(
-                lambda conn: sources.expand(conn, segment_id, before_seconds, after_seconds, group_id)
+                lambda conn: sources.expand(conn, segment_id, before_seconds, after_seconds, scope)
             )
 
     @server.tool(
         name="get_video",
         description=_describe(
-            "A Video's title, Mentor, Channel, publish date, duration, chapters (start and end in seconds), "
-            "description, and url, by the video_id a search result or expand gives."
+            "A Video's title, Channel, publish date, duration, chapters (start and end in seconds), description, and "
+            "url, by the video_id a search result or expand gives."
         ),
     )
     async def get_video(video_id: int) -> VideoInfo:
         with _tool_errors():
-            return await database.run(lambda conn: sources.get_video(conn, video_id, group_id))
+            return await database.run(lambda conn: sources.get_video(conn, video_id, scope))
 
     if sql_time_limit_seconds is not None:
         time_limit = sql_time_limit_seconds
@@ -194,9 +224,9 @@ def _server(
             name="sql",
             description=_describe(
                 "Run one read-only SQLite SELECT over the knowledge base, for counting or listing questions search "
-                "can't answer, such as how many Videos a Mentor has from a given year. Tables include mentors, "
-                "channels, mentor_groups, mentor_group_members, videos (pipeline_stage 'done' means searchable), "
-                "transcripts, segments, and segments_fts (FTS5 over segments.context and segments.text); read sqlite_master for the full "
+                "can't answer, such as how many Videos a Channel has from a given year. Tables include channels, "
+                "groups, group_channels, videos (pipeline_stage 'done' means searchable), transcripts, segments, and "
+                "segments_fts (FTS5 over segments.context and segments.text); read sqlite_master for the full "
                 f"schema. Returns at most {ROW_LIMIT} rows within {time_limit:g} seconds; text over "
                 f"{TEXT_LIMIT} characters is cut short, blobs come back as placeholders, and rows stop early for a "
                 "very large result."

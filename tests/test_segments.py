@@ -9,7 +9,7 @@ from fastapi import FastAPI
 import sqlite_vec
 from harness import (
     Json,
-    add_mentor,
+    add_channel,
     fake_channel,
     fake_video,
     query,
@@ -48,10 +48,10 @@ async def test_a_sync_segments_and_embeds_videos_into_indexes_that_knn_can_scope
         )
     )
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-sheath", "Leather sheath"))
-    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    wright = await add_channel(client, "@woodbywright", "Wood By Wright")
+    rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
 
-    finished = await sync_all(client, wright["channels"][0]["id"], rex["channels"][0]["id"])
+    finished = await sync_all(client, wright["id"], rex["id"])
 
     assert [(s["status"], s["stage_counts"]["done"]) for s in finished] == [("done", 1), ("done", 1)]
     segments = query(
@@ -82,9 +82,9 @@ async def test_a_sync_segments_and_embeds_videos_into_indexes_that_knn_can_scope
     # The query is nearest Rex's Segment, so only filtering before taking the top k finds Wright's.
     nearest_rex = sqlite_vec.serialize_float32(embedder.embed_query("Welcome to Leather sheath"))
     knn = "SELECT segment_id FROM segment_vectors WHERE embedding MATCH ? AND k = 2 AND channel_id = ?"
-    wright_hits = [r["segment_id"] for r in query(config, knn, (nearest_rex, wright["channels"][0]["id"]))]
+    wright_hits = [r["segment_id"] for r in query(config, knn, (nearest_rex, wright["id"]))]
     assert len(wright_hits) == 2 and set(wright_hits) <= {s["id"] for s in segments[:4]}
-    assert [r["segment_id"] for r in query(config, knn, (nearest_rex, rex["channels"][0]["id"]))] == [
+    assert [r["segment_id"] for r in query(config, knn, (nearest_rex, rex["id"]))] == [
         segments[4]["id"]
     ]
 
@@ -96,8 +96,8 @@ async def test_an_embedding_failure_stops_the_sync_and_the_rerun_embeds_without_
         fake_video("v-one", "One", cues=spoken("one", until=300)),
         fake_video("v-two", "Two"),
     ]
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     embedder.unavailable = "CUDA out of memory"
     [failed] = await sync_all(client, channel_id)
@@ -124,8 +124,8 @@ async def test_rerunning_a_stage_for_a_video_replaces_its_segments_and_vectors(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config, completed: str
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", cues=spoken("one", until=300)))
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
     await sync_all(client, channel_id)
     first_ids = {r["id"] for r in query(config, "SELECT id FROM segments")}
 
@@ -149,23 +149,21 @@ async def test_rerunning_a_stage_for_a_video_replaces_its_segments_and_vectors(
     assert row_counts(config)["segments_fts_docsize"] == 4
 
 
-async def test_deleting_a_channel_or_mentor_removes_its_videos_transcripts_segments_and_vectors(
+async def test_deleting_a_channel_removes_its_videos_transcripts_segments_and_vectors(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-main", "Main", cues=spoken("main", until=200)))
     fake_channel(transcripts, "UC-wright-vlog").videos.append(fake_video("v-vlog", "Vlog"))
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex", cues=spoken("rex", until=150)))
-    wright = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    attached = await client.post(f"/api/mentors/{wright['id']}/channels", json={"channel": "@wrightvlogs"})
-    assert attached.status_code == 201, attached.text
-    vlog = attached.json()
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
-    await sync_all(client, wright["channels"][0]["id"], vlog["id"], rex["channels"][0]["id"])
+    wright = await add_channel(client, "@woodbywright", "Wood By Wright")
+    vlog = await add_channel(client, "@wrightvlogs")
+    rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
+    await sync_all(client, wright["id"], vlog["id"], rex["id"])
     synced = row_counts(config)
 
     detached = await client.delete(f"/api/channels/{vlog['id']}")
     after_detach = row_counts(config)
-    deleted = [await client.delete(f"/api/mentors/{wright['id']}"), await client.delete(f"/api/mentors/{rex['id']}")]
+    deleted = [await client.delete(f"/api/channels/{wright['id']}"), await client.delete(f"/api/channels/{rex['id']}")]
 
     assert synced == {"videos": 3, "transcripts": 3, "segments": 6, "segments_fts_docsize": 6, "segment_vectors": 6}
     assert [r.status_code for r in (detached, *deleted)] == [204, 204, 204]
@@ -202,8 +200,8 @@ async def test_a_video_that_cannot_be_embedded_fails_alone_and_is_retried_on_the
     app = create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         [first] = await sync_all(client, channel_id)
         after_first = (await client.get(f"/api/channels/{channel_id}/videos")).json()
         embedder.broken = False
@@ -237,8 +235,8 @@ async def test_the_embedding_model_can_change_until_vectors_are_stored_then_othe
     async with running(app(FakeEmbedder())):
         pass
     async with running(app(changed)) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        [synced] = await sync_all(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        [synced] = await sync_all(client, channel["id"])
 
     assert synced["status"] == "done"
     refusal = rf"embedded with {changed.model_name} \({changed.dimension} dimensions\)"

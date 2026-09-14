@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorText, type Health, type Mentor, type MentorGroup, type Models, type ModelStatus } from "./api";
+import { api, errorText, type Channel, type Group, type Health, type Models, type ModelStatus } from "./api";
 import { Chat } from "./Chat";
 import { Conversations } from "./Conversations";
 import { useLiveUpdatesStopped, useServerEvents } from "./events";
@@ -52,8 +52,8 @@ function ModelNotice({ models }: { models: Models }) {
 
 export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
-  const [mentors, setMentors] = useState<Mentor[] | null>(null);
-  const [groups, setGroups] = useState<MentorGroup[] | null>(null);
+  const [channels, setChannels] = useState<Channel[] | null>(null);
+  const [groups, setGroups] = useState<Group[] | null>(null);
   // The open chat: a Group's new Conversation, or a saved one (whose Group may be gone), with any prefilled question.
   // `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
   const [chat, setChat] = useState<{
@@ -63,7 +63,7 @@ export function App() {
     opening: number;
   } | null>(null);
   const [conversationsVersion, setConversationsVersion] = useState(0);
-  // Shown with the Group's latest name and Mentors; read-only once the Group is deleted.
+  // Shown with the Group's latest name and Channels; read-only once the Group is deleted.
   const chatGroup = groups?.find((g) => g.id === chat?.groupId) ?? null;
 
   const openings = useRef(0);
@@ -71,7 +71,7 @@ export function App() {
     setChat({ groupId, conversationId, draft, opening: ++openings.current });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  const groupsLoaded = useCallback((loaded: MentorGroup[]) => {
+  const groupsLoaded = useCallback((loaded: Group[]) => {
     setGroups(loaded);
     // A deleted or renamed Group changes how its Conversations are listed.
     setConversationsVersion((v) => v + 1);
@@ -147,14 +147,17 @@ export function App() {
               }}
             />
           )}
-          <Search mentors={mentors} groups={groups} onAsk={(group, draft) => openChat(group.id, null, draft)} />
-          <Mentors onLoaded={setMentors} />
-          <Groups mentors={mentors} onLoaded={groupsLoaded} onAsk={(group) => openChat(group.id, null)} />
+          <Search channels={channels} groups={groups} onAsk={(group, draft) => openChat(group.id, null, draft)} />
+          <Mentors onLoaded={setChannels} />
+          <Groups channels={channels} onLoaded={groupsLoaded} onAsk={(group) => openChat(group.id, null)} />
           <Conversations
             groups={groups}
             version={conversationsVersion}
             openId={chat?.conversationId ?? null}
-            onOpen={(conversation) => openChat(conversation.group_id, conversation.id)}
+            onOpen={(conversation) =>
+              // The v1 shell knows Group chats only; a Channel-scoped one (API-created) opens read-only.
+              openChat(conversation.scope.kind === "group" ? conversation.scope.id : null, conversation.id)
+            }
             onDeleted={(conversationId) =>
               setChat((current) => (current?.conversationId === conversationId ? null : current))
             }

@@ -6,10 +6,10 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, field_validator, model_validator
 
-from mentor import mentors
+from mentor import channels
+from mentor.channels import Channel, ChannelFilters
 from mentor.db import Database
 from mentor.events import Events
-from mentor.mentors import Channel, ChannelFilters, Mentor
 from mentor.ports import ChannelInfo, TranscriptSource
 
 type Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -26,13 +26,10 @@ class ChannelProposal(BaseModel):
     name: str
 
 
-class NewMentor(BaseModel):
-    name: Name
+class NewChannel(BaseModel):
     channel: ChannelInput
-
-
-class MentorRename(BaseModel):
-    name: Name
+    # Defaults to the channel's display name on YouTube.
+    name: Name | None = None
 
 
 class FiltersBody(BaseModel):
@@ -61,11 +58,12 @@ class FiltersBody(BaseModel):
 class ChannelUpdate(BaseModel):
     """Fields left out are unchanged."""
 
+    name: Name | None = None
     indexed: StrictBool | None = None
     filters: FiltersBody | None = None
 
 
-def mentors_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
+def channels_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
     router = APIRouter()
 
     async def resolve(channel: str) -> ChannelInfo:
@@ -76,41 +74,30 @@ def mentors_router(database: Database, transcripts: TranscriptSource, events: Ev
         info = await resolve(body.channel)
         return ChannelProposal(youtube_channel_id=info.channel_id, name=info.name)
 
-    @router.get("/mentors")
-    async def list_mentors() -> list[Mentor]:
-        return await database.run(mentors.list_mentors)
+    @router.get("/channels")
+    async def list_channels() -> list[Channel]:
+        return await database.run(channels.list_channels)
 
-    @router.post("/mentors", status_code=status.HTTP_201_CREATED)
-    async def create_mentor(body: NewMentor) -> Mentor:
+    @router.post("/channels", status_code=status.HTTP_201_CREATED)
+    async def create_channel(body: NewChannel) -> Channel:
         # Resolved again server-side (usually from the proposal's channel id) rather than trusting the client.
         info = await resolve(body.channel)
-        return await database.run(lambda conn: mentors.create_mentor(conn, body.name, info))
-
-    @router.patch("/mentors/{mentor_id}")
-    async def rename_mentor(mentor_id: int, body: MentorRename) -> Mentor:
-        mentor = await database.run(lambda conn: mentors.rename_mentor(conn, mentor_id, body.name))
-        # Syncs show their Mentor's name.
-        events.syncs()
-        return mentor
-
-    @router.delete("/mentors/{mentor_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def delete_mentor(mentor_id: int) -> None:
-        await database.run(lambda conn: mentors.delete_mentor(conn, mentor_id))
-        events.syncs()
-
-    @router.post("/mentors/{mentor_id}/channels", status_code=status.HTTP_201_CREATED)
-    async def attach_channel(mentor_id: int, body: ChannelRef) -> Channel:
-        info = await resolve(body.channel)
-        return await database.run(lambda conn: mentors.attach_channel(conn, mentor_id, info))
+        return await database.run(lambda conn: channels.create_channel(conn, info, body.name))
 
     @router.patch("/channels/{channel_id}")
     async def update_channel(channel_id: int, body: ChannelUpdate) -> Channel:
         filters = None if body.filters is None else ChannelFilters(**body.filters.model_dump())
-        return await database.run(lambda conn: mentors.update_channel(conn, channel_id, body.indexed, filters))
+        channel = await database.run(
+            lambda conn: channels.update_channel(conn, channel_id, body.name, body.indexed, filters)
+        )
+        # Syncs show their Channel's name.
+        if body.name is not None:
+            events.syncs()
+        return channel
 
     @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def detach_channel(channel_id: int) -> None:
-        await database.run(lambda conn: mentors.detach_channel(conn, channel_id))
+    async def delete_channel(channel_id: int) -> None:
+        await database.run(lambda conn: channels.delete_channel(conn, channel_id))
         events.syncs()
 
     return router

@@ -3,7 +3,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, StringConstraints
@@ -14,6 +14,7 @@ from mentor.conversations import Conversation, ConversationDetail, ConversationS
 from mentor.db import Database
 from mentor.errors import Conflict
 from mentor.events_api import SSE_HEADERS
+from mentor.scope import Scope
 
 
 class NewConversation(BaseModel):
@@ -34,12 +35,23 @@ def chat_router(database: Database, chat: Chat, keepalive_seconds: float) -> API
     router = APIRouter()
 
     @router.post("/groups/{group_id}/conversations", status_code=status.HTTP_201_CREATED)
-    async def create_conversation(group_id: int, body: NewConversation) -> Conversation:
-        return await database.run(lambda conn: conversations.create_conversation(conn, group_id, body.model))
+    async def create_group_conversation(group_id: int, body: NewConversation) -> Conversation:
+        scope = Scope("group", group_id)
+        return await database.run(lambda conn: conversations.create_conversation(conn, scope, body.model))
+
+    @router.post("/channels/{channel_id}/conversations", status_code=status.HTTP_201_CREATED)
+    async def create_channel_conversation(channel_id: int, body: NewConversation) -> Conversation:
+        scope = Scope("channel", channel_id)
+        return await database.run(lambda conn: conversations.create_conversation(conn, scope, body.model))
 
     @router.get("/conversations")
-    async def list_conversations(group_id: int | None = None) -> list[ConversationSummary]:
-        return await database.run(lambda conn: conversations.list_conversations(conn, group_id))
+    async def list_conversations(
+        group_id: int | None = None, channel_id: int | None = None
+    ) -> list[ConversationSummary]:
+        """Every Conversation, or a Group's, or a Channel's."""
+        if group_id is not None and channel_id is not None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Filter by group_id or channel_id, not both")
+        return await database.run(lambda conn: conversations.list_conversations(conn, group_id, channel_id))
 
     @router.get("/conversations/{conversation_id}")
     async def get_conversation(conversation_id: int) -> ConversationDetail:

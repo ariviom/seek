@@ -47,9 +47,8 @@ export type Channel = {
   // When the Channel's last Sync finished successfully.
   last_synced_at: string | null;
 };
-export type Mentor = { id: number; name: string; channels: Channel[] };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
-export type MentorGroup = { id: number; name: string; mentors: { id: number; name: string }[] };
+export type Group = { id: number; name: string; channels: { id: number; name: string }[] };
 
 export type Stage = "discovered" | "transcript_fetched" | "segmented" | "embedded" | "done" | "failed" | "excluded";
 export type Video = {
@@ -70,7 +69,6 @@ export type Sync = {
   id: number;
   channel_id: number;
   channel_name: string;
-  mentor_name: string;
   status: "queued" | "running" | "done" | "failed";
   error: string | null;
   queued_at: string;
@@ -83,11 +81,11 @@ export type Sync = {
 };
 
 export type PreferRecent = "off" | "gentle" | "strong";
-// At most one of `group` (a number is an id, a string a name) and `mentors`; neither searches every Mentor.
+// At most one of `group` (a number is an id, a string a name) and `channels`; neither searches every Channel.
 export type SearchRequest = {
   query: string;
   group?: number | string;
-  mentors?: number[];
+  channels?: number[];
   limit?: number;
   prefer_recent?: PreferRecent;
 };
@@ -102,8 +100,8 @@ export type SearchResult = {
   video_title: string;
   published_on: string;
   chapter_title: string | null;
+  channel_id: number;
   channel_name: string;
-  mentor_name: string;
   score: number;
   url: string;
 };
@@ -117,17 +115,18 @@ export type Expansion = {
   youtube_video_id: string;
   video_title: string;
   published_on: string | null;
+  channel_id: number;
   channel_name: string;
-  mentor_name: string;
   url: string;
   cues: { start_seconds: number; text: string }[];
 };
 
 // A null model uses the Claude CLI's default.
+// `scope.id` is null once the Group or Channel is deleted, which leaves the Conversation read-only.
+export type ConversationScope = { kind: "group" | "channel"; id: number | null; name: string };
 export type Conversation = {
   id: number;
-  group_id: number | null;
-  group_name: string;
+  scope: ConversationScope;
   model: string | null;
   created_at: string;
 };
@@ -136,7 +135,7 @@ export type Citation = {
   youtube_video_id: string;
   seconds: number;
   video_title: string;
-  mentor_name: string;
+  channel_id: number | null;
   channel_name: string;
   url: string;
   published_on: string | null;
@@ -149,7 +148,6 @@ export type ChatMessage = {
   citations: Citation[];
   created_at: string;
 };
-// `group_id` is null once the Group is deleted, which leaves the Conversation read-only.
 export type ConversationSummary = Conversation & {
   // The title given to the Conversation, or else its first question, shortened.
   title: string;
@@ -201,27 +199,24 @@ async function request<T>(
 
 export const api = {
   health: () => request<Health>("health"),
-  listMentors: () => request<Mentor[]>("mentors"),
+  listChannels: () => request<Channel[]>("channels"),
   resolveChannel: (channel: string) =>
     request<ChannelProposal>("channels/resolve", { method: "POST", body: { channel } }),
-  createMentor: (name: string, channel: string) =>
-    request<Mentor>("mentors", { method: "POST", body: { name, channel } }),
-  renameMentor: (id: number, name: string) => request<Mentor>(`mentors/${id}`, { method: "PATCH", body: { name } }),
-  deleteMentor: (id: number) => request<void>(`mentors/${id}`, { method: "DELETE" }),
-  attachChannel: (mentorId: number, channel: string) =>
-    request<Channel>(`mentors/${mentorId}/channels`, { method: "POST", body: { channel } }),
+  createChannel: (channel: string, name: string) =>
+    request<Channel>("channels", { method: "POST", body: { channel, name } }),
+  renameChannel: (id: number, name: string) => request<Channel>(`channels/${id}`, { method: "PATCH", body: { name } }),
   setChannelIndexed: (id: number, indexed: boolean) =>
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { indexed } }),
   setChannelFilters: (id: number, filters: ChannelFilters) =>
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { filters } }),
-  detachChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
-  listGroups: () => request<MentorGroup[]>("groups"),
-  createGroup: (name: string) => request<MentorGroup>("groups", { method: "POST", body: { name } }),
+  deleteChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
+  listGroups: () => request<Group[]>("groups"),
+  createGroup: (name: string) => request<Group>("groups", { method: "POST", body: { name } }),
   renameGroup: (id: number, name: string) =>
-    request<MentorGroup>(`groups/${id}`, { method: "PATCH", body: { name } }),
+    request<Group>(`groups/${id}`, { method: "PATCH", body: { name } }),
   deleteGroup: (id: number) => request<void>(`groups/${id}`, { method: "DELETE" }),
-  setGroupMembers: (id: number, mentorIds: number[]) =>
-    request<MentorGroup>(`groups/${id}/members`, { method: "PUT", body: { mentor_ids: mentorIds } }),
+  setGroupMembers: (id: number, channelIds: number[]) =>
+    request<Group>(`groups/${id}/members`, { method: "PUT", body: { channel_ids: channelIds } }),
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   retryVideo: (videoId: number) => request<Sync>(`videos/${videoId}/retry`, { method: "POST" }),

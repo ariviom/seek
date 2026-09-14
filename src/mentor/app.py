@@ -14,6 +14,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from mentor import access, db
+from mentor.channels_api import channels_router
 from mentor.chat import Chat
 from mentor.chat_api import chat_router
 from mentor.config import Config
@@ -22,7 +23,6 @@ from mentor.events import Events
 from mentor.events_api import events_router
 from mentor.groups_api import groups_router
 from mentor.mcp_server import create_mcp_server
-from mentor.mentors_api import mentors_router
 from mentor.proxy import LOOPBACK_HOSTS, ProxyMiddleware
 from mentor.ports import (
     ChannelNotFound,
@@ -198,7 +198,7 @@ def create_app(
             "claude_cli": await chat_engine.status(),
         }
 
-    app.include_router(mentors_router(database, transcripts, events), prefix="/api")
+    app.include_router(channels_router(database, transcripts, events), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(syncs_router(database, events, worker.wake), prefix="/api")
     app.include_router(search_router(search, database), prefix="/api")

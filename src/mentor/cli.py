@@ -84,12 +84,12 @@ def sync(channel: str | None, reindex: bool = False) -> None:
     if report.server_url is not None:
         print(f"Queued on the server at {report.server_url}, where their progress shows:")
         for queued in report.syncs:
-            print(f"  {queued.mentor_name} / {queued.channel_name}")
+            print(f"  {queued.channel_name}")
         return
     print("No server was running, so the Syncs ran here:")
     for finished in report.syncs:
         outcome = f"failed: {finished.error}" if finished.status == "failed" else f"{finished.new_videos} new Videos"
-        print(f"  {finished.mentor_name} / {finished.channel_name}: {outcome}")
+        print(f"  {finished.channel_name}: {outcome}")
     if any(s.status == "failed" for s in report.syncs):
         sys.exit(1)
 
@@ -167,7 +167,7 @@ def main() -> None:
     reindex_target.add_argument("--all", action="store_true", help="every indexed Channel")
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
     commands.add_parser("status", help="the server, models, Claude CLI, and running and queued Syncs")
-    commands.add_parser("list", help="Mentors and their Channels, with Video counts and when each last synced")
+    commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups")
     install_parser = commands.add_parser(
         "install-service", help="run the server as a systemd user service that starts at login"
     )

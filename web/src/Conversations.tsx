@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, errorText, type ConversationSummary, type MentorGroup } from "./api";
+import { api, errorText, type ConversationSummary, type Group } from "./api";
 import {
   alertClass,
   buttonClass,
@@ -21,7 +21,7 @@ export function Conversations({
   onOpen,
   onDeleted,
 }: {
-  groups: MentorGroup[] | null;
+  groups: Group[] | null;
   version: number;
   openId: number | null;
   onOpen: (conversation: ConversationSummary) => void;
@@ -122,8 +122,8 @@ export function Conversations({
                   <p className="truncate text-[15px] text-ink">{conversation.title}</p>
                 )}
                 <p className="text-[13px] text-pencil tabular-nums">
-                  {conversation.group_name}
-                  {conversation.group_id === null && " (deleted, read-only)"} ·{" "}
+                  {conversation.scope.name}
+                  {conversation.scope.id === null && " (deleted, read-only)"} ·{" "}
                   {new Date(conversation.last_message_at ?? conversation.created_at).toLocaleDateString()} ·{" "}
                   {conversation.message_count} {conversation.message_count === 1 ? "message" : "messages"}
                 </p>
@@ -148,7 +148,7 @@ export function Conversations({
                   onClick={() => onOpen(conversation)}
                   disabled={conversation.id === openId}
                 >
-                  {conversation.group_id === null ? "Read" : "Open"}
+                  {conversation.scope.id === null ? "Read" : "Open"}
                 </button>
               </div>
             </li>

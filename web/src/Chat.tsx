@@ -7,7 +7,7 @@ import {
   type Citation,
   type ClaudeCli,
   type ConversationDetail,
-  type MentorGroup,
+  type Group,
 } from "./api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
 import {
@@ -26,7 +26,7 @@ type ToolActivity = {
   name: string;
   arguments: Record<string, unknown>;
   state: "running" | "ok" | "error";
-  // "Mentor · Video title" for each Video a search or expand returned; only known while the answer streams.
+  // "Channel · Video title" for each Video a search or expand returned; only known while the answer streams.
   consulted: string[];
 };
 type Entry =
@@ -78,8 +78,8 @@ function consultedVideos(content: string): string[] {
     } catch {
       continue;
     }
-    if (typeof item === "object" && item !== null && "mentor_name" in item && "video_title" in item) {
-      videos.push(`${String(item.mentor_name)} · ${String(item.video_title)}`);
+    if (typeof item === "object" && item !== null && "channel_name" in item && "video_title" in item) {
+      videos.push(`${String(item.channel_name)} · ${String(item.video_title)}`);
     }
   }
   return videos;
@@ -96,7 +96,7 @@ export function Chat({
   onClose,
   onChanged,
 }: {
-  group: MentorGroup | null;
+  group: Group | null;
   conversationId: number | null;
   claude: ClaudeCli | null;
   draft: string;
@@ -155,8 +155,8 @@ export function Chat({
   const loading = initialId !== null && detail === null && error === null;
   // A Conversation that couldn't be loaded isn't continued blind.
   const loadFailed = initialId !== null && detail === null && error !== null;
-  const groupName = group?.name ?? detail?.group_name ?? lastGroupName.current;
-  const deleted = group === null || detail?.group_id === null;
+  const groupName = group?.name ?? detail?.scope.name ?? lastGroupName.current;
+  const deleted = group === null || detail?.scope.id === null;
 
   // Applies a change to the answer being streamed, the last entry.
   function updateAnswer(change: (answer: Answer) => Answer) {
@@ -278,13 +278,13 @@ export function Chat({
           Close
         </button>
       </div>
-      {group === null || detail?.group_id === null ? (
+      {group === null || detail?.scope.id === null ? (
         <p className={`mt-2 ${hintClass}`}>
           The Mentor Group {groupName} was deleted, so this Conversation can be read but not continued.
         </p>
       ) : (
         <p className={`mt-2 ${hintClass}`}>
-          Answers come only from what {group.mentors.map((m) => m.name).join(", ") || "its Mentors"} said, with links to
+          Answers come only from what {group.channels.map((c) => c.name).join(", ") || "its Channels"} said, with links to
           the moments they said it.
         </p>
       )}
@@ -386,7 +386,8 @@ const toolLabels: Record<string, (args: Record<string, unknown>) => string> = {
   search: (args) => `Searched “${String(args.query ?? "")}”`,
   expand: () => "Read around a search result",
   get_video: (args) => `Looked up Video ${String(args.video_id ?? "")}`,
-  list_groups: () => "Listed the Group’s Mentors",
+  list_groups: () => "Listed the Groups",
+  list_channels: () => "Listed the Channels",
 };
 
 function toolLabel(tool: ToolActivity): string {
@@ -444,7 +445,7 @@ function AnswerView({
                 </a>
                 <span className="text-pencil tabular-nums">
                   {" "}
-                  · {citation.mentor_name}
+                  · {citation.channel_name}
                   {citation.published_on && ` · ${citation.published_on}`} · at {formatDuration(citation.seconds)}
                 </span>
               </li>

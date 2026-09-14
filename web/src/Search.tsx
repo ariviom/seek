@@ -3,8 +3,8 @@ import {
   api,
   errorText,
   type Expansion,
-  type Mentor,
-  type MentorGroup,
+  type Channel,
+  type Group,
   type PreferRecent,
   type SearchResult,
 } from "./api";
@@ -29,18 +29,18 @@ const recencyLabels: Record<PreferRecent, string> = {
 
 type Outcome = { query: string; results: SearchResult[] };
 
-// `mentors` and `groups` are null until their sections have loaded. `onAsk` opens a Group's chat with a question drafted.
+// `channels` and `groups` are null until their sections have loaded. `onAsk` opens a Group's chat with a question drafted.
 export function Search({
-  mentors,
+  channels,
   groups,
   onAsk,
 }: {
-  mentors: Mentor[] | null;
-  groups: MentorGroup[] | null;
-  onAsk: (group: MentorGroup, draft: string) => void;
+  channels: Channel[] | null;
+  groups: Group[] | null;
+  onAsk: (group: Group, draft: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  // "everything", "mentors" (the ticked Mentors), or `group:<id>`.
+  // "everything", "channels" (the ticked Channels), or `group:<id>`.
   const [scope, setScope] = useState("everything");
   const [chosen, setChosen] = useState<number[]>([]);
   const [preferRecent, setPreferRecent] = useState<PreferRecent>("gentle");
@@ -51,11 +51,11 @@ export function Search({
   // One player at a time, in the result it was opened from (by Segment id).
   const player = usePlayer<number>();
 
-  // Ticked Mentors and a chosen Group that have since been deleted are dropped rather than sent.
-  const chosenIds = chosen.filter((id) => mentors?.some((m) => m.id === id));
+  // Ticked Channels and a chosen Group that have since been deleted are dropped rather than sent.
+  const chosenIds = chosen.filter((id) => channels?.some((c) => c.id === id));
   const groupId = scope.startsWith("group:") ? Number(scope.slice("group:".length)) : null;
   const scopeShown = groupId === null || groups?.some((g) => g.id === groupId) ? scope : "everything";
-  const ready = query.trim() !== "" && (scopeShown !== "mentors" || chosenIds.length > 0);
+  const ready = query.trim() !== "" && (scopeShown !== "channels" || chosenIds.length > 0);
 
   async function run(event: FormEvent) {
     event.preventDefault();
@@ -66,7 +66,7 @@ export function Search({
       const results = await api.search({
         query,
         prefer_recent: preferRecent,
-        ...(scopeShown === "mentors" ? { mentors: chosenIds } : {}),
+        ...(scopeShown === "channels" ? { channels: chosenIds } : {}),
         ...(scopeShown === scope && groupId !== null ? { group: groupId } : {}),
       });
       setOutcome({ query: query.trim(), results, groupId: scopeShown === scope ? groupId : null });
@@ -78,17 +78,16 @@ export function Search({
     }
   }
 
-  // The Group searched, else the first Group with the result's Mentor (Mentor names are unique); none hides "Ask about
-  // this".
-  function askGroup(result: SearchResult, searchedGroupId: number | null): MentorGroup | undefined {
+  // The Group searched, else the first Group with the result's Channel; none hides "Ask about this".
+  function askGroup(result: SearchResult, searchedGroupId: number | null): Group | undefined {
     return (
       groups?.find((g) => g.id === searchedGroupId) ??
-      groups?.find((g) => g.mentors.some((m) => m.name === result.mentor_name))
+      groups?.find((g) => g.channels.some((c) => c.id === result.channel_id))
     );
   }
 
-  function toggle(mentorId: number, ticked: boolean) {
-    setChosen((ids) => (ticked ? [...ids, mentorId] : ids.filter((id) => id !== mentorId)));
+  function toggle(channelId: number, ticked: boolean) {
+    setChosen((ids) => (ticked ? [...ids, channelId] : ids.filter((id) => id !== channelId)));
   }
 
   const labelClass = "flex flex-col gap-1 text-sm text-pencil";
@@ -98,7 +97,7 @@ export function Search({
       <h2 id="search-heading" className={sectionHeadingClass}>
         Search
       </h2>
-      <p className={`mt-2 ${hintClass}`}>Ask a question and find the moments your Mentors answered it.</p>
+      <p className={`mt-2 ${hintClass}`}>Ask a question and find the moments your Channels answered it.</p>
       <form onSubmit={run} className="mt-4 space-y-3">
         <div className="flex flex-wrap gap-2">
           <input
@@ -116,7 +115,7 @@ export function Search({
           <label className={labelClass}>
             Ask
             <select className={inputClass} value={scopeShown} onChange={(e) => setScope(e.target.value)}>
-              <option value="everything">Every Mentor</option>
+              <option value="everything">Every Channel</option>
               {groups !== null && groups.length > 0 && (
                 <optgroup label="Mentor Groups">
                   {groups.map((group) => (
@@ -126,7 +125,7 @@ export function Search({
                   ))}
                 </optgroup>
               )}
-              <option value="mentors">Chosen Mentors…</option>
+              <option value="channels">Chosen Channels…</option>
             </select>
           </label>
           <label className={labelClass}>
@@ -144,22 +143,22 @@ export function Search({
             </select>
           </label>
         </div>
-        {scopeShown === "mentors" &&
-          (mentors === null ? (
-            <p className={hintClass}>Loading Mentors…</p>
-          ) : mentors.length === 0 ? (
-            <p className={hintClass}>Add a Mentor below to search just their Videos.</p>
+        {scopeShown === "channels" &&
+          (channels === null ? (
+            <p className={hintClass}>Loading Channels…</p>
+          ) : channels.length === 0 ? (
+            <p className={hintClass}>Add a Channel below to search just its Videos.</p>
           ) : (
-            <ul className="flex flex-wrap gap-2" aria-label="Mentors to search">
-              {mentors.map((mentor) => (
-                <li key={mentor.id}>
+            <ul className="flex flex-wrap gap-2" aria-label="Channels to search">
+              {channels.map((channel) => (
+                <li key={channel.id}>
                   <label className={chipClass}>
                     <input
                       type="checkbox"
-                      checked={chosenIds.includes(mentor.id)}
-                      onChange={(e) => toggle(mentor.id, e.target.checked)}
+                      checked={chosenIds.includes(channel.id)}
+                      onChange={(e) => toggle(channel.id, e.target.checked)}
                     />
-                    {mentor.name}
+                    {channel.name}
                   </label>
                 </li>
               ))}
@@ -205,8 +204,8 @@ function Result({
   playing: { citation: PlayerCitation; opening: number } | null;
   onPlay: (seconds: number) => void;
   onClosePlayer: () => void;
-  askGroup: MentorGroup | undefined;
-  onAsk: (group: MentorGroup, draft: string) => void;
+  askGroup: Group | undefined;
+  onAsk: (group: Group, draft: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<Expansion | null>(null);
@@ -234,8 +233,7 @@ function Result({
     <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] text-pencil">
         <p>
-          <span className="font-medium text-ink">{result.mentor_name}</span>
-          {result.channel_name !== result.mentor_name && ` · ${result.channel_name}`}
+          <span className="font-medium text-ink">{result.channel_name}</span>
         </p>
         <p className="tabular-nums">Published {result.published_on}</p>
       </div>
@@ -272,7 +270,7 @@ function Result({
             onClick={() =>
               onAsk(
                 askGroup,
-                `About what ${result.mentor_name} says in “${result.video_title}” at ${formatDuration(matched)}: `,
+                `About what ${result.channel_name} says in “${result.video_title}” at ${formatDuration(matched)}: `,
               )
             }
           >

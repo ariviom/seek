@@ -8,7 +8,7 @@ import httpx
 import pytest
 from harness import (
     Gate,
-    add_mentor,
+    add_channel,
     fake_channel,
     fake_video,
     fetched,
@@ -58,8 +58,8 @@ async def test_an_interrupted_sync_resumes_only_the_unfinished_videos_when_rerun
         embedder.error = ModelUnavailable("Network unreachable")
 
     async with running(create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         await start_sync(client, channel_id)
         [interrupted] = await wait_for_syncs(client)
         stages_after_interruption = {t: v["stage"] for t, v in (await list_videos(client, channel_id)).items()}
@@ -99,8 +99,8 @@ async def test_a_normal_sync_skips_permanent_failures_and_retry_failed_recovers_
     ]
 
     async with running(create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         await start_sync(client, channel_id)
         await wait_for_syncs(client)
         first = await list_videos(client, channel_id)
@@ -173,8 +173,8 @@ async def test_a_refused_caption_fetch_fails_its_video_alone_and_a_run_of_them_s
         sync_poll_seconds=0.2,
     )
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         await start_sync(client, channel_id)
         stopped, *_ = await wait_for_syncs(client)
         after = await list_videos(client, channel_id)
@@ -225,8 +225,8 @@ async def test_syncs_already_queued_wait_out_the_cooldown_after_a_throttled_sync
         sync_poll_seconds=0.2,
     )
     async with running(app) as client:
-        await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_channel(client, "@rexkrueger", "Rex Krueger")
         response = await client.post("/api/syncs")
         started = time.monotonic()
         while (await client.get("/api/syncs")).json()[-1]["status"] in ("queued", "running"):
@@ -251,8 +251,8 @@ async def test_retry_failed_during_a_sync_also_retries_failures_that_sync_record
     fake_channel(transcripts, "UC-wright").videos.append(
         fake_video("v-members", "Members stream", before_fetch=gate, failure=members_only)
     )
-    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-    channel_id = mentor["channels"][0]["id"]
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
 
     await start_sync(client, channel_id)
     await gate.wait_entered()
@@ -276,8 +276,8 @@ async def test_one_permanently_failed_video_can_be_retried(
         config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle"
     )
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        channel_id = mentor["channels"][0]["id"]
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
         await start_sync(client, channel_id)
         await wait_for_syncs(client)
         failed = (await list_videos(client, channel_id))["Members stream"]

@@ -8,7 +8,7 @@ import httpx
 import pytest
 from harness import (
     Gate,
-    add_mentor,
+    add_channel,
     fake_channel,
     fake_video,
     fetched,
@@ -37,12 +37,12 @@ def fresh_source(transcripts: FakeTranscriptSource, gate: Gate | None = None) ->
     return with_videos(FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels]), gate)
 
 
-async def seed_mentors(config: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> None:
+async def seed_channels(config: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> None:
     """Adds Wright and Rex through a server that then stops."""
     app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
     async with running(app) as client:
-        await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_channel(client, "@rexkrueger", "Rex Krueger")
 
 
 async def test_mentor_sync_hands_the_syncs_to_the_running_server(
@@ -53,8 +53,8 @@ async def test_mentor_sync_hands_the_syncs_to_the_running_server(
     cli_source, cli_embedder = FakeTranscriptSource(), FakeEmbedder()
 
     async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
-        await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_channel(client, "@rexkrueger", "Rex Krueger")
         port = urlsplit(url).port
         assert port is not None
         report = await sync_channels(replace(config, port=port), None, cli_source, cli_embedder)
@@ -76,8 +76,8 @@ async def test_mentor_reindex_hands_reindex_syncs_to_the_running_server(
     app = create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
 
     async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
-        rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
-        await start_sync(client, rex["channels"][0]["id"])
+        rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
+        await start_sync(client, rex["id"])
         await wait_for_syncs(client)
         port = urlsplit(url).port
         assert port is not None
@@ -99,8 +99,8 @@ async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_youtub
     app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
 
     async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
-        await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_channel(client, "@rexkrueger", "Rex Krueger")
         port = urlsplit(url).port
         assert port is not None
         report = await sync_channels(replace(config, port=port), "UC-rex", FakeTranscriptSource(), FakeEmbedder())
@@ -112,10 +112,30 @@ async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_youtub
     assert fetched(transcripts) == ["v-rex"]
 
 
-async def test_mentor_sync_runs_a_channel_itself_when_no_server_answers(
+async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_name(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
-    await seed_mentors(config, transcripts, tmp_path)
+    with_videos(transcripts)
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_channel(client, "@rexkrueger", "Rex Krueger")
+        port = urlsplit(url).port
+        assert port is not None
+        report = await sync_channels(replace(config, port=port), "Rex Krueger", FakeTranscriptSource(), FakeEmbedder())
+        finished = await wait_for_syncs(client)
+
+    assert report.server_url == url
+    assert [(s.channel_name, s.status) for s in report.syncs] == [("Rex Krueger", "queued")]
+    assert [(s["channel_name"], s["status"]) for s in finished] == [("Rex Krueger", "done")]
+    assert fetched(transcripts) == ["v-rex"]
+
+
+async def test_mentor_sync_runs_a_channel_named_by_its_name_itself_when_no_server_answers(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    await seed_channels(config, transcripts, tmp_path)
     cli_source = fresh_source(transcripts)
 
     report = await sync_channels(replace(config, port=free_port()), "rex krueger", cli_source, FakeEmbedder())
@@ -125,10 +145,23 @@ async def test_mentor_sync_runs_a_channel_itself_when_no_server_answers(
     assert fetched(cli_source) == ["v-rex"]
 
 
+async def test_mentor_sync_runs_a_channel_named_by_its_youtube_channel_id_itself_when_no_server_answers(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    await seed_channels(config, transcripts, tmp_path)
+    cli_source = fresh_source(transcripts)
+
+    report = await sync_channels(replace(config, port=free_port()), "UC-rex", cli_source, FakeEmbedder())
+
+    assert report.server_url is None
+    assert [(s.channel_name, s.status, s.new_videos) for s in report.syncs] == [("Rex Krueger", "done", 1)]
+    assert fetched(cli_source) == ["v-rex"]
+
+
 async def test_an_unknown_channel_is_reported_rather_than_synced(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
-    await seed_mentors(config, transcripts, tmp_path)
+    await seed_channels(config, transcripts, tmp_path)
 
     with pytest.raises(SyncCommandError, match="No Channel named 'Paul Sellers'"):
         await sync_channels(replace(config, port=free_port()), "Paul Sellers", transcripts, FakeEmbedder())
@@ -137,7 +170,7 @@ async def test_an_unknown_channel_is_reported_rather_than_synced(
 async def test_mentor_sync_and_a_server_starting_meanwhile_never_both_run_syncs(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
-    await seed_mentors(config, transcripts, tmp_path)
+    await seed_channels(config, transcripts, tmp_path)
     gate = Gate()
     cli_source = fresh_source(transcripts, gate)
     server_source = fresh_source(transcripts)
@@ -167,7 +200,7 @@ async def test_mentor_sync_and_a_server_starting_meanwhile_never_both_run_syncs(
 async def test_a_second_mentor_sync_waits_for_its_own_channel_while_the_first_runs_the_queue(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
-    await seed_mentors(config, transcripts, tmp_path)
+    await seed_channels(config, transcripts, tmp_path)
     first_gate, later_gate = Gate(), Gate()
     first_source = fresh_source(transcripts, first_gate)
     second_source = fresh_source(transcripts)
@@ -196,3 +229,15 @@ async def test_a_second_mentor_sync_waits_for_its_own_channel_while_the_first_ru
     assert second_report.syncs[0].id == first_report.syncs[1].id
     assert second_source.calls == []
     assert fetched(first_source) == ["v-wright", "v-rex", "v-wright-2"]
+
+
+async def test_mentor_sync_asks_for_a_youtube_channel_id_when_two_channels_share_the_name(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    async with running(app) as client:
+        await add_channel(client, "@woodbywright", "Wright")
+        await add_channel(client, "@wrightvlogs", "Wright")
+
+    with pytest.raises(SyncCommandError, match="More than one Channel is named 'wright'.*UC-wright, UC-wright-vlog"):
+        await sync_channels(replace(config, port=free_port()), "wright", fresh_source(transcripts), FakeEmbedder())

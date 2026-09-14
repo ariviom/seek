@@ -13,6 +13,7 @@ from harness import (
     running,
     said,
     send,
+    start_channel_conversation,
     start_conversation,
     stored_messages,
     stream_events,
@@ -35,7 +36,7 @@ async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resu
         TextDelta("Let me look."),
         ToolCall("call-1", "search", {"query": "tear-out"}),
         ToolResult("call-1", "[]", is_error=False),
-        TextDelta("Your Mentors don't cover tear-out."),
+        TextDelta("Your Channels don't cover tear-out."),
         ChatDone("session-1"),
     ]
     conversation = await new_group_conversation(client, model="claude-sonnet-5")
@@ -50,19 +51,19 @@ async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resu
         {"type": "text", "text": "Let me look."},
         {"type": "tool_call", "call_id": "call-1", "name": "search", "arguments": {"query": "tear-out"}},
         {"type": "tool_result", "call_id": "call-1", "content": "[]", "is_error": False},
-        {"type": "text", "text": "\n\nYour Mentors don't cover tear-out."},
+        {"type": "text", "text": "\n\nYour Channels don't cover tear-out."},
     ]
     assert done_message(first) | {"id": 0, "created_at": ""} == {
         "id": 0,
         "role": "assistant",
-        "content": "Let me look.\n\nYour Mentors don't cover tear-out.",
+        "content": "Let me look.\n\nYour Channels don't cover tear-out.",
         "tool_calls": [{"name": "search", "arguments": {"query": "tear-out"}, "is_error": False}],
         "citations": [],
         "created_at": "",
     }
     assert stored_messages(config, conversation["id"])[:2] == [
         ("user", "How do I stop tear-out?"),
-        ("assistant", "Let me look.\n\nYour Mentors don't cover tear-out."),
+        ("assistant", "Let me look.\n\nYour Channels don't cover tear-out."),
     ]
     assert [(r.message, r.model, r.resume_session_id) for r in engine.requests] == [
         ("How do I stop tear-out?", "claude-sonnet-5", None),
@@ -88,11 +89,11 @@ async def test_the_question_is_saved_before_the_answer_streams(
     assert saved_when_asked == [[("user", "Which saw for dovetails?")]]
 
 
-async def test_the_model_gets_only_mentor_tools_bound_to_the_conversations_group(
+async def test_the_model_gets_only_mentor_tools_bound_to_the_conversations_group_of_channels(
     client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource
 ) -> None:
     group, _, rex = await woodworkers(client, transcripts)
-    [rex_result] = (await client.post("/api/search", json={"query": "sharpen", "mentors": [rex["id"]]})).json()
+    [rex_result] = (await client.post("/api/search", json={"query": "sharpen", "channels": [rex["id"]]})).json()
     conversation = await start_conversation(client, group["id"])
     seen: Json = {}
 
@@ -101,18 +102,21 @@ async def test_the_model_gets_only_mentor_tools_bound_to_the_conversations_group
             tools = {tool.name: tool for tool in (await mcp.list_tools()).tools}
             found = await mcp.call_tool("search", {"query": "sharpen the blade on a stone"})
             # Scope arguments the public MCP server takes do nothing here.
-            widened = await mcp.call_tool("search", {"query": "sharpen", "mentors": [rex["id"]]})
+            widened = await mcp.call_tool("search", {"query": "sharpen", "channels": [rex["id"]]})
             expanded = await mcp.call_tool("expand", {"segment_id": rex_result["segment_id"]})
             video = await mcp.call_tool("get_video", {"video_id": rex_result["video_id"]})
             listed = await mcp.call_tool("list_groups", {})
+            channels = await mcp.call_tool("list_channels", {})
         assert found.structured_content and widened.structured_content and listed.structured_content
+        assert channels.structured_content
         seen.update(
             tools=sorted(tools),
             search_arguments=sorted(tools["search"].input_schema["properties"]),
-            found=[r["mentor_name"] for r in found.structured_content["result"]],
-            widened=[r["mentor_name"] for r in widened.structured_content["result"]],
+            found=[r["channel_name"] for r in found.structured_content["result"]],
+            widened=[r["channel_name"] for r in widened.structured_content["result"]],
             refused=[expanded.is_error, video.is_error],
             listed=[g["name"] for g in listed.structured_content["result"]],
+            channels=[c["name"] for c in channels.structured_content["result"]],
         )
         yield ChatDone("session-1")
 
@@ -122,23 +126,73 @@ async def test_the_model_gets_only_mentor_tools_bound_to_the_conversations_group
 
     assert response.status_code == 200, response.text
     assert seen == {
-        "tools": ["expand", "get_video", "list_groups", "search"],
+        "tools": ["expand", "get_video", "list_channels", "list_groups", "search"],
         "search_arguments": ["limit", "prefer_recent", "query"],
         "found": ["Paul Wright"],
         "widened": ["Paul Wright"],
         "refused": [True, True],
         "listed": ["Woodworking"],
+        "channels": ["Paul Wright"],
     }
     [request] = engine.requests
-    assert sorted(request.tool_names) == ["expand", "get_video", "list_groups", "search"]
+    assert sorted(request.tool_names) == ["expand", "get_video", "list_channels", "list_groups", "search"]
     assert GROUNDED_ADVISOR in request.system_prompt
-    assert "'Woodworking'" in request.system_prompt and "Paul Wright" in request.system_prompt
+    assert "the Group 'Woodworking'" in request.system_prompt and "Paul Wright" in request.system_prompt
+
+
+async def test_a_chat_with_one_channel_sees_only_that_channel(
+    client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    _, wright, rex = await woodworkers(client, transcripts)
+    [rex_result] = (await client.post("/api/search", json={"query": "sharpen", "channels": [rex["id"]]})).json()
+    [wright_result] = (await client.post("/api/search", json={"query": "sharpen", "channels": [wright["id"]]})).json()
+    conversation = await start_channel_conversation(client, wright["id"])
+    seen: Json = {}
+
+    async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        async with Client(request.tools) as mcp:
+            tools = {tool.name: tool for tool in (await mcp.list_tools()).tools}
+            found = await mcp.call_tool("search", {"query": "sharpen the blade on a stone"})
+            own = await mcp.call_tool("expand", {"segment_id": wright_result["segment_id"]})
+            expanded = await mcp.call_tool("expand", {"segment_id": rex_result["segment_id"]})
+            video = await mcp.call_tool("get_video", {"video_id": rex_result["video_id"]})
+            channels = await mcp.call_tool("list_channels", {})
+        assert found.structured_content and own.structured_content and channels.structured_content
+        seen.update(
+            tools=sorted(tools),
+            found=[r["channel_name"] for r in found.structured_content["result"]],
+            own=own.structured_content["channel_name"],
+            refused=[expanded.is_error, video.is_error],
+            channels=[c["name"] for c in channels.structured_content["result"]],
+        )
+        yield TextDelta("Fine: https://www.youtube.com/watch?v=v-wright&t=5s, coarse: youtu.be/v-rex?t=5")
+        yield ChatDone("session-1")
+
+    engine.respond = respond
+
+    response = await send(client, conversation["id"], "How do I sharpen?")
+
+    assert response.status_code == 200, response.text
+    assert seen == {
+        "tools": ["expand", "get_video", "list_channels", "search"],
+        "found": ["Paul Wright"],
+        "own": "Paul Wright",
+        "refused": [True, True],
+        "channels": ["Paul Wright"],
+    }
+    # Only the Channel's own Video is a Citation.
+    assert [(c["youtube_video_id"], c["channel_id"]) for c in done_message(response)["citations"]] == [
+        ("v-wright", wright["id"])
+    ]
+    [request] = engine.requests
+    assert sorted(request.tool_names) == ["expand", "get_video", "list_channels", "search"]
+    assert "the Channel 'Paul Wright'" in request.system_prompt and "Group" not in request.system_prompt
 
 
 async def test_links_to_the_groups_videos_are_saved_as_citations_with_their_names(
     client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource, config: Config
 ) -> None:
-    group, _, _ = await woodworkers(client, transcripts)
+    group, wright, _ = await woodworkers(client, transcripts)
     conversation = await start_conversation(client, group["id"])
     [wright_video] = query(config, "SELECT id FROM videos WHERE youtube_video_id = 'v-wright'")
     engine.script = [
@@ -160,10 +214,10 @@ async def test_links_to_the_groups_videos_are_saved_as_citations_with_their_name
             "youtube_video_id": "v-wright",
             "seconds": seconds,
             "video_title": "Sharpening chisels",
-            "mentor_name": "Paul Wright",
-            "channel_name": "Wood By Wright",
+            "channel_name": "Paul Wright",
             "url": f"https://www.youtube.com/watch?v=v-wright&t={seconds}s",
             "published_on": "2025-03-01",
+            "channel_id": wright["id"],
         }
 
     assert done_message(first)["citations"] == [citation(5), citation(65)]
@@ -184,7 +238,7 @@ def test_citation_links_are_read_from_any_common_youtube_link_form() -> None:
 
 async def test_one_turn_runs_per_conversation_at_a_time(client: httpx.AsyncClient, engine: FakeChatEngine) -> None:
     busy = await new_group_conversation(client)
-    other = await start_conversation(client, busy["group_id"])
+    other = await start_conversation(client, busy["scope"]["id"])
     release = asyncio.Event()
 
     async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
@@ -265,7 +319,7 @@ async def test_a_quiet_answer_keeps_its_stream_alive(
 
 async def test_invalid_conversations_and_messages_are_rejected(client: httpx.AsyncClient) -> None:
     conversation = await new_group_conversation(client)
-    group_id = conversation["group_id"]
+    group_id = conversation["scope"]["id"]
 
     assert (await client.post("/api/groups/999/conversations", json={"model": None})).status_code == 404
     for model in ("x; rm", "--settings", ""):
@@ -278,5 +332,5 @@ async def test_invalid_conversations_and_messages_are_rejected(client: httpx.Asy
     orphaned = await send(client, conversation["id"], "Hello")
     assert (orphaned.status_code, orphaned.json()) == (
         409,
-        {"detail": "The Mentor Group 'Joinery' was deleted, so this Conversation is read-only"},
+        {"detail": "The Group 'Joinery' was deleted, so this Conversation is read-only"},
     )

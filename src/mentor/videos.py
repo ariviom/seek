@@ -9,7 +9,7 @@ from typing import Literal
 
 from mentor.db import now_iso, transaction
 from mentor.errors import NotFound
-from mentor.mentors import ChannelFilters
+from mentor.channels import ChannelFilters
 from mentor.ports import Chapter, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 type PipelineStage = Literal["discovered", "transcript_fetched", "segmented", "embedded", "done"]

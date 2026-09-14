@@ -9,10 +9,10 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-from mentor import mentors, videos
+from mentor import channels, videos
+from mentor.channels import ChannelFilters
 from mentor.db import now_iso, transaction
 from mentor.errors import NotFound
-from mentor.mentors import ChannelFilters
 
 type SyncStatus = Literal["queued", "running", "done", "failed"]
 
@@ -22,7 +22,6 @@ class Sync:
     id: int
     channel_id: int
     channel_name: str
-    mentor_name: str
     status: SyncStatus
     error: str | None
     queued_at: str
@@ -48,10 +47,9 @@ class ClaimedSync:
 def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) -> list[Sync]:
     rows = conn.execute(
         f"""
-        SELECT syncs.*, channels.name AS channel_name, mentors.name AS mentor_name
+        SELECT syncs.*, channels.name AS channel_name
         FROM syncs
         JOIN channels ON channels.id = syncs.channel_id
-        JOIN mentors ON mentors.id = channels.mentor_id
         {where}
         """,
         params,
@@ -61,7 +59,6 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
             id=row["id"],
             channel_id=row["channel_id"],
             channel_name=row["channel_name"],
-            mentor_name=row["mentor_name"],
             status=row["status"],
             error=row["error"],
             queued_at=row["queued_at"],
@@ -232,7 +229,7 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
             youtube_channel_id=row["youtube_channel_id"],
             retry_failed=bool(row["retry_failed"]),
             reindex=bool(row["reindex"]),
-            filters=mentors.read_filters(row),
+            filters=channels.read_filters(row),
         )
 
 

@@ -9,10 +9,94 @@ import sqlite_vec
 
 BUSY_TIMEOUT_MS = 5000
 
+
+def _channels_not_mentors(conn: sqlite3.Connection) -> None:
+    """Schema 9: a Channel is the unit and a Group is a set of Channels (ADR 0003).
+
+    A rebuild done the way SQLite documents: new tables are filled from the old, the old are dropped, and the new
+    take their names. The tables that stay (videos, syncs, messages) reference channels and conversations by name,
+    so renaming the new table, never the old, makes their references resolve again. Foreign keys are off meanwhile
+    (see migrate), so dropping the old parents deletes nothing.
+    """
+    conn.executescript(
+        """
+        -- AUTOINCREMENT is new for channels: a queued Sync holds a Channel id, and a removed Channel's id must
+        -- not be reused by a newly added one before the queue is reconciled.
+        CREATE TABLE channels_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            youtube_channel_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            indexed INTEGER NOT NULL DEFAULT 1 CHECK (indexed IN (0, 1)),
+            published_after TEXT,
+            published_before TEXT,
+            playlist_id TEXT,
+            most_recent INTEGER CHECK (most_recent > 0)
+        );
+        CREATE TABLE groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE
+        );
+        CREATE TABLE group_channels (
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            PRIMARY KEY (group_id, channel_id)
+        ) WITHOUT ROWID;
+        -- A Conversation consults one Group or one Channel: exactly one id is set at creation (checked in the store,
+        -- since either may later be cleared by the deletion) and scope_kind says which, so a read-only Conversation
+        -- still says what it consulted. scope_name keeps the name it last had.
+        CREATE TABLE conversations_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+            channel_id INTEGER REFERENCES channels(id) ON DELETE SET NULL,
+            scope_kind TEXT NOT NULL CHECK (scope_kind IN ('group', 'channel')),
+            scope_name TEXT NOT NULL,
+            -- The Claude model; NULL uses the Claude CLI's default.
+            model TEXT,
+            claude_session_id TEXT,
+            created_at TEXT NOT NULL,
+            title TEXT
+        );
+        INSERT INTO channels_new (id, youtube_channel_id, name, indexed, published_after, published_before,
+                                  playlist_id, most_recent)
+            SELECT id, youtube_channel_id, name, indexed, published_after, published_before, playlist_id, most_recent
+            FROM channels;
+        INSERT INTO groups (id, name) SELECT id, name FROM mentor_groups;
+        -- Each of a Mentor's Channels joins the Mentor's Groups.
+        INSERT INTO group_channels (group_id, channel_id)
+            SELECT members.group_id, channels.id
+            FROM mentor_group_members AS members JOIN channels ON channels.mentor_id = members.mentor_id;
+        INSERT INTO conversations_new (id, group_id, channel_id, scope_kind, scope_name, model, claude_session_id,
+                                       created_at, title)
+            SELECT id, group_id, NULL, 'group', group_name, model, claude_session_id, created_at, title
+            FROM conversations;
+        -- Saved Citations name their Channel by id now, not their Mentor; a Video since removed leaves it null.
+        UPDATE messages SET citations = (
+            SELECT json_group_array(json(json_set(
+                json_remove(value, '$.mentor_name'),
+                '$.channel_id', (SELECT channel_id FROM videos WHERE videos.id = json_extract(value, '$.video_id'))
+            )))
+            FROM json_each(messages.citations)
+        ) WHERE citations != '[]';
+        DROP TABLE conversations;
+        DROP TABLE channels;
+        DROP TABLE mentor_group_members;
+        DROP TABLE mentor_groups;
+        DROP TABLE mentors;
+        ALTER TABLE channels_new RENAME TO channels;
+        ALTER TABLE conversations_new RENAME TO conversations;
+        CREATE INDEX group_channels_channel_id ON group_channels(channel_id);
+        CREATE INDEX conversations_group_id ON conversations(group_id);
+        CREATE INDEX conversations_channel_id ON conversations(channel_id);
+        """
+    )
+
+
 # Applied in order; PRAGMA user_version records how many have run. Never edit a shipped entry.
-# Migrations run with foreign keys ON inside a transaction, where they cannot be switched off:
-# keep them additive, because DROP TABLE on a parent would cascade-delete its children.
-MIGRATIONS = [
+# A string entry runs with foreign keys ON inside a transaction, where they cannot be switched off: keep those
+# additive, because DROP TABLE on a parent would cascade-delete its children. A callable entry is a rebuild that
+# runs with foreign keys OFF and is checked with foreign_key_check before it commits. Each entry commits on its
+# own, so a failing one leaves those before it applied.
+MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     """
     CREATE TABLE mentors (
         id INTEGER PRIMARY KEY,
@@ -185,6 +269,7 @@ MIGRATIONS = [
     -- A title the user gave the Conversation; NULL shows its first question.
     ALTER TABLE conversations ADD COLUMN title TEXT;
     """,
+    _channels_not_mentors,
 ]
 
 
@@ -223,19 +308,44 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     conn.execute("COMMIT")
 
 
+def _applied(conn: sqlite3.Connection) -> int:
+    applied: int = conn.execute("PRAGMA user_version").fetchone()[0]
+    if applied > len(MIGRATIONS):
+        raise RuntimeError(
+            f"The knowledge base was created by a newer mentor (schema {applied}, this build knows "
+            f"{len(MIGRATIONS)}); upgrade mentor"
+        )
+    return applied
+
+
 def migrate(conn: sqlite3.Connection) -> None:
-    # The version is read under the write lock so two processes starting together don't both apply.
-    with transaction(conn):
-        applied = conn.execute("PRAGMA user_version").fetchone()[0]
-        if applied > len(MIGRATIONS):
-            raise RuntimeError(
-                f"The knowledge base was created by a newer mentor (schema {applied}, this build knows "
-                f"{len(MIGRATIONS)}); upgrade mentor"
-            )
-        for number, script in enumerate(MIGRATIONS[applied:], start=applied + 1):
-            # executescript handles multi-statement bodies such as triggers; in autocommit mode
-            # it does not commit the surrounding transaction.
-            conn.executescript(f"{script}; PRAGMA user_version = {number};")
+    """Applies the migrations not yet run, each in a transaction of its own."""
+    while True:
+        # The version is read under the write lock so two processes starting together don't both apply.
+        with transaction(conn):
+            applied = _applied(conn)
+            if applied == len(MIGRATIONS):
+                return
+            step = MIGRATIONS[applied]
+            if isinstance(step, str):
+                # executescript handles multi-statement bodies such as triggers; in autocommit mode
+                # it does not commit the surrounding transaction.
+                conn.executescript(f"{step}; PRAGMA user_version = {applied + 1};")
+                continue
+        # A rebuild: foreign keys can only be switched off outside a transaction, and checked before the commit.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            with transaction(conn):
+                if _applied(conn) == applied:
+                    step(conn)
+                    if orphans := conn.execute("PRAGMA foreign_key_check").fetchall():
+                        raise RuntimeError(
+                            f"Migration {applied + 1} left {len(orphans)} rows with missing parents; nothing was "
+                            "changed"
+                        )
+                    conn.execute(f"PRAGMA user_version = {applied + 1}")
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 def ensure_embedding_model(conn: sqlite3.Connection, model_name: str, dimension: int) -> None:

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from harness import Gate, add_mentor, event_stream, fake_channel, fake_video, running, start_sync, wait_for_syncs
+from harness import Gate, add_channel, event_stream, fake_channel, fake_video, running, start_sync, wait_for_syncs
 
 from mentor.app import create_app
 from mentor.config import Config
@@ -60,8 +60,8 @@ async def test_search_answers_models_loading_and_syncs_wait_until_the_embedding_
 
     async with running(app) as client:
         await gate.wait_entered()
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
         search = await client.post("/api/search", json={"query": "welcome"})
         with pytest.raises(TimeoutError):
             await wait_for_syncs(client, timeout=0.2)
@@ -83,8 +83,8 @@ async def test_an_embedding_model_that_fails_to_load_fails_syncs_before_any_yout
     app = create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
         [failed] = await wait_for_syncs(client)
         health = (await client.get("/api/health")).json()["models"]["embedding"]
         search = await client.post("/api/search", json={"query": "welcome"})
@@ -103,8 +103,8 @@ async def test_a_reranking_model_that_fails_to_load_stops_search_but_not_syncs(
     app = create_app(config, transcripts, FakeEmbedder(), reranker, FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
         [synced] = await wait_for_syncs(client)
         search = await client.post("/api/search", json={"query": "welcome"})
 

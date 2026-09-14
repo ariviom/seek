@@ -183,11 +183,12 @@ def fake_channel(transcripts: FakeTranscriptSource, youtube_channel_id: str) -> 
     return channel
 
 
-async def add_mentor(client: httpx.AsyncClient, name: str, channel: str) -> Json:
-    response = await client.post("/api/mentors", json={"name": name, "channel": channel})
+async def add_channel(client: httpx.AsyncClient, channel: str, name: str | None = None) -> Json:
+    """Adds the Channel by URL, handle, or id, under the given name or else its display name."""
+    response = await client.post("/api/channels", json={"channel": channel, "name": name})
     assert response.status_code == 201, response.text
-    mentor: Json = response.json()
-    return mentor
+    added: Json = response.json()
+    return added
 
 
 def fake_video(
@@ -244,11 +245,10 @@ def said(*lines: str, every: float = 5.0) -> list[Cue]:
     return [Cue(start=i * every, end=(i + 1) * every, text=line) for i, line in enumerate(lines)]
 
 
-async def sync(client: httpx.AsyncClient, *mentors: Json) -> None:
-    """Syncs every Channel of the Mentors and checks each Sync finished."""
-    for mentor in mentors:
-        for channel in mentor["channels"]:
-            await start_sync(client, channel["id"])
+async def sync(client: httpx.AsyncClient, *channels: Json) -> None:
+    """Syncs the Channels and checks each Sync finished."""
+    for channel in channels:
+        await start_sync(client, channel["id"])
     assert all(s["status"] == "done" for s in await wait_for_syncs(client))
 
 
@@ -300,19 +300,31 @@ def stream_events(response: httpx.Response) -> list[Json]:
     return [json.loads(frame.removeprefix("data: ")) for frame in frames if frame.startswith("data: ")]
 
 
+async def add_group(client: httpx.AsyncClient, name: str, *channels: Json) -> Json:
+    """A Group of the Channels; returned as listed with its members."""
+    response = await client.post("/api/groups", json={"name": name})
+    assert response.status_code == 201, response.text
+    group: Json = response.json()
+    if channels:
+        members = {"channel_ids": [c["id"] for c in channels]}
+        response = await client.put(f"/api/groups/{group['id']}/members", json=members)
+        assert response.status_code == 200, response.text
+        group = response.json()
+    return group
+
+
 async def woodworkers(client: httpx.AsyncClient, transcripts: FakeTranscriptSource) -> tuple[Json, Json, Json]:
-    """Paul Wright in a Woodworking Group, and Rex Krueger outside it; both synced and saying something."""
+    """The Channel Paul Wright in a Woodworking Group, and Rex Krueger outside it; both synced and saying something."""
     fake_channel(transcripts, "UC-wright").videos.append(
         fake_video("v-wright", "Sharpening chisels", cues=said("Sharpen the chisel on a fine stone"))
     )
     fake_channel(transcripts, "UC-rex").videos.append(
         fake_video("v-rex", "Sharpening knives", cues=said("Sharpen the knife on a coarse stone"))
     )
-    wright = await add_mentor(client, "Paul Wright", "@woodbywright")
-    rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    rex = await add_channel(client, "@rexkrueger")
     await sync(client, wright, rex)
-    group = (await client.post("/api/groups", json={"name": "Woodworking"})).json()
-    await client.put(f"/api/groups/{group['id']}/members", json={"mentor_ids": [wright["id"]]})
+    group = await add_group(client, "Woodworking", wright)
     return group, wright, rex
 
 
@@ -323,8 +335,16 @@ async def start_conversation(client: httpx.AsyncClient, group_id: int, model: st
     return conversation
 
 
+async def start_channel_conversation(client: httpx.AsyncClient, channel_id: int, model: str | None = None) -> Json:
+    response = await client.post(f"/api/channels/{channel_id}/conversations", json={"model": model})
+    assert response.status_code == 201, response.text
+    conversation: Json = response.json()
+    return conversation
+
+
 async def new_group_conversation(client: httpx.AsyncClient, model: str | None = None) -> Json:
-    group = (await client.post("/api/groups", json={"name": "Woodworking"})).json()
+    """A Conversation with a new Woodworking Group of one Channel."""
+    group = await add_group(client, "Woodworking", await add_channel(client, "@woodbywright"))
     return await start_conversation(client, group["id"], model)
 
 

@@ -4,9 +4,12 @@ from collections.abc import AsyncIterator
 import httpx
 from harness import (
     Json,
+    add_channel,
+    add_group,
     done_message,
     new_group_conversation,
     send,
+    start_channel_conversation,
     start_conversation,
     stream_events,
     woodworkers,
@@ -30,73 +33,144 @@ async def list_conversations(client: httpx.AsyncClient, **params: int) -> list[J
     return listed
 
 
-async def test_conversations_are_listed_newest_first_and_reopen_with_their_messages(
+async def test_conversations_are_listed_newest_first_by_scope_and_reopen_with_their_messages(
     client: httpx.AsyncClient, engine: FakeChatEngine
 ) -> None:
-    woodworking = (await client.post("/api/groups", json={"name": "Woodworking"})).json()
-    leather = (await client.post("/api/groups", json={"name": "Leatherwork"})).json()
+    wright = await add_channel(client, "@woodbywright")
+    rex = await add_channel(client, "@rexkrueger")
+    woodworking = await add_group(client, "Woodworking", wright)
+    leather = await add_group(client, "Leatherwork", rex)
     older = await start_conversation(client, woodworking["id"], model="opus")
     newer = await start_conversation(client, leather["id"])
+    with_rex = await start_channel_conversation(client, rex["id"])
     unused = await start_conversation(client, woodworking["id"])
     await send(client, older["id"], "How do I   flatten a workbench top that has cupped badly over the winter in my damp garage?")
     await send(client, newer["id"], "Which thread for a sheath?")
+    await send(client, with_rex["id"], "Which awl?")
     engine.script = [TextDelta("Hand plane it."), ChatDone("session-1")]
     await send(client, older["id"], "With what?")
 
     everything = await list_conversations(client)
     in_woodworking = await list_conversations(client, group_id=woodworking["id"])
+    with_rex_only = await list_conversations(client, channel_id=rex["id"])
+    both = await client.get("/api/conversations", params={"group_id": woodworking["id"], "channel_id": rex["id"]})
     reopened = await get_conversation(client, older["id"])
 
     # The most recently active first; a Conversation with no messages yet last.
     assert [(c["id"], c["title"], c["message_count"]) for c in everything] == [
         (older["id"], "How do I flatten a workbench top that has cupped badly over the winter in my da…", 4),
+        (with_rex["id"], "Which awl?", 2),
         (newer["id"], "Which thread for a sheath?", 2),
         (unused["id"], "New Conversation", 0),
     ]
     assert [c["id"] for c in in_woodworking] == [older["id"], unused["id"]]
+    assert [c["id"] for c in with_rex_only] == [with_rex["id"]]
+    assert both.status_code == 422
     assert everything[0] | {"created_at": "", "last_message_at": ""} == {
         "id": older["id"],
-        "group_id": woodworking["id"],
-        "group_name": "Woodworking",
+        "scope": {"kind": "group", "id": woodworking["id"], "name": "Woodworking"},
         "model": "opus",
         "created_at": "",
         "title": "How do I flatten a workbench top that has cupped badly over the winter in my da…",
         "message_count": 4,
         "last_message_at": "",
     }
+    assert everything[1]["scope"] == {"kind": "channel", "id": rex["id"], "name": "Rex Krueger"}
     assert [(m["role"], m["content"]) for m in reopened["messages"]] == [
         ("user", "How do I   flatten a workbench top that has cupped badly over the winter in my damp garage?"),
         ("assistant", "Nothing to say."),
         ("user", "With what?"),
         ("assistant", "Hand plane it."),
     ]
-    assert (reopened["group_name"], reopened["model"]) == ("Woodworking", "opus")
+    assert (reopened["scope"], reopened["model"]) == (
+        {"kind": "group", "id": woodworking["id"], "name": "Woodworking"},
+        "opus",
+    )
     assert (await client.get("/api/conversations/999")).status_code == 404
 
 
-async def test_conversations_and_their_citations_outlive_their_mentors_and_group_as_read_only(
+async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_with_channels(
+    client: httpx.AsyncClient,
+) -> None:
+    wright = await add_channel(client, "@woodbywright")
+    vlog = await add_channel(client, "@wrightvlogs")
+    await client.patch(f"/api/channels/{vlog['id']}", json={"indexed": False})
+    empty = await add_group(client, "Empty")
+
+    started = await start_channel_conversation(client, wright["id"], model="haiku")
+    not_indexed = await client.post(f"/api/channels/{vlog['id']}/conversations", json={"model": None})
+    empty_group = await client.post(f"/api/groups/{empty['id']}/conversations", json={"model": None})
+    unknown = await client.post("/api/channels/999/conversations", json={"model": None})
+
+    assert started | {"created_at": ""} == {
+        "id": started["id"],
+        "scope": {"kind": "channel", "id": wright["id"], "name": "Wood By Wright"},
+        "model": "haiku",
+        "created_at": "",
+    }
+    assert (not_indexed.status_code, not_indexed.json()) == (
+        409,
+        {"detail": "The Channel 'Wright Vlogs' is not indexed, so it can't answer"},
+    )
+    assert (empty_group.status_code, empty_group.json()) == (
+        409,
+        {"detail": "The Group 'Empty' has no Channels yet, so nothing can answer"},
+    )
+    assert unknown.status_code == 404
+
+
+async def test_conversations_and_their_citations_outlive_their_channel_and_group_as_read_only(
     client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource
 ) -> None:
     group, wright, _ = await woodworkers(client, transcripts)
-    conversation = await start_conversation(client, group["id"])
+    with_group = await start_conversation(client, group["id"])
+    with_channel = await start_channel_conversation(client, wright["id"])
     engine.script = [TextDelta("Hone it: https://www.youtube.com/watch?v=v-wright&t=5s"), ChatDone("session-1")]
-    [cited] = done_message(await send(client, conversation["id"], "How fine a stone?"))["citations"]
+    [cited] = done_message(await send(client, with_group["id"], "How fine a stone?"))["citations"]
+    engine.script = [TextDelta("Hone it: https://www.youtube.com/watch?v=v-wright&t=5s"), ChatDone("session-2")]
+    await send(client, with_channel["id"], "How fine a stone?")
 
-    await client.delete(f"/api/mentors/{wright['id']}")
+    await client.delete(f"/api/channels/{wright['id']}")
     await client.delete(f"/api/groups/{group['id']}")
 
-    reopened = await get_conversation(client, conversation["id"])
-    [listed] = await list_conversations(client)
+    reopened = await get_conversation(client, with_group["id"])
+    listed = {c["id"]: c for c in await list_conversations(client)}
     assert reopened["messages"][1]["citations"] == [cited]
-    assert cited["mentor_name"] == "Paul Wright" and cited["video_title"] == "Sharpening chisels"
-    assert (listed["group_id"], listed["group_name"]) == (None, "Woodworking")
-    assert (await send(client, conversation["id"], "More?")).status_code == 409
+    assert (cited["channel_id"], cited["channel_name"], cited["video_title"]) == (
+        wright["id"],
+        "Paul Wright",
+        "Sharpening chisels",
+    )
+    assert listed[with_group["id"]]["scope"] == {"kind": "group", "id": None, "name": "Woodworking"}
+    assert listed[with_channel["id"]]["scope"] == {"kind": "channel", "id": None, "name": "Paul Wright"}
+    orphaned = await send(client, with_group["id"], "More?")
+    assert (orphaned.status_code, orphaned.json()) == (
+        409,
+        {"detail": "The Group 'Woodworking' was deleted, so this Conversation is read-only"},
+    )
+    orphaned = await send(client, with_channel["id"], "More?")
+    assert (orphaned.status_code, orphaned.json()) == (
+        409,
+        {"detail": "The Channel 'Paul Wright' was deleted, so this Conversation is read-only"},
+    )
+
+
+async def test_a_group_conversation_stays_open_when_a_member_channel_goes(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    group, wright, rex = await woodworkers(client, transcripts)
+    await client.put(f"/api/groups/{group['id']}/members", json={"channel_ids": [wright["id"], rex["id"]]})
+    conversation = await start_conversation(client, group["id"])
+
+    await client.delete(f"/api/channels/{wright['id']}")
+
+    assert (await send(client, conversation["id"], "Which stone?")).status_code == 200
 
 
 async def test_a_conversation_whose_session_is_lost_carries_on_by_replaying_its_messages(
     client: httpx.AsyncClient, engine: FakeChatEngine
 ) -> None:
-    conversation = await start_conversation(client, (await client.post("/api/groups", json={"name": "W"})).json()["id"])
+    conversation = await new_group_conversation(client)
     await send(client, conversation["id"], "Which stone?")
 
     async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
@@ -125,7 +199,7 @@ async def test_a_conversation_whose_session_is_lost_carries_on_by_replaying_its_
 async def test_a_turn_after_a_failed_first_one_replays_the_unanswered_question(
     client: httpx.AsyncClient, engine: FakeChatEngine
 ) -> None:
-    conversation = await start_conversation(client, (await client.post("/api/groups", json={"name": "W"})).json()["id"])
+    conversation = await new_group_conversation(client)
     engine.script = [ChatFailed("Claude Code is not logged in")]
     await send(client, conversation["id"], "Which stone?")
     engine.script = [TextDelta("A fine one."), ChatDone("session-1")]
@@ -139,9 +213,8 @@ async def test_a_turn_after_a_failed_first_one_replays_the_unanswered_question(
 async def test_each_conversation_keeps_the_model_it_was_started_with(
     client: httpx.AsyncClient, engine: FakeChatEngine
 ) -> None:
-    group = (await client.post("/api/groups", json={"name": "W"})).json()
-    default = await start_conversation(client, group["id"])
-    haiku = await start_conversation(client, group["id"], model="haiku")
+    default = await new_group_conversation(client)
+    haiku = await start_conversation(client, default["scope"]["id"], model="haiku")
 
     await send(client, default["id"], "One?")
     await send(client, haiku["id"], "Two?")
@@ -176,7 +249,7 @@ async def test_a_conversation_can_be_deleted_but_not_while_answering(
     client: httpx.AsyncClient, engine: FakeChatEngine
 ) -> None:
     conversation = await new_group_conversation(client)
-    kept = await start_conversation(client, conversation["group_id"])
+    kept = await start_conversation(client, conversation["scope"]["id"])
     release = asyncio.Event()
 
     async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:

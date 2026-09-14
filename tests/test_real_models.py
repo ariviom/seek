@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import Json, add_mentor, fake_channel, fake_video, running, start_sync, wait_for_syncs
+from harness import Json, add_channel, fake_channel, fake_video, running, start_sync, wait_for_syncs
 
 from mentor.app import create_app
 from mentor.config import Config
@@ -67,8 +67,8 @@ async def test_the_real_models_rank_a_planted_segment_first_and_recency_only_bre
 
     async with running(app) as client:
         models = await wait_for_models(client)
-        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
-        await start_sync(client, mentor["channels"][0]["id"])
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
         [synced] = await wait_for_syncs(client, timeout=120)
         gentle = await client.post("/api/search", json={"query": "how do I cut dovetails by hand?"})
         strong = await client.post(

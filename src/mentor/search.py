@@ -16,6 +16,7 @@ from mentor.db import Database
 from mentor.errors import NotFound
 from mentor.ports import Embedder, Reranker
 from mentor.ranking import Recency, fuse, matched_seconds, recency_score
+from mentor.scope import CHANNEL_IN_SCOPE, Scope, scope_params
 from mentor.segmentation import SegmentCue
 from mentor.segments import passage_text
 from mentor.sources import watch_url
@@ -41,8 +42,8 @@ class SearchResult:
     video_title: str
     published_on: date
     chapter_title: str | None
+    channel_id: int
     channel_name: str
-    mentor_name: str
     score: float
     url: str
 
@@ -55,35 +56,39 @@ class _Candidate:
 
 
 # Blocking: run through Database.run.
-def _scope_channels(conn: sqlite3.Connection, group: int | str | None, mentor_ids: Sequence[int] | None) -> list[int]:
-    """The indexed Channels a search covers: a Group's Mentors, the given Mentors, or every Mentor.
+def _scope_channels(
+    conn: sqlite3.Connection, scope: Scope | None, group: int | str | None, channel_ids: Sequence[int] | None
+) -> list[int]:
+    """The indexed Channels a search covers: a Conversation's scope, a Group's, the given Channels, or every one.
 
     A Group is given by id (an int) or by name (a str), so a Group named "12" is never confused with Group 12.
     """
-    if group is not None:
+    if scope is not None:
+        rows = conn.execute(f"SELECT id FROM channels WHERE indexed = 1 AND {CHANNEL_IN_SCOPE}", scope_params(scope))
+    elif group is not None:
         column = "id" if isinstance(group, int) else "name"
-        found = conn.execute(f"SELECT id FROM mentor_groups WHERE {column} = ?", (group,)).fetchone()
+        found = conn.execute(f"SELECT id FROM groups WHERE {column} = ?", (group,)).fetchone()
         if found is None:
-            raise NotFound(f"Mentor Group {group!r} not found")
+            raise NotFound(f"Group {group!r} not found")
         rows = conn.execute(
             """
             SELECT channels.id FROM channels
-            JOIN mentor_group_members ON mentor_group_members.mentor_id = channels.mentor_id
-            WHERE mentor_group_members.group_id = ? AND channels.indexed = 1
+            JOIN group_channels ON group_channels.channel_id = channels.id
+            WHERE group_channels.group_id = ? AND channels.indexed = 1
             """,
             (found["id"],),
         )
-    elif mentor_ids is not None:
+    elif channel_ids is not None:
         # Bound as one JSON array, as groups.set_members does.
-        ids = json.dumps(list(dict.fromkeys(mentor_ids)))
+        ids = json.dumps(list(dict.fromkeys(channel_ids)))
         existing = {
             row["id"]
-            for row in conn.execute("SELECT id FROM mentors WHERE id IN (SELECT value FROM json_each(?))", (ids,))
+            for row in conn.execute("SELECT id FROM channels WHERE id IN (SELECT value FROM json_each(?))", (ids,))
         }
-        if missing := [mentor_id for mentor_id in mentor_ids if mentor_id not in existing]:
-            raise NotFound(f"Mentor {missing[0]} not found")
+        if missing := [channel_id for channel_id in channel_ids if channel_id not in existing]:
+            raise NotFound(f"Channel {missing[0]} not found")
         rows = conn.execute(
-            "SELECT id FROM channels WHERE indexed = 1 AND mentor_id IN (SELECT value FROM json_each(?))", (ids,)
+            "SELECT id FROM channels WHERE indexed = 1 AND id IN (SELECT value FROM json_each(?))", (ids,)
         )
     else:
         rows = conn.execute("SELECT id FROM channels WHERE indexed = 1")
@@ -126,11 +131,10 @@ def _candidates(
         """
         SELECT segments.id, segments.text, segments.context, segments.start_seconds, segments.cues,
                segments.chapter_title, videos.id AS video_id, videos.youtube_video_id, videos.title, videos.published_on,
-               channels.name AS channel_name, mentors.name AS mentor_name
+               channels.id AS channel_id, channels.name AS channel_name
         FROM segments
         JOIN videos ON videos.id = segments.video_id
         JOIN channels ON channels.id = videos.channel_id
-        JOIN mentors ON mentors.id = channels.mentor_id
         WHERE segments.id IN (SELECT value FROM json_each(?)) AND videos.pipeline_stage = 'done'
         """,
         (json.dumps(fused),),
@@ -153,8 +157,8 @@ def _unscored(query: str, row: sqlite3.Row) -> _Candidate:
         video_title=row["title"],
         published_on=date.fromisoformat(row["published_on"]),
         chapter_title=row["chapter_title"],
+        channel_id=row["channel_id"],
         channel_name=row["channel_name"],
-        mentor_name=row["mentor_name"],
         score=0.0,
         url=watch_url(row["youtube_video_id"], int(matched)),
     )
@@ -180,19 +184,21 @@ class Search:
         self,
         query: str,
         *,
+        scope: Scope | None = None,
         group: int | str | None = None,
-        mentor_ids: Sequence[int] | None = None,
+        channel_ids: Sequence[int] | None = None,
         limit: int = 10,
         prefer_recent: PreferRecent = "gentle",
     ) -> list[SearchResult]:
-        """The best Segments for the query within one scope: a Group, some Mentors, or (neither given) everything."""
+        """The best Segments for the query within one scope: a Conversation's, a Group, some Channels, or (none
+        given) everything."""
         # Composed, so accented words typed in decomposed form still match the transcript's words.
         query = unicodedata.normalize("NFC", query)
-        channel_ids = await self._database.run(lambda conn: _scope_channels(conn, group, mentor_ids))
-        if not channel_ids:
+        covered = await self._database.run(lambda conn: _scope_channels(conn, scope, group, channel_ids))
+        if not covered:
             return []
         query_vector = await asyncio.to_thread(self._embedder.embed_query, query)
-        candidates = await self._database.run(lambda conn: _candidates(conn, channel_ids, query, query_vector))
+        candidates = await self._database.run(lambda conn: _candidates(conn, covered, query, query_vector))
         if not candidates:
             return []
         reranked = await asyncio.to_thread(self._reranker.score, query, [c.passage for c in candidates])

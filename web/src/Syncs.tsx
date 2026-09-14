@@ -73,9 +73,6 @@ export function Syncs() {
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-medium">{sync.channel_name}</p>
-                    {sync.mentor_name !== sync.channel_name && (
-                      <p className="truncate text-[13px] text-pencil">{sync.mentor_name}</p>
-                    )}
                   </div>
                   <span className={`shrink-0 text-sm font-medium ${status[sync.status].className}`}>
                     {status[sync.status].label}

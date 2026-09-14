@@ -7,9 +7,10 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from mentor import db, mentors, syncs
+from mentor import channels, db, groups, syncs
+from mentor.channels import Channel
 from mentor.config import HOST, Config
-from mentor.mentors import Mentor
+from mentor.groups import Group
 from mentor.ports import ChatEngine, ChatEngineStatus, ModelStatus
 from mentor.sync_command import SyncCommandError, answers, request
 from mentor.syncs import Sync
@@ -34,7 +35,8 @@ class StatusReport:
 @dataclass(frozen=True)
 class ListReport:
     server_url: str | None
-    mentors: list[Mentor]
+    channels: list[Channel]
+    groups: list[Group]
 
 
 def _server_url(config: Config) -> str | None:
@@ -69,9 +71,18 @@ async def status(config: Config, chat_engine: ChatEngine) -> StatusReport:
 async def list_all(config: Config) -> ListReport:
     url = await asyncio.to_thread(_server_url, config)
     if url is not None:
-        body = await asyncio.to_thread(request, f"{url}api/mentors")
-        return ListReport(url, _parse(url, TypeAdapter(list[Mentor]), body))
-    return ListReport(None, await _read_store(config, mentors.list_mentors, []))
+        listed_channels = await asyncio.to_thread(request, f"{url}api/channels")
+        listed_groups = await asyncio.to_thread(request, f"{url}api/groups")
+        return ListReport(
+            url,
+            _parse(url, TypeAdapter(list[Channel]), listed_channels),
+            _parse(url, TypeAdapter(list[Group]), listed_groups),
+        )
+    return ListReport(
+        None,
+        await _read_store(config, channels.list_channels, []),
+        await _read_store(config, groups.list_groups, []),
+    )
 
 
 async def _read_store[T](config: Config, read: Callable[[sqlite3.Connection], T], empty: T) -> T:
@@ -106,7 +117,7 @@ def format_status(report: StatusReport) -> str:
     running = sum(s.status == "running" for s in report.syncs)
     lines.append(f"Syncs: {running} running, {len(report.syncs) - running} queued")
     for s in report.syncs:
-        lines.append(f"  {s.status:<8} {s.mentor_name} / {s.channel_name}")
+        lines.append(f"  {s.status:<8} {s.channel_name}")
     return "\n".join(lines)
 
 
@@ -121,16 +132,19 @@ def _model_state(model: ModelStatus) -> str:
 
 
 def format_list(report: ListReport) -> str:
-    if not report.mentors:
-        return "No Mentors yet."
-    lines = []
-    for mentor in report.mentors:
-        lines.append(mentor.name)
-        for c in mentor.channels:
-            indexed = "" if c.indexed else ", not indexed"
-            synced = f"last synced {c.last_synced_at}" if c.last_synced_at else "never synced"
-            lines.append(
-                f"  {c.name} ({c.youtube_channel_id}{indexed}): {c.indexed_videos} indexed, {c.failed_videos} failed, "
-                f"{c.excluded_videos} excluded; {synced}"
-            )
+    if not report.channels and not report.groups:
+        return "No Channels yet."
+    lines = ["Channels:" if report.channels else "Channels: none"]
+    for c in report.channels:
+        indexed = "" if c.indexed else ", not indexed"
+        synced = f"last synced {c.last_synced_at}" if c.last_synced_at else "never synced"
+        lines.append(
+            f"  {c.name} ({c.youtube_channel_id}{indexed}): {c.indexed_videos} indexed, {c.failed_videos} failed, "
+            f"{c.excluded_videos} excluded; {synced}"
+        )
+    if report.groups:
+        lines.append("Groups:")
+        for group in report.groups:
+            members = ", ".join(c.name for c in group.channels) or "no Channels"
+            lines.append(f"  {group.name}: {members}")
     return "\n".join(lines)
