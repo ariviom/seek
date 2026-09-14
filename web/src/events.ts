@@ -15,17 +15,28 @@ type Listener = (event: ServerEvent) => void;
 const listeners = new Set<Listener>();
 let source: EventSource | null = null;
 let reopenTimer: number | undefined;
+// True while the server refuses the stream, e.g. once a Cloudflare Access session has expired.
+let refused = false;
+const refusedListeners = new Set<(refused: boolean) => void>();
+
+function setRefused(value: boolean) {
+  if (refused === value) return;
+  refused = value;
+  for (const listener of refusedListeners) listener(value);
+}
 
 function open() {
   // Relative, so it follows any reverse-proxy path prefix.
   const opened = new EventSource("api/events");
   opened.onmessage = (message: MessageEvent<string>) => {
     const event = JSON.parse(message.data) as ServerEvent;
+    if (event.type === "ready") setRefused(false);
     for (const listener of listeners) listener(event);
   };
   opened.onerror = () => {
     // EventSource reconnects by itself unless the server answered with an error; then retry later.
     if (opened.readyState !== EventSource.CLOSED || source !== opened) return;
+    setRefused(true);
     source = null;
     reopenTimer = window.setTimeout(() => {
       if (listeners.size > 0 && source === null) source = open();
@@ -52,6 +63,19 @@ export function useServerEvents(onEvent: Listener) {
       }
     };
   }, []);
+}
+
+// Whether live updates have stopped because the server refused the event stream.
+export function useLiveUpdatesStopped(): boolean {
+  const [value, setValue] = useState(refused);
+  useEffect(() => {
+    refusedListeners.add(setValue);
+    setValue(refused);
+    return () => {
+      refusedListeners.delete(setValue);
+    };
+  }, []);
+  return value;
 }
 
 // What an event means for a list: reload it, update it, or nothing.

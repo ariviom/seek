@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, type Health, type Mentor, type MentorGroup, type Models, type ModelStatus } from "./api";
 import { Chat } from "./Chat";
 import { Conversations } from "./Conversations";
-import { useServerEvents } from "./events";
+import { useLiveUpdatesStopped, useServerEvents } from "./events";
 import { Groups } from "./Groups";
 import { Mentors } from "./Mentors";
 import { Search } from "./Search";
@@ -105,6 +105,8 @@ export function App() {
     }
   });
 
+  const liveUpdatesStopped = useLiveUpdatesStopped();
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-rule bg-panel">
@@ -115,7 +117,12 @@ export function App() {
               Server unavailable: {state.message}
             </p>
           )}
-          {state.kind === "ok" && <ModelNotice models={state.health.models} />}
+          {state.kind !== "error" && liveUpdatesStopped && (
+            <p role="alert" className="text-sm text-oxide">
+              Live updates stopped. Reload the page, and sign in again if asked.
+            </p>
+          )}
+          {state.kind === "ok" && !liveUpdatesStopped && <ModelNotice models={state.health.models} />}
         </div>
       </header>
       <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">

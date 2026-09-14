@@ -103,7 +103,7 @@ variable `MENTOR_<KEY>` overrides any key; for example, `MENTOR_PORT=7400` overr
 ```toml
 port = 7400
 youtube_cookie_file = "/home/me/.config/mentor/cookies.txt"
-mcp_allowed_hosts = ["mentor.example.com"]
+allowed_hosts = ["mentor.example.com"]
 ```
 
 | Key | Default | Meaning |
@@ -123,8 +123,10 @@ mcp_allowed_hosts = ["mentor.example.com"]
 | `youtube_retries` | `3` | Retries when YouTube rate-limits or can't be reached |
 | `youtube_backoff_seconds` | `30` | First wait before a retry, doubling each time |
 | `youtube_cookie_file` | none | A Netscape `cookies.txt` exported from a signed-in browser |
-| `mcp_allowed_hosts` | none | Host headers `/mcp` accepts besides loopback, such as your proxy's public hostname |
+| `allowed_hosts` | none | Host headers accepted besides loopback, such as your proxy's public hostname |
 | `claude_cli_path` | `claude` on PATH | The Claude CLI the web chat drives |
+| `cf_access_team_domain` | none | With `cf_access_aud`, requires a Cloudflare Access token on requests from outside this machine (see [Publishing](#publishing-through-a-reverse-proxy)) |
+| `cf_access_aud` | none | The Access application's Audience (AUD) tag |
 
 Notes:
 
@@ -132,8 +134,40 @@ Notes:
   refuses to start with a different one, so give a new model a new `data_dir`.
 - **Rate limits.** Without a cookie file, YouTube tolerates roughly 300 Videos an hour; a signed-in cookie file allows
   about three times that. yt-dlp writes refreshed cookies back to the file, so it must be writable.
-- **Allowed hosts.** `mcp_allowed_hosts` takes a TOML list, or a comma-separated string in
-  `MENTOR_MCP_ALLOWED_HOSTS`. `host:*` allows any port. Loopback is always allowed.
+- **Allowed hosts.** `allowed_hosts` takes a TOML list, or a comma-separated string in `MENTOR_ALLOWED_HOSTS`.
+  `host:*` allows any port. Loopback is always allowed. Every request's `Host`, `X-Forwarded-Host`, and `Origin` must
+  name an allowed host, which stops a web page on another site from reaching mentor by pointing its hostname at this
+  machine. Pages served from localhost on any port are allowed, so only run local web apps you trust.
+  (This key was `mcp_allowed_hosts` before it covered the whole server.)
+
+## Publishing through a reverse proxy
+
+mentor only listens on 127.0.0.1, so to reach it from elsewhere, publish it through a reverse proxy on this machine,
+with an identity gate such as Cloudflare Access in front. mentor has no login of its own: anyone who reaches a
+published URL gets the whole API, the web chat (on your Claude subscription), and the `sql` tool.
+
+1. Add the public hostname to `allowed_hosts`.
+2. Have the proxy send `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host`. Traefik and Caddy do by
+   default; nginx needs a `proxy_set_header` for each. A proxy that passes the public hostname as `Host` can skip
+   `X-Forwarded-Host`; otherwise the `Host` it sends must be loopback (such as `127.0.0.1:7337`) or allowed. mentor uses
+   these headers for the URLs it builds, and they tell it the request was relayed: **a proxy that sends none of them
+   looks like a local request, so the Cloudflare Access check below lets it through.**
+3. To publish under a path such as `https://mentor.example.com/mentor/`, have the proxy send
+   `X-Forwarded-Prefix: /mentor`, as Traefik's StripPrefix does. It may strip the prefix or pass it through. The web UI,
+   API, event stream, and `/mcp` all work under it, and mentor still answers at the root locally. mentor tells the two
+   apart by whether the path starts with the prefix, so don't use one of its own top-level paths (`/api`, `/mcp`,
+   `/assets`, `/docs`) as the prefix.
+4. Don't let the proxy buffer responses: the event stream sends `X-Accel-Buffering: no` and a keepalive every 15
+   seconds, and the web chat streams its answers the same way.
+
+**Cloudflare Access verification** (optional, off by default) guards against a request that reaches the proxy
+without going through Access, for example on the machine's own IP address. Set `cf_access_team_domain` to your team
+domain (`myteam.cloudflareaccess.com`) and `cf_access_aud` to the application's Audience tag (in Zero Trust, under the
+Access application's overview). Then every request needs a valid `Cf-Access-Jwt-Assertion` header, checked against your
+team's signing keys, which mentor fetches and caches. The exception is a request made directly on this machine: from
+loopback, with no `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, or `Cf-*` headers, such as local agents, `mentor sync`,
+and a browser on this machine. Refused requests get 403, and 503 while mentor can't fetch the keys at all. If your session expires while the web UI is open, it says
+that live updates stopped; reload the page to sign in again.
 
 ## Register mentor with your agents
 
@@ -152,12 +186,8 @@ codex mcp add mentor --url http://127.0.0.1:7337/mcp
 ```
 
 **Claude Desktop** connects to custom connectors from Anthropic's side, so it needs mentor's public URL rather than
-localhost. Publish the server through your reverse proxy and add the public hostname to `mcp_allowed_hosts`. Then, in
-Settings → Connectors → Add custom connector, enter `https://mentor.example.com/mcp`.
-
-mentor has no login of its own. Anyone who reaches a published URL gets the whole API, the web chat (on your Claude
-subscription), and the `sql` tool. So put an identity gate, such as Cloudflare Access, in front of it before
-publishing.
+localhost. [Publish the server](#publishing-through-a-reverse-proxy), behind an identity gate. Then, in Settings →
+Connectors → Add custom connector, enter `https://mentor.example.com/mcp`.
 
 The tools are `list_groups`, `search`, `expand`, `get_video`, and `sql`.
 
@@ -184,7 +214,9 @@ footer's "Claude CLI" entry, and in the `claude_cli` part of `/api/health` with 
    - another program on the port (set `port`, then update your agents' URLs)
    - a knowledge base built with a different embedding model
 3. If the server answers but the agent can't connect, check the URL ends in exactly `/mcp`.
-   - **421 "Invalid Host header":** the request came through a hostname not in `mcp_allowed_hosts`.
+   - **421 "Invalid Host header":** the request came through a hostname not in `allowed_hosts`.
+   - **403:** a browser-based client's `Origin` isn't an allowed host, or, with Cloudflare Access verification on, the
+     request carried no valid Access token; the response says which.
    - **405:** the URL has a trailing slash.
 4. After changing settings, restart the service, then restart the agent session (or `/mcp` in Claude Code to
    reconnect).

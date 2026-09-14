@@ -352,7 +352,7 @@ async def test_the_mcp_endpoint_serves_tools_over_http_to_loopback_and_configure
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", cues=said("flatten the board")))
     app = create_app(
-        replace(config, mcp_allowed_hosts=("mentor.example.com",)),
+        replace(config, allowed_hosts=("mentor.example.com",)),
         transcripts,
         embedder,
         reranker,

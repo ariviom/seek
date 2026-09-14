@@ -59,11 +59,15 @@ class Config:
     gentle_recency_max_penalty_percent: int = DEFAULT_GENTLE_RECENCY_MAX_PENALTY_PERCENT
     strong_recency_half_life_days: int = DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS
     strong_recency_max_penalty_percent: int = DEFAULT_STRONG_RECENCY_MAX_PENALTY_PERCENT
-    # Host headers the MCP endpoint accepts besides loopback, such as a reverse proxy's public hostname; the rest are
-    # refused to stop DNS rebinding. "host:*" allows any port.
-    mcp_allowed_hosts: tuple[str, ...] = ()
+    # Host headers accepted besides loopback, such as a reverse proxy's public hostname; the rest are refused to stop
+    # DNS rebinding. "host:*" allows any port.
+    allowed_hosts: tuple[str, ...] = ()
     # The Claude CLI the web chat drives; unset, the `claude` on PATH.
     claude_cli_path: Path | None = None
+    # Set together, every request not made directly on this machine needs a valid Cloudflare Access token for this
+    # team domain (e.g. myteam.cloudflareaccess.com) and application audience tag.
+    cf_access_team_domain: str | None = None
+    cf_access_aud: str | None = None
 
     @property
     def database_path(self) -> Path:
@@ -109,6 +113,14 @@ def _hosts(key: str, value: object, source: str) -> tuple[str, ...]:
     if any(re.search(r"[\s/]", host) for host in hosts):
         raise ConfigError(f"{source}: {key} must be hosts such as mentor.example.com, without a scheme or path")
     return hosts
+
+
+def _team_domain(key: str, value: object, source: str) -> str:
+    """A bare hostname; an https:// prefix and a trailing slash, as copied from the dashboard, are dropped."""
+    text = _text(key, value, source).removeprefix("https://").rstrip("/")
+    if not re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", text):
+        raise ConfigError(f"{source}: {key} must be a team domain such as myteam.cloudflareaccess.com")
+    return text
 
 
 def load_config(env: Mapping[str, str] = os.environ) -> Config:
@@ -178,8 +190,14 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         strong_penalty = _integer(
             "strong_recency_max_penalty_percent", *raw["strong_recency_max_penalty_percent"], 0, 100
         )
-    mcp_allowed_hosts = _hosts("mcp_allowed_hosts", *raw["mcp_allowed_hosts"]) if "mcp_allowed_hosts" in raw else ()
+    allowed_hosts = _hosts("allowed_hosts", *raw["allowed_hosts"]) if "allowed_hosts" in raw else ()
     claude_cli_path = _absolute_path("claude_cli_path", *raw["claude_cli_path"]) if "claude_cli_path" in raw else None
+    team_domain = None
+    if "cf_access_team_domain" in raw:
+        team_domain = _team_domain("cf_access_team_domain", *raw["cf_access_team_domain"])
+    audience = _text("cf_access_aud", *raw["cf_access_aud"]) if "cf_access_aud" in raw else None
+    if (team_domain is None) != (audience is None):
+        raise ConfigError("cf_access_team_domain and cf_access_aud must be set together")
     return Config(
         data_dir=data_dir,
         port=port,
@@ -196,6 +214,8 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         gentle_recency_max_penalty_percent=gentle_penalty,
         strong_recency_half_life_days=strong_half_life,
         strong_recency_max_penalty_percent=strong_penalty,
-        mcp_allowed_hosts=mcp_allowed_hosts,
+        allowed_hosts=allowed_hosts,
         claude_cli_path=claude_cli_path,
+        cf_access_team_domain=team_domain,
+        cf_access_aud=audience,
     )

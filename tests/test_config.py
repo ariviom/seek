@@ -156,27 +156,59 @@ def test_the_claude_cli_path_is_configurable_and_must_be_absolute(tmp_path: Path
         load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_CLAUDE_CLI_PATH": "bin/claude"})
 
 
-def test_mcp_allowed_hosts_come_from_a_list_or_a_comma_separated_variable(tmp_path: Path) -> None:
-    write_config(tmp_path, 'mcp_allowed_hosts = ["mentor.example.com", "10.0.0.5:*"]\n')
+def test_allowed_hosts_come_from_a_list_or_a_comma_separated_variable(tmp_path: Path) -> None:
+    write_config(tmp_path, 'allowed_hosts = ["mentor.example.com", "10.0.0.5:*"]\n')
 
     defaults = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
     from_file = load_config({"XDG_CONFIG_HOME": str(tmp_path)})
-    from_env = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_MCP_ALLOWED_HOSTS": " a.example , b.example:8443,"})
+    from_env = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_ALLOWED_HOSTS": " a.example , b.example:8443,"})
 
-    assert defaults.mcp_allowed_hosts == ()
-    assert from_file.mcp_allowed_hosts == ("mentor.example.com", "10.0.0.5:*")
-    assert from_env.mcp_allowed_hosts == ("a.example", "b.example:8443")
+    assert defaults.allowed_hosts == ()
+    assert from_file.allowed_hosts == ("mentor.example.com", "10.0.0.5:*")
+    assert from_env.allowed_hosts == ("a.example", "b.example:8443")
 
 
 @pytest.mark.parametrize(
     ("file_text", "env"),
     [
-        ("mcp_allowed_hosts = [5]\n", {}),
-        ("", {"MENTOR_MCP_ALLOWED_HOSTS": "https://mentor.example.com"}),
-        ("", {"MENTOR_MCP_ALLOWED_HOSTS": "mentor example"}),
+        ("allowed_hosts = [5]\n", {}),
+        ("", {"MENTOR_ALLOWED_HOSTS": "https://mentor.example.com"}),
+        ("", {"MENTOR_ALLOWED_HOSTS": "mentor example"}),
     ],
 )
-def test_invalid_mcp_allowed_hosts_are_rejected(tmp_path: Path, file_text: str, env: dict[str, str]) -> None:
+def test_invalid_allowed_hosts_are_rejected(tmp_path: Path, file_text: str, env: dict[str, str]) -> None:
+    write_config(tmp_path, file_text)
+
+    with pytest.raises(ConfigError):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
+
+
+def test_cloudflare_access_verification_takes_the_team_domain_and_audience_together(tmp_path: Path) -> None:
+    write_config(tmp_path, 'cf_access_team_domain = "https://woodshop.cloudflareaccess.com/"\n')
+
+    off = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
+    on = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_CF_ACCESS_AUD": " 4714c1358e65fe4b408ad6d432a5f878 "})
+
+    assert (off.cf_access_team_domain, off.cf_access_aud) == (None, None)
+    assert (on.cf_access_team_domain, on.cf_access_aud) == (
+        "woodshop.cloudflareaccess.com",
+        "4714c1358e65fe4b408ad6d432a5f878",
+    )
+
+
+@pytest.mark.parametrize(
+    ("file_text", "env"),
+    [
+        ('cf_access_team_domain = "woodshop.cloudflareaccess.com"\n', {}),
+        ("", {"MENTOR_CF_ACCESS_AUD": "4714c1358e65fe4b408ad6d432a5f878"}),
+        ('cf_access_aud = "abc"\n', {"MENTOR_CF_ACCESS_TEAM_DOMAIN": "woodshop.cloudflareaccess.com/login"}),
+        ('cf_access_aud = "abc"\n', {"MENTOR_CF_ACCESS_TEAM_DOMAIN": "http://woodshop.cloudflareaccess.com"}),
+        ('cf_access_aud = " "\ncf_access_team_domain = "woodshop.cloudflareaccess.com"\n', {}),
+    ],
+)
+def test_incomplete_or_invalid_cloudflare_access_settings_are_rejected(
+    tmp_path: Path, file_text: str, env: dict[str, str]
+) -> None:
     write_config(tmp_path, file_text)
 
     with pytest.raises(ConfigError):

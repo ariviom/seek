@@ -3,7 +3,7 @@ import json
 import socket
 import sqlite3
 import threading
-from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any, Literal
@@ -124,7 +124,9 @@ class EventStream:
 
 
 @asynccontextmanager
-async def event_stream(app: FastAPI) -> AsyncIterator[EventStream]:
+async def event_stream(
+    app: FastAPI, path: str = "/api/events", headers: Mapping[str, str] | None = None
+) -> AsyncIterator[EventStream]:
     """Opens the app's event stream, inside `running(app)`, once its first event says it is subscribed.
 
     Drives the ASGI app directly: httpx's ASGI transport buffers a whole response, and this one never ends.
@@ -137,11 +139,14 @@ async def event_stream(app: FastAPI) -> AsyncIterator[EventStream]:
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/events",
-        "raw_path": b"/api/events",
+        "path": path,
+        "raw_path": path.encode(),
         "root_path": "",
         "query_string": b"",
-        "headers": [(b"host", b"127.0.0.1:7337")],
+        "headers": [
+            (b"host", b"127.0.0.1:7337"),
+            *((name.lower().encode(), value.encode()) for name, value in (headers or {}).items()),
+        ],
         "client": ("127.0.0.1", 50000),
         "server": ("127.0.0.1", 7337),
     }

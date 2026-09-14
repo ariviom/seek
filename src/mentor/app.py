@@ -1,18 +1,19 @@
 import asyncio
 import contextlib
+import html
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
-from mentor import db
+from mentor import access, db
 from mentor.chat import Chat
 from mentor.chat_api import chat_router
 from mentor.config import Config
@@ -22,6 +23,7 @@ from mentor.events_api import events_router
 from mentor.groups_api import groups_router
 from mentor.mcp_server import create_mcp_server
 from mentor.mentors_api import mentors_router
+from mentor.proxy import LOOPBACK_HOSTS, ProxyMiddleware
 from mentor.ports import (
     ChannelNotFound,
     ChatEngine,
@@ -40,8 +42,6 @@ from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
 
 PACKAGE_STATIC_DIR = Path(__file__).parent / "static"
-# Host headers of local MCP clients, with or without a port.
-LOOPBACK_HOSTS = ("127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*", "[::1]", "[::1]:*")
 
 # Exceptions whose messages are written for the user, and the status each maps to.
 ERROR_STATUS: dict[type[Exception], int] = {
@@ -124,6 +124,8 @@ def create_app(
     events_keepalive_seconds: float = 15.0,
     model_progress_seconds: float = 0.5,
     sql_time_limit_seconds: float = 5.0,
+    fetch_access_keys: access.FetchKeys = access.fetch_url,
+    access_keys_refetch_seconds: float = 60.0,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
@@ -137,7 +139,7 @@ def create_app(
     models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
     chat = Chat(database, search, chat_engine)
     mcp = create_mcp_server(database, search, sql_time_limit_seconds)
-    mcp_hosts = [*LOOPBACK_HOSTS, *config.mcp_allowed_hosts]
+    mcp_hosts = [*LOOPBACK_HOSTS, *config.allowed_hosts]
     # Stateless JSON responses: the tools never call back to the client, and plain responses pass through proxies
     # that buffer event streams.
     mcp_app = mcp.streamable_http_app(
@@ -197,8 +199,26 @@ def create_app(
     # The MCP app routes /mcp itself; its session manager runs in the lifespan above.
     app.router.routes.append(Route("/mcp", mcp_app))
 
+    index = static_dir / "index.html"
+    if index.is_file():
+
+        @app.get("/", include_in_schema=False)
+        async def web_ui(request: Request) -> HTMLResponse:
+            # The bundle's URLs are relative; a <base> resolves them under a proxy prefix even when the page's URL
+            # lacks the trailing slash.
+            base = f'<base href="{html.escape(request.scope.get("root_path", ""))}/">'
+            page = await asyncio.to_thread(index.read_text)
+            return HTMLResponse(page.replace("<head>", f"<head>\n    {base}", 1))
+
     # Mounted last: a catch-all at "/" would shadow routes registered after it.
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
+    if config.cf_access_team_domain is not None and config.cf_access_aud is not None:
+        verifier = access.AccessVerifier(
+            config.cf_access_team_domain, config.cf_access_aud, fetch_access_keys, access_keys_refetch_seconds
+        )
+        app.add_middleware(access.AccessMiddleware, verifier=verifier)
+    # Added last, so it runs first: a request through a host that isn't mentor's is refused before anything else.
+    app.add_middleware(ProxyMiddleware, allowed_hosts=config.allowed_hosts)
     return app
