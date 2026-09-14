@@ -163,6 +163,7 @@ async def test_links_to_the_groups_videos_are_saved_as_citations_with_their_name
             "mentor_name": "Paul Wright",
             "channel_name": "Wood By Wright",
             "url": f"https://www.youtube.com/watch?v=v-wright&t={seconds}s",
+            "published_on": "2025-03-01",
         }
 
     assert done_message(first)["citations"] == [citation(5), citation(65)]

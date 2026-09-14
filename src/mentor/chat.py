@@ -11,7 +11,7 @@ from urllib.parse import parse_qs
 from mentor import conversations
 from mentor.conversations import ToolUse, Turn
 from mentor.db import Database
-from mentor.errors import Conflict
+from mentor.errors import Conflict, NotFound
 from mentor.mcp_server import GROUNDED_ADVISOR, GROUP_TOOL_NAMES, create_group_server
 from mentor.ports import ChatDone, ChatEngine, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
 from mentor.search import Search
@@ -64,9 +64,19 @@ class Chat:
         self._database = database
         self._search = search
         self._engine = engine
-        # Conversations with a turn under way, and the turns' tasks.
+        # Conversations with a turn under way, and each turn's task once started.
         self._busy: set[int] = set()
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._tasks: dict[int, asyncio.Task[None]] = {}
+
+    def answering(self, conversation_id: int) -> bool:
+        return conversation_id in self._busy
+
+    def stop(self, conversation_id: int) -> None:
+        """Cancels the Conversation's running turn, which saves no answer; raises NotFound if none is running."""
+        task = self._tasks.get(conversation_id)
+        if task is None:
+            raise NotFound(f"Conversation {conversation_id} isn't answering")
+        task.cancel()
 
     async def send(self, conversation_id: int, message: str) -> asyncio.Queue[TurnEvent | None]:
         """Saves the question and starts the turn, whose events arrive on the returned queue until None.
@@ -84,10 +94,10 @@ class Chat:
             raise
         events: asyncio.Queue[TurnEvent | None] = asyncio.Queue()
         task = asyncio.create_task(self._run(turn, message, events))
-        self._tasks.add(task)
+        self._tasks[conversation_id] = task
 
         def finished(task: asyncio.Task[None]) -> None:
-            self._tasks.discard(task)
+            self._tasks.pop(conversation_id, None)
             self._busy.discard(conversation_id)
 
         task.add_done_callback(finished)
@@ -95,7 +105,7 @@ class Chat:
 
     async def close(self) -> None:
         """Stops any turns still running, without saving their answers."""
-        tasks = list(self._tasks)
+        tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -117,6 +127,9 @@ class Chat:
                 # The Claude session is gone (expired or cleaned up): start a new one, replaying the Conversation.
                 log.info("Conversation %s's Claude session was lost; replaying it", turn.conversation_id)
                 await self._answer(turn, replace(request, resume_session_id=None), events)
+        except asyncio.CancelledError:
+            events.put_nowait({"type": "error", "message": "Stopped before the answer finished"})
+            raise
         except Exception:
             log.exception("Chat turn for Conversation %s failed", turn.conversation_id)
             events.put_nowait({"type": "error", "message": "The chat failed unexpectedly; see the server log"})

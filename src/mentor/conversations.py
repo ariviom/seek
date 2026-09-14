@@ -40,6 +40,8 @@ class Citation:
     mentor_name: str
     channel_name: str
     url: str
+    # None for Citations saved before publish dates were kept.
+    published_on: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class Message:
 
 @dataclass(frozen=True)
 class ConversationSummary(Conversation):
-    # The first question, shortened.
+    # The title given to the Conversation, or else its first question, shortened.
     title: str
     message_count: int
     last_message_at: str | None
@@ -99,10 +101,9 @@ def _title(question: str | None) -> str:
     return words if len(words) <= TITLE_LENGTH else words[: TITLE_LENGTH - 1].rstrip() + "…"
 
 
-def list_conversations(conn: sqlite3.Connection, group_id: int | None = None) -> list[ConversationSummary]:
-    """Every Conversation, or a Group's, most recently active first. Conversations of deleted Groups are included."""
+def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) -> list[ConversationSummary]:
     rows = conn.execute(
-        """
+        f"""
         SELECT conversations.*,
                (SELECT content FROM messages WHERE conversation_id = conversations.id AND role = 'user'
                 ORDER BY id LIMIT 1) AS first_question,
@@ -110,11 +111,11 @@ def list_conversations(conn: sqlite3.Connection, group_id: int | None = None) ->
                (SELECT max(created_at) FROM messages WHERE conversation_id = conversations.id) AS last_message_at,
                (SELECT max(id) FROM messages WHERE conversation_id = conversations.id) AS last_message_id
         FROM conversations
-        WHERE ?1 IS NULL OR group_id = ?1
+        WHERE {where}
         -- Message ids order activity more finely than second-resolution timestamps; unused Conversations come last.
         ORDER BY coalesce(last_message_id, 0) DESC, id DESC
         """,
-        (group_id,),
+        params,
     )
     return [
         ConversationSummary(
@@ -123,12 +124,31 @@ def list_conversations(conn: sqlite3.Connection, group_id: int | None = None) ->
             group_name=row["group_name"],
             model=row["model"],
             created_at=row["created_at"],
-            title=_title(row["first_question"]),
+            title=row["title"] or _title(row["first_question"]),
             message_count=row["message_count"],
             last_message_at=row["last_message_at"],
         )
         for row in rows
     ]
+
+
+def list_conversations(conn: sqlite3.Connection, group_id: int | None = None) -> list[ConversationSummary]:
+    """Every Conversation, or a Group's, most recently active first. Conversations of deleted Groups are included."""
+    return _summaries(conn, "?1 IS NULL OR group_id = ?1", (group_id,))
+
+
+def rename_conversation(conn: sqlite3.Connection, conversation_id: int, title: str) -> ConversationSummary:
+    with transaction(conn):
+        if conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id)).rowcount == 0:
+            raise NotFound(f"Conversation {conversation_id} not found")
+        [summary] = _summaries(conn, "conversations.id = ?", (conversation_id,))
+        return summary
+
+
+def delete_conversation(conn: sqlite3.Connection, conversation_id: int) -> None:
+    with transaction(conn):
+        if conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,)).rowcount == 0:
+            raise NotFound(f"Conversation {conversation_id} not found")
 
 
 def get_conversation(conn: sqlite3.Connection, conversation_id: int) -> ConversationDetail:
@@ -204,8 +224,8 @@ def _citations(conn: sqlite3.Connection, group_id: int, links: Sequence[tuple[st
     """
     rows = conn.execute(
         """
-        SELECT videos.id, videos.youtube_video_id, videos.title, channels.name AS channel_name,
-               mentors.name AS mentor_name
+        SELECT videos.id, videos.youtube_video_id, videos.title, videos.published_on,
+               channels.name AS channel_name, mentors.name AS mentor_name
         FROM videos
         JOIN channels ON channels.id = videos.channel_id
         JOIN mentors ON mentors.id = channels.mentor_id
@@ -225,6 +245,7 @@ def _citations(conn: sqlite3.Connection, group_id: int, links: Sequence[tuple[st
             mentor_name=video["mentor_name"],
             channel_name=video["channel_name"],
             url=watch_url(youtube_video_id, seconds),
+            published_on=video["published_on"],
         )
         for youtube_video_id, seconds in links
         if (video := videos.get(youtube_video_id)) is not None

@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import time
 import uuid
+from dataclasses import replace
 
 from mentor import segments, syncs, videos
 from mentor.db import Database
@@ -205,9 +206,14 @@ class SyncWorker:
             self._events.sync(finished)
 
     async def _progress(
-        self, sync: ClaimedSync, new_videos: int | None = None, video: PendingVideo | None = None
+        self,
+        sync: ClaimedSync,
+        new_videos: int | None = None,
+        video: PendingVideo | None = None,
+        fetching: str | None = None,
     ) -> bool:
-        """Refreshes and publishes the Sync's counts, and the Video's stage if given; False if the Sync is gone."""
+        """Refreshes and publishes the Sync's counts (naming the Video being fetched, if any), and the Video's stage
+        if given; False if the Sync is gone."""
 
         def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None]:
             return (
@@ -220,13 +226,15 @@ class SyncWorker:
             self._events.video(sync.channel_id, changed)
         if updated is None:
             return False
-        self._events.sync(updated)
+        self._events.sync(replace(updated, fetching=fetching))
         return True
 
     async def _advance(self, sync: ClaimedSync, rules: ExclusionRules, video: PendingVideo) -> bool:
         """Runs the Video's remaining stages in order; False if the Sync should stop without finishing."""
         for stage in videos.PIPELINE[videos.PIPELINE.index(video.pipeline_stage) + 1 :]:
             if self._lease_lost:
+                return False
+            if stage == "transcript_fetched" and not await self._progress(sync, fetching=video.title):
                 return False
             outcome = await self._run_stage(rules, video, stage)
             if outcome == "gone" or not await self._progress(sync, video=video):

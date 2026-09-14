@@ -1,9 +1,10 @@
 import asyncio
 from datetime import date
 from typing import Annotated, Self
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import APIRouter, status
-from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, field_validator, model_validator
 
 from mentor import mentors
 from mentor.db import Database
@@ -39,6 +40,16 @@ class FiltersBody(BaseModel):
     published_before: date | None
     playlist_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}$")] | None
     most_recent: Annotated[StrictInt, Field(ge=1, le=100_000)] | None
+
+    @field_validator("playlist_id", mode="before")
+    @classmethod
+    def playlist_from_url(cls, value: object) -> object:
+        """A playlist URL, as copied from the address bar, gives its list parameter."""
+        if isinstance(value, str) and "list=" in value:
+            listed = parse_qs(urlsplit(value.strip()).query).get("list")
+            if listed:
+                return listed[0]
+        return value
 
     @model_validator(mode="after")
     def dates_in_order(self) -> Self:

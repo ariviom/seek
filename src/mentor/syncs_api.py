@@ -43,6 +43,14 @@ def syncs_router(database: Database, events: Events, wake_worker: Callable[[], N
         wake_worker()
         return sync
 
+    @router.post("/videos/{video_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+    async def retry_video(video_id: int) -> Sync:
+        channel_id, sync = await database.run(lambda conn: syncs.retry_video(conn, video_id))
+        events.videos(channel_id)
+        events.sync(sync)
+        wake_worker()
+        return sync
+
     @router.get("/syncs")
     async def list_syncs() -> list[Sync]:
         return await database.run(syncs.list_syncs)

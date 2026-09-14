@@ -27,6 +27,26 @@ class Channel:
     name: str
     indexed: bool
     filters: ChannelFilters
+    # Videos searchable (done), failed, and excluded, and when the Channel's last Sync finished successfully.
+    indexed_videos: int = 0
+    failed_videos: int = 0
+    excluded_videos: int = 0
+    last_synced_at: str | None = None
+
+
+# The channels table with each Channel's Video counts and last completed Sync.
+_CHANNEL_SQL = """
+    SELECT channels.*,
+           (SELECT count(*) FROM videos WHERE videos.channel_id = channels.id AND videos.pipeline_stage = 'done'
+              AND videos.excluded_reason IS NULL AND videos.failure_stage IS NULL) AS indexed_videos,
+           (SELECT count(*) FROM videos WHERE videos.channel_id = channels.id AND videos.excluded_reason IS NULL
+              AND videos.failure_stage IS NOT NULL) AS failed_videos,
+           (SELECT count(*) FROM videos WHERE videos.channel_id = channels.id
+              AND videos.excluded_reason IS NOT NULL) AS excluded_videos,
+           (SELECT max(finished_at) FROM syncs WHERE syncs.channel_id = channels.id AND syncs.status = 'done')
+              AS last_synced_at
+    FROM channels
+"""
 
 
 @dataclass(frozen=True)
@@ -38,11 +58,11 @@ class Mentor:
 
 def _select_mentors(conn: sqlite3.Connection, mentor_id: int | None = None) -> list[Mentor]:
     rows = conn.execute(
-        """
-        SELECT mentors.name AS mentor_name, channels.*
-        FROM mentors JOIN channels ON channels.mentor_id = mentors.id
+        f"""
+        SELECT mentors.name AS mentor_name, channel.*
+        FROM mentors JOIN ({_CHANNEL_SQL}) AS channel ON channel.mentor_id = mentors.id
         WHERE ?1 IS NULL OR mentors.id = ?1
-        ORDER BY mentors.name COLLATE NOCASE, mentors.id, channels.id
+        ORDER BY mentors.name COLLATE NOCASE, mentors.id, channel.id
         """,
         (mentor_id,),
     )
@@ -62,6 +82,10 @@ def _channel(row: sqlite3.Row) -> Channel:
         name=row["name"],
         indexed=bool(row["indexed"]),
         filters=read_filters(row),
+        indexed_videos=row["indexed_videos"],
+        failed_videos=row["failed_videos"],
+        excluded_videos=row["excluded_videos"],
+        last_synced_at=row["last_synced_at"],
     )
 
 
@@ -88,7 +112,7 @@ def _require_mentor(conn: sqlite3.Connection, mentor_id: int) -> None:
 
 
 def _get_channel(conn: sqlite3.Connection, channel_id: int) -> tuple[int, Channel]:
-    row = conn.execute("SELECT * FROM channels WHERE id = ?", (channel_id,)).fetchone()
+    row = conn.execute(f"{_CHANNEL_SQL} WHERE channels.id = ?", (channel_id,)).fetchone()
     if row is None:
         raise NotFound(f"Channel {channel_id} not found")
     return int(row["mentor_id"]), _channel(row)

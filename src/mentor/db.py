@@ -181,6 +181,10 @@ MIGRATIONS = [
     -- A reindex Sync re-segments and re-embeds the Channel's indexed Videos, e.g. after the passage text changed.
     ALTER TABLE syncs ADD COLUMN reindex INTEGER NOT NULL DEFAULT 0 CHECK (reindex IN (0, 1));
     """,
+    """
+    -- A title the user gave the Conversation; NULL shows its first question.
+    ALTER TABLE conversations ADD COLUMN title TEXT;
+    """,
 ]
 
 

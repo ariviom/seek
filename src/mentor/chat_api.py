@@ -12,6 +12,7 @@ from mentor import conversations
 from mentor.chat import Chat
 from mentor.conversations import Conversation, ConversationDetail, ConversationSummary
 from mentor.db import Database
+from mentor.errors import Conflict
 from mentor.events_api import SSE_HEADERS
 
 
@@ -23,6 +24,10 @@ class NewConversation(BaseModel):
 
 class NewMessage(BaseModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10_000)]
+
+
+class ConversationRename(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 def chat_router(database: Database, chat: Chat, keepalive_seconds: float) -> APIRouter:
@@ -39,6 +44,21 @@ def chat_router(database: Database, chat: Chat, keepalive_seconds: float) -> API
     @router.get("/conversations/{conversation_id}")
     async def get_conversation(conversation_id: int) -> ConversationDetail:
         return await database.run(lambda conn: conversations.get_conversation(conn, conversation_id))
+
+    @router.patch("/conversations/{conversation_id}")
+    async def rename_conversation(conversation_id: int, body: ConversationRename) -> ConversationSummary:
+        return await database.run(lambda conn: conversations.rename_conversation(conn, conversation_id, body.title))
+
+    @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_conversation(conversation_id: int) -> None:
+        if chat.answering(conversation_id):
+            raise Conflict("This Conversation is still answering; stop it first")
+        await database.run(lambda conn: conversations.delete_conversation(conn, conversation_id))
+
+    @router.delete("/conversations/{conversation_id}/turn", status_code=status.HTTP_204_NO_CONTENT)
+    async def stop_turn(conversation_id: int) -> None:
+        """Stops the answer under way; the question stays, without an answer."""
+        chat.stop(conversation_id)
 
     @router.post("/conversations/{conversation_id}/messages")
     async def send_message(conversation_id: int, body: NewMessage) -> StreamingResponse:

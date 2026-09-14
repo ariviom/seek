@@ -50,6 +50,7 @@ class Video:
 class PendingVideo:
     id: int
     youtube_video_id: str
+    title: str
     pipeline_stage: PipelineStage
 
 
@@ -249,14 +250,14 @@ def pending_videos(conn: sqlite3.Connection, channel_id: int) -> list[PendingVid
     """Videos a Sync should advance: not done, not excluded, and not permanently failed."""
     rows = conn.execute(
         """
-        SELECT id, youtube_video_id, pipeline_stage FROM videos
+        SELECT id, youtube_video_id, title, pipeline_stage FROM videos
         WHERE channel_id = ? AND pipeline_stage != 'done' AND excluded_reason IS NULL
           AND (failure_stage IS NULL OR failure_permanent = 0)
         ORDER BY id
         """,
         (channel_id,),
     )
-    return [PendingVideo(row["id"], row["youtube_video_id"], row["pipeline_stage"]) for row in rows]
+    return [PendingVideo(row["id"], row["youtube_video_id"], row["title"], row["pipeline_stage"]) for row in rows]
 
 
 def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetails, rules: ExclusionRules) -> bool:
@@ -365,6 +366,19 @@ def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> None:
         """,
         (channel_id,),
     )
+
+
+def clear_failure(conn: sqlite3.Connection, video_id: int) -> int:
+    """Within a transaction: the Video, permanently failed or not, resumes from its last completed stage on the
+    next Sync. Returns its Channel's id."""
+    row = conn.execute("SELECT channel_id FROM videos WHERE id = ?", (video_id,)).fetchone()
+    if row is None:
+        raise NotFound(f"Video {video_id} not found")
+    conn.execute(
+        "UPDATE videos SET failure_stage = NULL, failure_reason = NULL, failure_permanent = NULL WHERE id = ?",
+        (video_id,),
+    )
+    return int(row["channel_id"])
 
 
 def clear_failures(conn: sqlite3.Connection, channel_id: int) -> None:

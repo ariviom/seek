@@ -54,6 +54,10 @@ async def test_channel_filters_are_editable_without_touching_indexed(client: htt
         "youtube_channel_id": "UC-wright",
         "name": "Wood By Wright",
         "indexed": False,
+        "indexed_videos": 0,
+        "failed_videos": 0,
+        "excluded_videos": 0,
+        "last_synced_at": None,
         "filters": {
             "published_after": "2023-01-01",
             "published_before": "2024-12-31",
@@ -74,7 +78,7 @@ async def test_invalid_channel_filters_are_rejected(client: httpx.AsyncClient) -
         {"published_after": "last spring"},
         {"most_recent": 0},
         {"most_recent": "10"},
-        {"playlist_id": "https://www.youtube.com/playlist?list=PL1"},
+        {"playlist_id": "https://www.youtube.com/playlist?listing=PL1"},
         {"playlist_id": ""},
     ]
 
@@ -87,6 +91,9 @@ async def test_invalid_channel_filters_are_rejected(client: httpx.AsyncClient) -
     assert unknown.status_code == 404
     [listed] = (await client.get("/api/mentors")).json()
     assert listed["channels"][0]["filters"] == NO_FILTERS
+    # A playlist URL from the address bar gives its id.
+    from_url = await set_filters(client, channel_id, playlist_id="https://www.youtube.com/playlist?list=PL1&si=x")
+    assert from_url["filters"]["playlist_id"] == "PL1"
 
 
 async def test_date_filters_exclude_videos_published_outside_the_range(

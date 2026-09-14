@@ -30,6 +30,8 @@ class Sync:
     finished_at: str | None
     new_videos: int
     stage_counts: dict[str, int]
+    # The title of the Video being fetched, on the event published as a running Sync starts fetching it.
+    fetching: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,14 @@ def retry_failed(conn: sqlite3.Connection, channel_id: int) -> Sync:
         _require_channel(conn, channel_id)
         videos.clear_failures(conn, channel_id)
         return _enqueue(conn, channel_id, retry_failed=True)
+
+
+def retry_video(conn: sqlite3.Connection, video_id: int) -> tuple[int, Sync]:
+    """Clears one Video's failure, permanent or not, and queues a Sync for its Channel; returns the Channel's id
+    and the Sync."""
+    with transaction(conn):
+        channel_id = videos.clear_failure(conn, video_id)
+        return channel_id, _enqueue(conn, channel_id, retry_failed=False)
 
 
 def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
