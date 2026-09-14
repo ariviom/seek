@@ -66,6 +66,22 @@ export function App() {
     setView("chats");
     select({ conversation: conversationId ?? undefined });
   };
+  // A reload reopens the Conversation the URL names, in the scope it was held in; only what the URL carried at load.
+  const [restoring] = useState(() => selection.conversation);
+  useEffect(() => {
+    if (restoring === undefined) return;
+    void api.getConversation(restoring).then(
+      (detail) =>
+        setChat({
+          scope: detail.scope.id === null ? null : { kind: detail.scope.kind, id: detail.scope.id },
+          conversationId: restoring,
+          draft: "",
+          opening: ++openings.current,
+        }),
+      () => undefined,
+    );
+  }, [restoring]);
+
   const groupsLoaded = useCallback((loaded: Group[]) => {
     setGroups(loaded);
     // A deleted or renamed Group changes how its Conversations are listed.

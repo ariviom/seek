@@ -1,5 +1,3 @@
-import type { Stage } from "@/lib/api";
-
 // The class strings the v1 Chats and Search components still share, on shadcn's tokens until tickets 04 and 05
 // replace those components with the real shadcn primitives.
 export const inputClass =
@@ -19,14 +17,3 @@ export const sectionHeadingClass = "text-lg font-semibold tracking-tight";
 export const alertClass = "mt-3 rounded-md border-l-4 border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive";
 export const hintClass = "text-sm text-muted-foreground";
 
-// Pipeline stages run from a grey start through amber work to green done; excluded is striped.
-export const stageFill: Record<Stage, string> = {
-  discovered: "bg-zinc-400",
-  transcript_fetched: "bg-amber-300",
-  segmented: "bg-amber-400",
-  embedded: "bg-emerald-500/60",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-  excluded:
-    "bg-[repeating-linear-gradient(135deg,color-mix(in_oklab,var(--muted-foreground)_50%,transparent)_0_2px,transparent_2px_5px)]",
-};
