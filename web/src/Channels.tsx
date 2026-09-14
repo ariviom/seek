@@ -16,7 +16,7 @@ import { ChannelFiltersForm, filtersSummary } from "./ChannelFilters";
 import { useServerEvents } from "./events";
 import { ChannelVideos } from "./Videos";
 
-export function Mentors({ onLoaded }: { onLoaded: (channels: Channel[]) => void }) {
+export function Channels({ onLoaded }: { onLoaded: (channels: Channel[]) => void }) {
   const [channels, setChannels] = useState<Channel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +65,7 @@ export function Mentors({ onLoaded }: { onLoaded: (channels: Channel[]) => void 
           <p className={`mt-5 ${hintClass}`}>Loading…</p>
         ) : channels.length === 0 ? (
           <p className={`mt-5 ${hintClass}`}>
-            No Channels yet. Paste a creator's YouTube channel above to add the first one.
+            No Channels yet. Paste a YouTube channel above to add the first one.
           </p>
         ) : (
           <ul className="mt-5 space-y-4">

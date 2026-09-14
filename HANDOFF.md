@@ -2,20 +2,20 @@
 
 **Next up (decided 2026-09-14, evening): v2, the sidebar chat UI on a Channel model.** Read ADR 0003, then
 `docs/specs/0002-sidebar-chat-ui.md` (reviewed; its decisions win over spec 0001 where they differ), then the six tickets
-in `.scratch/mentor-v2/issues/`. Start with ticket 01 (backend) on a `mentor-v2` branch off `main`, one ticket per
+in `.scratch/mentor-v2/issues/`. Ticket 01 (backend) is done; continue with 02 to 06 in a worktree off `main`, one ticket per
 session as before. The prototype the spec cites is commit `8d51635` on branch `t3code/sidebar-chat-ui-prototype`
 (`pnpm --dir web dev`, then `?variant=B2`); it is a reference, never merged. Drew's calls from the prototype rounds:
 rail + list + main + Sources inspector; shadcn zinc with Geist, dark and light; chats filed under the Group or Channel
 they consult, one flat folder list; Channels before Groups in the Library with the add buttons in the sidebar; a real
 YouTube embed in the inspector with a centred lightbox; "Mentor" survives only as the product name.
 
-State as of 2026-09-14 (end of day): tickets 01–17 and 19–21 are done, reviewed on both axes against the old `main`, and fast-forwarded into `main` (deferred findings are appended to tickets 19, 20, and 21). Ticket 18 is the only one open: its setup checklist is in the ticket, and it waits on Drew creating the Access application for `remote.example.com` (Google login; Managed OAuth only if Claude Desktop should connect) and sending the AUD tag and team domain, which go in `~/.config/mentor/config.toml` with `allowed_hosts`. Reinstalled from `main` on 2026-09-14 (schema 8; backup at `~/.local/share/mentor/mentor.db.pre-66d93bf.bak`). The live knowledge base has no Mentors yet, so no reindex is needed. Remote access (2026-09-14): Access (Google login) is live on `remote.example.com`; the Cloudflare route reaches this machine's port 7337 directly, as for Drew's other apps, so instead of a tunnel mentor got `listen_all_interfaces` (refused without the Access keys). `~/.config/mentor/config.toml` sets `allowed_hosts`, both Access keys, and `listen_all_interfaces = true`; checked that loopback gets 200 and a LAN request with the public Host gets 403. Ticket 18 still needs Drew to sign in through the hostname, the Managed OAuth decision for Claude Desktop, and the per-client checks. mentor is installed as a uv tool from the main checkout and runs as the `mentor` systemd user service on 7337 (data in `~/.local/share/mentor`).
+State as of 2026-09-14 (end of day): tickets 01–17 and 19–21 are done, reviewed on both axes against the old `main`, and fast-forwarded into `main` (deferred findings are appended to tickets 19, 20, and 21). Ticket 18 is the only one open: its setup checklist is in the ticket, and it waits on Drew creating the Access application for `remote.example.com` (Google login; Managed OAuth only if Claude Desktop should connect) and sending the AUD tag and team domain, which go in `~/.config/mentor/config.toml` with `allowed_hosts`. Reinstalled from `main` on 2026-09-14 (schema 8; backup at `~/.local/share/mentor/mentor.db.pre-66d93bf.bak`). The live knowledge base has no Channels yet, so no reindex is needed. Remote access (2026-09-14): Access (Google login) is live on `remote.example.com`; the Cloudflare route reaches this machine's port 7337 directly, as for Drew's other apps, so instead of a tunnel mentor got `listen_all_interfaces` (refused without the Access keys). `~/.config/mentor/config.toml` sets `allowed_hosts`, both Access keys, and `listen_all_interfaces = true`; checked that loopback gets 200 and a LAN request with the public Host gets 403. Ticket 18 still needs Drew to sign in through the hostname, the Managed OAuth decision for Claude Desktop, and the per-client checks. mentor is installed as a uv tool from the main checkout and runs as the `mentor` systemd user service on 7337 (data in `~/.local/share/mentor`). Ticket 01 (Channel model, backend) landed on `main` as 7e28daa and the service was reinstalled on 2026-09-14 (schema 9; backup `~/.local/share/mentor/mentor.db.pre-d02040a.bak`).
 
 Read in this order:
-1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Mentor").
-2. `docs/specs/0001-mentor-v1.md` — the spec. Its "Review amendments" section wins over earlier text.
-3. `docs/adr/` — two accepted decisions.
-4. `.scratch/mentor-v1/issues/` — 21 tickets. Read the "From ticket NN review" notes appended to the ticket you pick up; they carry deferred findings.
+1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Group"; "Mentor" is the product name only).
+2. `docs/specs/0002-sidebar-chat-ui.md` — the current spec; `docs/specs/0001-mentor-v1.md` for what it doesn't cover (its "Review amendments" section wins over its earlier text).
+3. `docs/adr/` — three accepted decisions.
+4. `.scratch/mentor-v2/issues/` — six tickets (01 done on 2026-09-14, 02 and 03 in progress). `.scratch/mentor-v1/issues/` is history: 21 tickets, with "From ticket NN review" notes carrying deferred findings.
 
 ## Codebase conventions so far
 - `create_app(config, transcripts, embedder, reranker, chat_engine, static_dir, sync_poll_seconds, events_keepalive_seconds, model_progress_seconds, sql_time_limit_seconds)`: each port is its own argument, added when its first consumer lands. Lifespan loads the models in the background and starts the `SyncWorker` task (`sync_worker.py`), which is woken on enqueue and on model state changes, and polls; it runs Syncs only while holding the `sync_lease` row, and only once the embedding model is ready (or has failed). `mentor serve` wires `YouTubeTranscriptSource` (yt-dlp, `youtube.py`, settings from `youtube_*` config), the real models from `models.py` sharing one `GpuRunner`, and `ClaudeChatEngine` with `claude_cli_path` or else the `claude` on PATH.
@@ -40,7 +40,7 @@ Read in this order:
 - Checks: `uv run pytest -q`, `uv run mypy`, `pnpm --dir web run typecheck`.
 
 ## Process
-- `/implement` one ticket per session in the worktree `.claude/worktrees/mentor-v1` (branch `mentor-v1`). Then `/code-review` against `main` on both axes, fix what is in scope, and append deferred findings to the owning tickets. Mark the ticket done, commit, and fast-forward `main` before the next ticket.
+- `/implement` one ticket per session in a worktree off `main` (e.g. `.claude/worktrees/sidebar-chat-ui`). Then `/code-review` against `main` on both axes, fix what is in scope, and append deferred findings to the owning tickets. Mark the ticket done, commit, and fast-forward `main` before the next ticket.
 - The `reviewer` agent definition pins Fable 5.1. When Fable is rate-limited, pass `model: opus` (Drew's session model).
 - Ticket 18 needs Drew at the Cloudflare dashboard; the checklist is in the ticket.
 

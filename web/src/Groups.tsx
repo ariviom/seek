@@ -39,7 +39,7 @@ export function Groups({
     } catch (e) {
       if (load !== latestLoad.current) return;
       setGroups((current) => current ?? []);
-      setError(`Could not load Mentor Groups: ${errorText(e)}`);
+      setError(`Could not load Groups: ${errorText(e)}`);
     }
   }, [onLoaded]);
 
@@ -54,7 +54,7 @@ export function Groups({
   return (
     <section aria-labelledby="groups-heading">
       <h2 id="groups-heading" className={sectionHeadingClass}>
-        Mentor Groups
+        Groups
       </h2>
       <p className={`mt-2 ${hintClass}`}>A Group is a set of Channels you consult together on one discipline.</p>
       {error && (
@@ -67,7 +67,7 @@ export function Groups({
         {groups === null ? (
           <p className={`mt-5 ${hintClass}`}>Loading…</p>
         ) : groups.length === 0 ? (
-          <p className={`mt-5 ${hintClass}`}>No Mentor Groups yet. Name one above, then pick its Channels.</p>
+          <p className={`mt-5 ${hintClass}`}>No Groups yet. Name one above, then pick its Channels.</p>
         ) : (
           <ul className="mt-5 space-y-4">
             {groups.map((group) => (
@@ -92,10 +92,10 @@ function AddGroup({ act }: { act: Act }) {
     <form onSubmit={create} className="mt-4 flex flex-wrap gap-2">
       <input
         className={`${inputClass} min-w-56 flex-1`}
-        placeholder="New Mentor Group name, e.g. Woodworking"
+        placeholder="New Group name, e.g. Woodworking"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        aria-label="Mentor Group name"
+        aria-label="Group name"
       />
       <button className={buttonClass} type="submit" disabled={!name.trim()}>
         Create Group
@@ -145,7 +145,7 @@ function GroupCard({
               className={inputClass}
               value={renaming}
               onChange={(e) => setRenaming(e.target.value)}
-              aria-label="New Mentor Group name"
+              aria-label="New Group name"
             />
             <button className={buttonClass} type="submit" disabled={!renaming.trim()}>
               Save
@@ -162,7 +162,7 @@ function GroupCard({
           <button
             className={dangerButtonClass}
             onClick={() => {
-              if (confirm(`Delete the Mentor Group ${group.name}? Its Channels are kept, and its Conversations stay readable.`)) {
+              if (confirm(`Delete the Group ${group.name}? Its Channels are kept, and its Conversations stay readable.`)) {
                 void act(() => api.deleteGroup(group.id));
               }
             }}

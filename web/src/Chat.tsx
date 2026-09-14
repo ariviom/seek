@@ -7,7 +7,7 @@ import {
   type Citation,
   type ClaudeCli,
   type ConversationDetail,
-  type Group,
+  type Scope,
 } from "./api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
 import {
@@ -85,18 +85,21 @@ function consultedVideos(content: string): string[] {
   return videos;
 }
 
-// A chat with one Mentor Group: a new Conversation (created with the first question) or an existing one. `draft`
+// The Group or Channel a chat asks, with its name and the Channels that answer.
+export type ChatScope = Scope & { name: string; members: string[] };
+
+// A chat with one Group or Channel: a new Conversation (created with the first question) or an existing one. `draft`
 // prefills the question.
-// `group` is null when the Conversation's Group has been deleted, which leaves the Conversation read-only.
+// `scope` is null when the Conversation's Group or Channel has been deleted, which leaves the Conversation read-only.
 export function Chat({
-  group,
+  scope,
   conversationId: openedId,
   claude,
   draft: initialDraft,
   onClose,
   onChanged,
 }: {
-  group: Group | null;
+  scope: ChatScope | null;
   conversationId: number | null;
   claude: ClaudeCli | null;
   draft: string;
@@ -118,9 +121,9 @@ export function Chat({
   const list = useRef<HTMLOListElement>(null);
   const questionBox = useRef<HTMLTextAreaElement>(null);
   const busy = useRef(false);
-  // The Group's name as last seen, for when it is deleted while this chat is open.
-  const lastGroupName = useRef(group?.name ?? "");
-  if (group !== null) lastGroupName.current = group.name;
+  // The scope's name as last seen, for when it is deleted while this chat is open.
+  const lastScopeName = useRef(scope?.name ?? "");
+  if (scope !== null) lastScopeName.current = scope.name;
 
   useEffect(() => {
     if (initialId === null) return;
@@ -155,8 +158,8 @@ export function Chat({
   const loading = initialId !== null && detail === null && error === null;
   // A Conversation that couldn't be loaded isn't continued blind.
   const loadFailed = initialId !== null && detail === null && error !== null;
-  const groupName = group?.name ?? detail?.scope.name ?? lastGroupName.current;
-  const deleted = group === null || detail?.scope.id === null;
+  const scopeName = scope?.name ?? detail?.scope.name ?? lastScopeName.current;
+  const deleted = scope === null || detail?.scope.id === null;
 
   // Applies a change to the answer being streamed, the last entry.
   function updateAnswer(change: (answer: Answer) => Answer) {
@@ -208,7 +211,7 @@ export function Chat({
     event.preventDefault();
     const question = draft.trim();
     // Enter submits the form even while Ask is disabled, and state updates land a render late, so a ref guards.
-    if (busy.current || question === "" || group === null) return;
+    if (busy.current || question === "" || scope === null) return;
     busy.current = true;
     setError(null);
     setAnswering(true);
@@ -217,7 +220,7 @@ export function Chat({
     let id = conversationId;
     try {
       if (id === null) {
-        id = (await api.createConversation(group.id, model)).id;
+        id = (await api.createConversation(scope, model)).id;
         setConversationId(id);
       }
       setEntries((current) => [
@@ -271,21 +274,22 @@ export function Chat({
     <section aria-labelledby="chat-heading" className="rounded-md bg-panel px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="chat-heading" className={sectionHeadingClass}>
-          Ask {groupName}
+          Ask {scopeName}
         </h2>
         {/* Closing mid-answer leaves the turn running on the server; its answer is saved to the Conversation. */}
         <button className={quietButtonClass} type="button" onClick={onClose}>
           Close
         </button>
       </div>
-      {group === null || detail?.scope.id === null ? (
+      {scope === null || detail?.scope.id === null ? (
         <p className={`mt-2 ${hintClass}`}>
-          The Mentor Group {groupName} was deleted, so this Conversation can be read but not continued.
+          The {(scope?.kind ?? detail?.scope.kind) === "channel" ? "Channel" : "Group"} {scopeName} was deleted, so this
+          Conversation can be read but not continued.
         </p>
       ) : (
         <p className={`mt-2 ${hintClass}`}>
-          Answers come only from what {group.channels.map((c) => c.name).join(", ") || "its Channels"} said, with links to
-          the moments they said it.
+          Answers come only from what {scope.members.join(", ") || "its Channels"} said, with links to the moments they
+          said it.
         </p>
       )}
       {!deleted && !loadFailed && claude !== null && claude.state !== "ready" && (
@@ -332,7 +336,7 @@ export function Chat({
                   e.currentTarget.form?.requestSubmit();
                 }
               }}
-              aria-label="Question for the Mentor Group"
+              aria-label="Question for the chat"
               ref={questionBox}
             />
             {answering ? (

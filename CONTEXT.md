@@ -4,14 +4,11 @@ The ubiquitous language for this project. Terms only; no implementation detail.
 
 ## Terms
 
-**Mentor**
-A creator (a person or brand) whose teaching you want advice from. Owns one or more Channels. Identified by a name you give it.
-
 **Channel**
-A YouTube channel. Belongs to exactly one Mentor. The unit at which content is ingested and filtered.
+A YouTube channel. The unit of ingestion, filtering, search scope, and citation. Identified by a name you give it, defaulting to its display name.
 
-**Mentor Group**
-A named set of Mentors you consult together on a discipline (e.g. "woodworking"). A Mentor may belong to many Groups. Group membership is by Mentor, never by Channel.
+**Group**
+A named set of Channels you consult together on a discipline (e.g. "woodworking"). A Channel may belong to many Groups.
 
 **Video**
 One YouTube video on a Channel. Carries its publish date, which is used to judge how current its advice is.
@@ -32,21 +29,23 @@ A run of the ingestion pipeline for one Channel. Discovers new Videos and advanc
 Where a Video sits in ingestion: discovered, transcript fetched, segmented, embedded, done, or failed with a reason. Failed Videos can be retried. A Video can also be excluded with a reason (too short, or outside the Channel's filters); excluded Videos are not processed and are not failures.
 
 **Conversation**
-A saved chat thread with one Mentor Group. Resumable.
+A saved chat thread scoped to exactly one Group or one Channel; a Channel alone works like a group of one. Resumable.
 
 ## Relationships
 
-- Mentor Group ⟷ Mentor: many-to-many
-- Mentor → Channel: one-to-many
+- Group ⟷ Channel: many-to-many
 - Channel → Video: one-to-many
 - Video → Transcript: one-to-one
 - Transcript → Segment: one-to-many
-- Mentor Group → Conversation: one-to-many
+- Group → Conversation: one-to-many
+- Channel → Conversation: one-to-many
 - Channel → Sync: one-to-many (over time)
 
 ## Decisions reflected in the language
 
-- A Group is a set of Mentors, not Channels. Excluding a Channel is done at the Mentor level (mark it not indexed), not per Group.
+- A Group is a set of Channels. Excluding a Channel from search is done on the Channel (mark it not indexed), not per Group.
+- A deleted Group or Channel leaves its Conversations readable but not continuable.
+- "Mentor" is the product's name and nothing else.
 - Shorts and very short Videos are excluded from ingestion by default.
 - The tool has one user. Identity, when accessed remotely, is established outside the tool.
 - Newer Videos are preferred over older ones when they address the same question; every result exposes its publish date.

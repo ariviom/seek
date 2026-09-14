@@ -93,7 +93,7 @@ async def test_add_a_channel_sync_search_and_watch_citations(
             embed = ("www.youtube-nocookie.com", "/embed/bench-flat1")
             assert await embedded_at(result.locator("iframe")) == (*embed, ["15"])
 
-            await page.get_by_label("Mentor Group name", exact=True).fill("Benches")
+            await page.get_by_label("Group name", exact=True).fill("Benches")
             await page.get_by_role("button", name="Create Group").click()
             member = page.get_by_role("list", name="Channels in Benches").get_by_label("Wright")
             # Ticked once the server has saved it.
@@ -101,7 +101,7 @@ async def test_add_a_channel_sync_search_and_watch_citations(
             await expect(member).to_be_checked()
             await page.get_by_role("button", name="Ask", exact=True).click()
             chat = page.get_by_role("region", name="Ask Benches")
-            await chat.get_by_label("Question for the Mentor Group").fill("How do I flatten a bench?")
+            await chat.get_by_label("Question for the chat").fill("How do I flatten a bench?")
             await chat.get_by_role("button", name="Ask", exact=True).click()
             conversation = chat.get_by_role("list", name="Conversation")
             await conversation.get_by_role("link", name="Wright, 1:05").click()

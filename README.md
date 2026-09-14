@@ -1,7 +1,7 @@
 # mentor
 
-Turns YouTube channels into a cited, searchable knowledge base. You add the creators you learn from as Mentors, Sync
-their Channels, and then ask questions: in the web UI, or from Claude Code, Codex, or Claude Desktop over MCP. Every
+Turns YouTube channels into a cited, searchable knowledge base. You add the YouTube channels you learn from, Sync
+them, group them, and then ask questions: in the web UI, or from Claude Code, Codex, or Claude Desktop over MCP. Every
 answer links back to the moment in the Video where it was said.
 
 ## Requirements
@@ -94,7 +94,7 @@ run: `systemctl --user list-timers mentor-sync.timer`. Logs: `journalctl --user 
 
 ```sh
 mentor status   # the server, its models, the Claude CLI, and running and queued Syncs
-mentor list     # Mentors and their Channels: indexed, failed, and excluded Videos, and when each last synced
+mentor list     # Channels with indexed, failed, and excluded Videos and when each last synced, then Groups with their Channels
 ```
 
 Both ask the running server. When none answers, they read the knowledge base instead: `mentor status` then says the
@@ -104,7 +104,7 @@ server isn't running (only the server loads the models) and checks the Claude CL
 
 Your data lives in `~/.local/share/mentor/` (or `$XDG_DATA_HOME/mentor`, or the `data_dir` setting):
 
-- `mentor.db` holds the whole knowledge base in one SQLite file: Mentors, Channels, Transcripts, Segments, vectors,
+- `mentor.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Transcripts, Segments, vectors,
   and Conversations.
 - `chat/` is the empty working directory the web chat runs the Claude CLI in.
 
@@ -241,11 +241,12 @@ codex mcp add mentor --url http://127.0.0.1:7337/mcp
 localhost. [Publish the server](#publishing-through-a-reverse-proxy), behind an identity gate. Then, in Settings →
 Connectors → Add custom connector, enter `https://mentor.example.com/mcp`.
 
-The tools are `list_groups`, `search`, `expand`, `get_video`, and `sql`.
+The tools are `list_groups`, `list_channels`, `search` (scoped to a `group` or a list of `channels`), `expand`,
+`get_video`, and `sql`.
 
 ## Web chat
 
-Each Mentor Group card has an Ask button, which answers through your own Claude CLI. Whether it can run shows in the
+A chat in a Group or a Channel answers through your own Claude CLI. Whether it can run shows in the
 footer's "Claude CLI" entry, and in the `claude_cli` part of `/api/health` with a message saying what to do:
 
 | State | What to do |

@@ -6,6 +6,7 @@ import {
   type Channel,
   type Group,
   type PreferRecent,
+  type Scope,
   type SearchResult,
 } from "./api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
@@ -29,7 +30,8 @@ const recencyLabels: Record<PreferRecent, string> = {
 
 type Outcome = { query: string; results: SearchResult[] };
 
-// `channels` and `groups` are null until their sections have loaded. `onAsk` opens a Group's chat with a question drafted.
+// `channels` and `groups` are null until their sections have loaded. `onAsk` opens the scope's chat with a question
+// drafted.
 export function Search({
   channels,
   groups,
@@ -37,7 +39,7 @@ export function Search({
 }: {
   channels: Channel[] | null;
   groups: Group[] | null;
-  onAsk: (group: Group, draft: string) => void;
+  onAsk: (scope: Scope, draft: string) => void;
 }) {
   const [query, setQuery] = useState("");
   // "everything", "channels" (the ticked Channels), or `group:<id>`.
@@ -78,12 +80,12 @@ export function Search({
     }
   }
 
-  // The Group searched, else the first Group with the result's Channel; none hides "Ask about this".
-  function askGroup(result: SearchResult, searchedGroupId: number | null): Group | undefined {
-    return (
-      groups?.find((g) => g.id === searchedGroupId) ??
-      groups?.find((g) => g.channels.some((c) => c.id === result.channel_id))
-    );
+  // The Group searched, else the result's own Channel.
+  function askScope(result: SearchResult, searchedGroupId: number | null): { scope: Scope; name: string } {
+    const group = groups?.find((g) => g.id === searchedGroupId);
+    return group === undefined
+      ? { scope: { kind: "channel", id: result.channel_id }, name: result.channel_name }
+      : { scope: { kind: "group", id: group.id }, name: group.name };
   }
 
   function toggle(channelId: number, ticked: boolean) {
@@ -117,7 +119,7 @@ export function Search({
             <select className={inputClass} value={scopeShown} onChange={(e) => setScope(e.target.value)}>
               <option value="everything">Every Channel</option>
               {groups !== null && groups.length > 0 && (
-                <optgroup label="Mentor Groups">
+                <optgroup label="Groups">
                   {groups.map((group) => (
                     <option key={group.id} value={`group:${group.id}`}>
                       {group.name}
@@ -182,7 +184,7 @@ export function Search({
                 playing={player.playing?.where === result.segment_id ? player.playing : null}
                 onPlay={(seconds) => player.play(result.segment_id, { ...result, seconds })}
                 onClosePlayer={player.close}
-                askGroup={askGroup(result, outcome.groupId)}
+                ask={askScope(result, outcome.groupId)}
                 onAsk={onAsk}
               />
             ))}
@@ -197,15 +199,15 @@ function Result({
   playing,
   onPlay,
   onClosePlayer,
-  askGroup,
+  ask,
   onAsk,
 }: {
   result: SearchResult;
   playing: { citation: PlayerCitation; opening: number } | null;
   onPlay: (seconds: number) => void;
   onClosePlayer: () => void;
-  askGroup: Group | undefined;
-  onAsk: (group: Group, draft: string) => void;
+  ask: { scope: Scope; name: string };
+  onAsk: (scope: Scope, draft: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<Expansion | null>(null);
@@ -262,21 +264,19 @@ function Result({
         <button className={quietButtonClass} type="button" onClick={toggleContext} disabled={loading} aria-expanded={open}>
           {loading ? "Loading context…" : open ? "Hide context" : "Show context"}
         </button>
-        {askGroup !== undefined && (
-          <button
-            className={quietButtonClass}
-            type="button"
-            title={`Ask ${askGroup.name}`}
-            onClick={() =>
-              onAsk(
-                askGroup,
-                `About what ${result.channel_name} says in “${result.video_title}” at ${formatDuration(matched)}: `,
-              )
-            }
-          >
-            Ask about this
-          </button>
-        )}
+        <button
+          className={quietButtonClass}
+          type="button"
+          title={`Ask ${ask.name}`}
+          onClick={() =>
+            onAsk(
+              ask.scope,
+              `About what ${result.channel_name} says in “${result.video_title}” at ${formatDuration(matched)}: `,
+            )
+          }
+        >
+          Ask about this
+        </button>
       </div>
       {playing !== null && <CitationPlayer {...playing} onClose={onClosePlayer} />}
     </li>

@@ -123,7 +123,9 @@ export type Expansion = {
 
 // A null model uses the Claude CLI's default.
 // `scope.id` is null once the Group or Channel is deleted, which leaves the Conversation read-only.
-export type ConversationScope = { kind: "group" | "channel"; id: number | null; name: string };
+export type ScopeKind = "group" | "channel";
+export type Scope = { kind: ScopeKind; id: number };
+export type ConversationScope = { kind: ScopeKind; id: number | null; name: string };
 export type Conversation = {
   id: number;
   scope: ConversationScope;
@@ -226,11 +228,13 @@ export const api = {
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
-  createConversation: (groupId: number, model: string | null) =>
-    request<Conversation>(`groups/${groupId}/conversations`, { method: "POST", body: { model } }),
-  // Every Conversation, or one Group's.
-  listConversations: (groupId: number | null) =>
-    request<ConversationSummary[]>(groupId === null ? "conversations" : `conversations?group_id=${groupId}`),
+  createConversation: (scope: Scope, model: string | null) =>
+    request<Conversation>(`${scope.kind}s/${scope.id}/conversations`, { method: "POST", body: { model } }),
+  // Every Conversation, or one Group's or Channel's.
+  listConversations: (scope: Scope | null) =>
+    request<ConversationSummary[]>(
+      scope === null ? "conversations" : `conversations?${scope.kind}_id=${scope.id}`,
+    ),
   getConversation: (id: number) => request<ConversationDetail>(`conversations/${id}`),
   renameConversation: (id: number, title: string) =>
     request<ConversationSummary>(`conversations/${id}`, { method: "PATCH", body: { title } }),

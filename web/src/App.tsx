@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorText, type Channel, type Group, type Health, type Models, type ModelStatus } from "./api";
-import { Chat } from "./Chat";
+import {
+  api,
+  errorText,
+  type Channel,
+  type Group,
+  type Health,
+  type Models,
+  type ModelStatus,
+  type Scope,
+} from "./api";
+import { Channels } from "./Channels";
+import { Chat, type ChatScope } from "./Chat";
 import { Conversations } from "./Conversations";
 import { useLiveUpdatesStopped, useServerEvents } from "./events";
 import { Groups } from "./Groups";
-import { Mentors } from "./Mentors";
 import { Search } from "./Search";
 import { Syncs } from "./Syncs";
 import { hintClass } from "./ui";
@@ -50,25 +59,36 @@ function ModelNotice({ models }: { models: Models }) {
   );
 }
 
+// The scope with its latest name and the Channels that answer; null once it is gone or the lists haven't loaded.
+function resolveScope(scope: Scope | null, groups: Group[] | null, channels: Channel[] | null): ChatScope | null {
+  if (scope === null) return null;
+  if (scope.kind === "group") {
+    const group = groups?.find((g) => g.id === scope.id);
+    return group === undefined ? null : { ...scope, name: group.name, members: group.channels.map((c) => c.name) };
+  }
+  const channel = channels?.find((c) => c.id === scope.id);
+  return channel === undefined ? null : { ...scope, name: channel.name, members: [channel.name] };
+}
+
 export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [channels, setChannels] = useState<Channel[] | null>(null);
   const [groups, setGroups] = useState<Group[] | null>(null);
-  // The open chat: a Group's new Conversation, or a saved one (whose Group may be gone), with any prefilled question.
-  // `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
+  // The open chat: a Group's or Channel's new Conversation, or a saved one (whose scope may be gone), with any
+  // prefilled question. `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
   const [chat, setChat] = useState<{
-    groupId: number | null;
+    scope: Scope | null;
     conversationId: number | null;
     draft: string;
     opening: number;
   } | null>(null);
   const [conversationsVersion, setConversationsVersion] = useState(0);
-  // Shown with the Group's latest name and Channels; read-only once the Group is deleted.
-  const chatGroup = groups?.find((g) => g.id === chat?.groupId) ?? null;
+  // Shown with the scope's latest name and Channels; read-only once the Group or Channel is deleted.
+  const chatScope = resolveScope(chat?.scope ?? null, groups, channels);
 
   const openings = useRef(0);
-  const openChat = (groupId: number | null, conversationId: number | null, draft = "") => {
-    setChat({ groupId, conversationId, draft, opening: ++openings.current });
+  const openChat = (scope: Scope | null, conversationId: number | null, draft = "") => {
+    setChat({ scope, conversationId, draft, opening: ++openings.current });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const groupsLoaded = useCallback((loaded: Group[]) => {
@@ -130,11 +150,11 @@ export function App() {
       </header>
       <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <main className="min-w-0 space-y-12">
-          {/* A new chat whose Group was deleted before its first question just closes. */}
-          {chat !== null && groups !== null && (chatGroup !== null || chat.conversationId !== null) && (
+          {/* A new chat whose Group or Channel was deleted before its first question just closes. */}
+          {chat !== null && groups !== null && channels !== null && (chatScope !== null || chat.conversationId !== null) && (
             <Chat
               key={chat.opening}
-              group={chatGroup}
+              scope={chatScope}
               conversationId={chat.conversationId}
               claude={state.kind === "ok" ? state.health.claude_cli : null}
               draft={chat.draft}
@@ -147,16 +167,24 @@ export function App() {
               }}
             />
           )}
-          <Search channels={channels} groups={groups} onAsk={(group, draft) => openChat(group.id, null, draft)} />
-          <Mentors onLoaded={setChannels} />
-          <Groups channels={channels} onLoaded={groupsLoaded} onAsk={(group) => openChat(group.id, null)} />
+          <Search channels={channels} groups={groups} onAsk={(scope, draft) => openChat(scope, null, draft)} />
+          <Channels onLoaded={setChannels} />
+          <Groups
+            channels={channels}
+            onLoaded={groupsLoaded}
+            onAsk={(group) => openChat({ kind: "group", id: group.id }, null)}
+          />
           <Conversations
             groups={groups}
+            channels={channels}
             version={conversationsVersion}
             openId={chat?.conversationId ?? null}
             onOpen={(conversation) =>
-              // The v1 shell knows Group chats only; a Channel-scoped one (API-created) opens read-only.
-              openChat(conversation.scope.kind === "group" ? conversation.scope.id : null, conversation.id)
+              // A deleted scope has no id left, so the Conversation opens read-only.
+              openChat(
+                conversation.scope.id === null ? null : { kind: conversation.scope.kind, id: conversation.scope.id },
+                conversation.id,
+              )
             }
             onDeleted={(conversationId) =>
               setChat((current) => (current?.conversationId === conversationId ? null : current))
