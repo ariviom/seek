@@ -1,6 +1,6 @@
 # Handoff — Mentor
 
-State as of 2026-09-13: tickets 01–13 (walking skeleton, Mentors and Channels, Mentor Groups, Sync discovery and transcripts, Sync segmentation and embedding, Sync resilience and filters, Live Sync progress, Real YouTube adapter, Hybrid search, Real models, MCP server, Web chat, Conversation management) are done and reviewed, as is a web UI restyle. `main` is fast-forwarded through ticket 12; ticket 13 is committed on `mentor-v1` only. Next up: ticket 14 (Citation player and smoke test). YouTube bot-flagged this machine's IP on 2026-09-13 after a day of probing; wait before running `-m real_youtube` again.
+State as of 2026-09-13: tickets 01–13 (walking skeleton, Mentors and Channels, Mentor Groups, Sync discovery and transcripts, Sync segmentation and embedding, Sync resilience and filters, Live Sync progress, Real YouTube adapter, Hybrid search, Real models, MCP server, Web chat, Conversation management) are done and reviewed, as is a web UI restyle. `main` and `mentor-v1` are both at ticket 13. Next up: ticket 14 (Citation player and smoke test). YouTube bot-flagged this machine's IP on 2026-09-13 after a day of probing; wait before running `-m real_youtube` again.
 
 Read in this order:
 1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Mentor").
