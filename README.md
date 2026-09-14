@@ -90,6 +90,16 @@ installed timer's schedule and updates its recorded environment; pass `--timer` 
 run: `systemctl --user list-timers mentor-sync.timer`. Logs: `journalctl --user -u mentor-sync`. To turn it off:
 `systemctl --user disable --now mentor-sync.timer`.
 
+## Check on it from the command line
+
+```sh
+mentor status   # the server, its models, the Claude CLI, and running and queued Syncs
+mentor list     # Mentors and their Channels: indexed, failed, and excluded Videos, and when each last synced
+```
+
+Both ask the running server. When none answers, they read the knowledge base instead: `mentor status` then says the
+server isn't running (only the server loads the models) and checks the Claude CLI itself.
+
 ## Data
 
 Your data lives in `~/.local/share/mentor/` (or `$XDG_DATA_HOME/mentor`, or the `data_dir` setting):

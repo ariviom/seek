@@ -139,3 +139,23 @@ async def test_renaming_or_removing_mentors_and_channels_asks_clients_to_reload_
         deleted = await stream.until(lambda e: e == reload)
 
     assert [renamed, detached, deleted] == [[reload], [reload], [reload]]
+
+
+async def test_a_running_sync_names_the_video_it_is_fetching(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    gate = Gate()
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-held", "Held fetch", before_fetch=gate))
+    app = make_app(config, transcripts, tmp_path)
+
+    async with running(app) as client, event_stream(app) as stream:
+        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        await start_sync(client, mentor["channels"][0]["id"])
+        fetching = await stream.until(lambda e: e["type"] == "sync" and e["sync"]["fetching"] is not None)
+        gate.released.set()
+        finished = await stream.until(sync_status("done"))
+        [listed] = (await client.get("/api/syncs")).json()
+
+    assert syncs_in(fetching)[-1]["fetching"] == "Held fetch"
+    assert syncs_in(finished)[-1]["fetching"] is None
+    assert listed["fetching"] is None

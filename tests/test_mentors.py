@@ -3,11 +3,12 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import add_mentor, running
+from harness import add_mentor, fake_channel, fake_video, running, start_sync, wait_for_syncs
 
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.ports import VideoUnavailable
 
 async def test_resolving_a_channel_proposes_its_display_name_as_the_mentor_name(
     client: httpx.AsyncClient,
@@ -204,3 +205,26 @@ async def test_server_refuses_a_knowledge_base_from_a_newer_mentor(config: Confi
     with pytest.raises(RuntimeError, match="newer"):
         async with running(app):
             pass
+
+
+async def test_channels_count_their_indexed_failed_and_excluded_videos_and_when_they_last_synced(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-ok", "Sharpening chisels"),
+        fake_video("v-also", "Flattening a bench"),
+        fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only video", permanent=True)),
+        fake_video("v-tip", "Quick tip", listed_duration=60, duration=60),
+    ]
+    mentor = await add_mentor(client, "Paul Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+    await start_sync(client, channel_id)
+    [finished] = await wait_for_syncs(client)
+
+    [listed] = (await client.get("/api/mentors")).json()
+    [channel] = listed["channels"]
+    updated = (await client.patch(f"/api/channels/{channel_id}", json={"indexed": True})).json()
+
+    assert (channel["indexed_videos"], channel["failed_videos"], channel["excluded_videos"]) == (2, 1, 1)
+    assert channel["last_synced_at"] == finished["finished_at"]
+    assert updated == channel

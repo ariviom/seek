@@ -1,7 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { api, errorText, type Video } from "./api";
 import { useLiveList, type Reaction, type ServerEvent } from "./events";
-import { formatDuration, stageFill, stageLabels } from "./ui";
+import { formatDuration, inputClass, quietButtonClass, stageFill, stageLabels } from "./ui";
+
+type Shown = "all" | "failed" | "excluded";
+const shownLabels: Record<Shown, string> = { all: "All", failed: "Failed", excluded: "Excluded" };
 
 // The API's order: newest first, undated last.
 function newestFirst(a: Video, b: Video): number {
@@ -21,58 +24,110 @@ export function ChannelVideos({ channelId }: { channelId: number }) {
     return (videos) => [event.video, ...videos.filter((v) => v.id !== event.video.id)].sort(newestFirst);
   };
   const { items: videos, error } = useLiveList(load, react);
+  const [shown, setShown] = useState<Shown>("all");
+  // The Video being retried, and why the last retry failed. The Video and its Sync arrive as events.
+  const [retrying, setRetrying] = useState<number | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  async function retry(video: Video) {
+    setRetryError(null);
+    setRetrying(video.id);
+    try {
+      await api.retryVideo(video.id);
+    } catch (e) {
+      setRetryError(`Could not retry ${video.title}: ${errorText(e)}`);
+    } finally {
+      setRetrying(null);
+    }
+  }
 
   const note = "mt-3 border-t border-rule pt-3 text-sm";
   if (error !== null) return <p className={`${note} text-oxide`}>Could not load Videos: {errorText(error)}</p>;
   if (videos === null) return <p className={`${note} text-pencil`}>Loading Videos…</p>;
   if (videos.length === 0) return <p className={`${note} text-pencil`}>No Videos yet. Sync this Channel to find them.</p>;
 
+  const listed = shown === "all" ? videos : videos.filter((video) => video.stage === shown);
+
   return (
-    <div className="mt-3 max-h-[28rem] overflow-y-auto border-t border-rule">
-      <table className="w-full text-left text-[13px]">
-        <thead className="sticky top-0 bg-panel text-pencil">
-          <tr>
-            <th className="py-1.5 pr-3 font-medium">Video</th>
-            <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Published</th>
-            <th className="py-1.5 pr-3 text-right font-medium">Length</th>
-            <th className="py-1.5 font-medium">Stage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {videos.map((video) => (
-            <tr key={video.id} className="border-t border-rule/60 align-top">
-              <td className="py-1.5 pr-3">
-                <a
-                  className="text-ink decoration-machine/50 underline-offset-2 hover:underline"
-                  href={`https://www.youtube.com/watch?v=${video.youtube_video_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {video.title}
-                </a>
-              </td>
-              <td className="py-1.5 pr-3 whitespace-nowrap text-pencil tabular-nums">{video.published_on ?? ""}</td>
-              <td className="py-1.5 pr-3 text-right whitespace-nowrap text-pencil tabular-nums">
-                {formatDuration(video.duration_seconds)}
-              </td>
-              <td className="min-w-40 py-1.5">
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden className={`size-2.5 shrink-0 rounded-[1px] ${stageFill[video.stage]}`} />
-                  <span className={video.stage === "failed" ? "text-oxide" : video.stage === "excluded" ? "text-pencil" : ""}>
-                    {stageLabels[video.stage]}
-                  </span>
-                </span>
-                {video.reason && (
-                  <span className="mt-0.5 block text-pencil">
-                    {video.reason}
-                    {video.stage === "failed" && video.permanent_failure === false && " (retried on the next Sync)"}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="mt-3 border-t border-rule pt-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="flex items-center gap-2 text-sm text-pencil">
+          Show
+          <select
+            className={`${inputClass} py-1 text-sm`}
+            value={shown}
+            onChange={(e) => setShown(e.target.value as Shown)}
+          >
+            {(Object.keys(shownLabels) as Shown[]).map((option) => (
+              <option key={option} value={option}>
+                {shownLabels[option]}
+                {option !== "all" && ` (${videos.filter((video) => video.stage === option).length})`}
+              </option>
+            ))}
+          </select>
+        </label>
+        {retryError && <p className="text-sm text-oxide">{retryError}</p>}
+      </div>
+      {listed.length === 0 ? (
+        <p className="mt-2 text-sm text-pencil">No {shownLabels[shown].toLowerCase()} Videos.</p>
+      ) : (
+        <div className="mt-2 max-h-[28rem] overflow-y-auto">
+          <table className="w-full text-left text-[13px]">
+            <thead className="sticky top-0 bg-panel text-pencil">
+              <tr>
+                <th className="py-1.5 pr-3 font-medium">Video</th>
+                <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Published</th>
+                <th className="py-1.5 pr-3 text-right font-medium">Length</th>
+                <th className="py-1.5 font-medium">Stage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {listed.map((video) => (
+                <tr key={video.id} className="border-t border-rule/60 align-top">
+                  <td className="py-1.5 pr-3">
+                    <a
+                      className="text-ink decoration-machine/50 underline-offset-2 hover:underline"
+                      href={`https://www.youtube.com/watch?v=${video.youtube_video_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {video.title}
+                    </a>
+                  </td>
+                  <td className="py-1.5 pr-3 whitespace-nowrap text-pencil tabular-nums">{video.published_on ?? ""}</td>
+                  <td className="py-1.5 pr-3 text-right whitespace-nowrap text-pencil tabular-nums">
+                    {formatDuration(video.duration_seconds)}
+                  </td>
+                  <td className="min-w-40 py-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <span aria-hidden className={`size-2.5 shrink-0 rounded-[1px] ${stageFill[video.stage]}`} />
+                      <span className={video.stage === "failed" ? "text-oxide" : video.stage === "excluded" ? "text-pencil" : ""}>
+                        {stageLabels[video.stage]}
+                      </span>
+                    </span>
+                    {video.reason && (
+                      <span className="mt-0.5 block text-pencil">
+                        {video.reason}
+                        {video.stage === "failed" && video.permanent_failure === false && " (retried on the next Sync)"}
+                      </span>
+                    )}
+                    {video.stage === "failed" && (
+                      <button
+                        className={`${quietButtonClass} -ml-2 text-[13px]`}
+                        type="button"
+                        onClick={() => void retry(video)}
+                        disabled={retrying !== null}
+                      >
+                        {retrying === video.id ? "Retrying…" : "Retry"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

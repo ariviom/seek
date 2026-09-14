@@ -10,13 +10,24 @@ import {
   type MentorGroup,
 } from "./api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
-import { alertClass, buttonClass, hintClass, inputClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import {
+  alertClass,
+  buttonClass,
+  formatDuration,
+  hintClass,
+  inputClass,
+  outlineButtonClass,
+  quietButtonClass,
+  sectionHeadingClass,
+} from "./ui";
 
 type ToolActivity = {
   callId: string;
   name: string;
   arguments: Record<string, unknown>;
   state: "running" | "ok" | "error";
+  // "Mentor · Video title" for each Video a search or expand returned; only known while the answer streams.
+  consulted: string[];
 };
 type Entry =
   | { role: "user"; text: string }
@@ -51,22 +62,44 @@ function entryOf(message: ChatMessage): Entry {
     name: tool.name,
     arguments: tool.arguments,
     state: tool.is_error ? ("error" as const) : ("ok" as const),
+    consulted: [],
   }));
   return { role: "assistant", text: message.content, tools, citations: message.citations, state: "done", error: null };
 }
 
-// A chat with one Mentor Group: a new Conversation (created with the first question) or an existing one.
+// The Videos a search or expand result names. The result's text holds one pretty-printed JSON block per result,
+// joined by newlines, so only a block starts a line with "{".
+function consultedVideos(content: string): string[] {
+  const videos: string[] = [];
+  for (const block of content.split(/\n(?=\{)/)) {
+    let item: unknown;
+    try {
+      item = JSON.parse(block);
+    } catch {
+      continue;
+    }
+    if (typeof item === "object" && item !== null && "mentor_name" in item && "video_title" in item) {
+      videos.push(`${String(item.mentor_name)} · ${String(item.video_title)}`);
+    }
+  }
+  return videos;
+}
+
+// A chat with one Mentor Group: a new Conversation (created with the first question) or an existing one. `draft`
+// prefills the question.
 // `group` is null when the Conversation's Group has been deleted, which leaves the Conversation read-only.
 export function Chat({
   group,
   conversationId: openedId,
   claude,
+  draft: initialDraft,
   onClose,
   onChanged,
 }: {
   group: MentorGroup | null;
   conversationId: number | null;
   claude: ClaudeCli | null;
+  draft: string;
   onClose: () => void;
   onChanged: (conversationId: number) => void;
 }) {
@@ -76,12 +109,14 @@ export function Chat({
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [model, setModel] = useState<string | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [answering, setAnswering] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // One player at a time, under the answer it was opened from (by entry index).
   const player = usePlayer<number>();
   const list = useRef<HTMLOListElement>(null);
+  const questionBox = useRef<HTMLTextAreaElement>(null);
   const busy = useRef(false);
   // The Group's name as last seen, for when it is deleted while this chat is open.
   const lastGroupName = useRef(group?.name ?? "");
@@ -103,6 +138,14 @@ export function Chat({
       current = false;
     };
   }, [initialId]);
+
+  // A prefilled question is ready to finish typing.
+  useEffect(() => {
+    const box = questionBox.current;
+    if (box === null || initialDraft === "") return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [initialDraft]);
 
   // Follows the answer as it streams.
   useEffect(() => {
@@ -130,13 +173,23 @@ export function Chat({
       case "tool_call":
         return updateAnswer((a) => ({
           ...a,
-          tools: [...a.tools, { callId: event.call_id, name: event.name, arguments: event.arguments, state: "running" }],
+          tools: [
+            ...a.tools,
+            { callId: event.call_id, name: event.name, arguments: event.arguments, state: "running", consulted: [] },
+          ],
         }));
       case "tool_result":
         return updateAnswer((a) => ({
           ...a,
           tools: a.tools.map((t) =>
-            t.callId === event.call_id ? { ...t, state: event.is_error ? "error" : "ok" } : t,
+            t.callId === event.call_id
+              ? {
+                  ...t,
+                  state: event.is_error ? "error" : "ok",
+                  consulted:
+                    !event.is_error && (t.name === "search" || t.name === "expand") ? consultedVideos(event.content) : [],
+                }
+              : t,
           ),
         }));
       case "done":
@@ -201,13 +254,27 @@ export function Chat({
     }
   }
 
+  // The stream then ends with an error saying the answer was stopped.
+  async function stop() {
+    if (conversationId === null) return;
+    setStopping(true);
+    try {
+      await api.stopAnswer(conversationId);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setStopping(false);
+    }
+  }
+
   return (
     <section aria-labelledby="chat-heading" className="rounded-md bg-panel px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="chat-heading" className={sectionHeadingClass}>
           Ask {groupName}
         </h2>
-        <button className={quietButtonClass} type="button" onClick={onClose} disabled={answering}>
+        {/* Closing mid-answer leaves the turn running on the server; its answer is saved to the Conversation. */}
+        <button className={quietButtonClass} type="button" onClick={onClose}>
           Close
         </button>
       </div>
@@ -266,10 +333,22 @@ export function Chat({
                 }
               }}
               aria-label="Question for the Mentor Group"
+              ref={questionBox}
             />
-            <button className={`${buttonClass} self-start`} type="submit" disabled={answering || !draft.trim()}>
-              {answering ? "Answering…" : "Ask"}
-            </button>
+            {answering ? (
+              <button
+                className={`${outlineButtonClass} self-start`}
+                type="button"
+                onClick={() => void stop()}
+                disabled={stopping || conversationId === null}
+              >
+                {stopping ? "Stopping…" : "Stop"}
+              </button>
+            ) : (
+              <button className={`${buttonClass} self-start`} type="submit" disabled={!draft.trim()}>
+                Ask
+              </button>
+            )}
           </div>
           {conversationId === null ? (
             <label className="flex items-center gap-2 text-sm text-pencil">
@@ -325,6 +404,7 @@ function AnswerView({
   onPlay: (citation: Citation) => void;
   onClosePlayer: () => void;
 }) {
+  const consulted = [...new Set(answer.tools.flatMap((tool) => tool.consulted))];
   return (
     <div className="space-y-2">
       {answer.tools.length > 0 && (
@@ -342,8 +422,35 @@ function AnswerView({
           ))}
         </ul>
       )}
+      {consulted.length > 0 && <p className="text-[13px] text-pencil">Consulted: {consulted.join("; ")}</p>}
       {answer.text !== "" && (
-        <div className="text-[15px] leading-relaxed whitespace-pre-wrap">{renderMarkdown(answer.text, answer.citations, onPlay)}</div>
+        <div className="space-y-2 text-[15px] leading-relaxed">{renderMarkdown(answer.text, answer.citations, onPlay)}</div>
+      )}
+      {answer.citations.length > 0 && (
+        <div className="border-t border-rule/70 pt-2">
+          <h3 className="text-[13px] font-medium text-pencil">Sources</h3>
+          <ol className="mt-1 space-y-0.5 text-[13px]">
+            {answer.citations.map((citation) => (
+              <li key={`${citation.youtube_video_id}@${citation.seconds}`}>
+                <a
+                  className={linkClass}
+                  href={citation.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Plays here; Ctrl- or ⌘-click opens YouTube"
+                  onClick={(e) => playOnPlainClick(e, () => onPlay(citation))}
+                >
+                  {citation.video_title}
+                </a>
+                <span className="text-pencil tabular-nums">
+                  {" "}
+                  · {citation.mentor_name}
+                  {citation.published_on && ` · ${citation.published_on}`} · at {formatDuration(citation.seconds)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
       )}
       {player !== null && <CitationPlayer {...player} onClose={onClosePlayer} />}
       {answer.state === "streaming" && answer.text === "" && answer.tools.length === 0 && (
@@ -358,9 +465,12 @@ function AnswerView({
   );
 }
 
-// Enough Markdown for grounded answers: links, bare URLs, bold, and inline code. Everything else shows as written. A
-// bare URL leaves off sentence punctuation that follows it.
-const inline = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s)]*[^\s).,;:!?])|\*\*([^*]+)\*\*|`([^`]+)`/g;
+const linkClass = "text-machine underline decoration-machine/40 underline-offset-2 hover:decoration-machine";
+
+// Enough inline Markdown for grounded answers: links, bare URLs, bold, italics, and inline code. Everything else shows
+// as written. A bare URL leaves off sentence punctuation that follows it; an underscore inside a word isn't italics.
+const inline =
+  /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s)]*[^\s).,;:!?])|\*\*([^*]+)\*\*|\*([^*\s](?:[^*]*[^*\s])?)\*|(?<!\w)_([^_\s](?:[^_]*[^_\s])?)_(?!\w)|`([^`]+)`/g;
 
 // The watch link forms the server reads Citations from (`chat.citation_links`), matched the same way.
 const youtubeLink = /(?:https?:\/\/)?(?:(?:www\.|m\.)?youtube\.com\/watch\?([^\s)\]>"']+)|youtu\.be\/([\w-]+)(?:\?([^\s)\]>"']*))?)/;
@@ -380,12 +490,82 @@ function citationOf(href: string, citations: Citation[]): Citation | undefined {
   return citations.find((c) => c.youtube_video_id === videoId && c.seconds === seconds);
 }
 
+const bulletItem = /^\s*[-*+]\s+(.*)$/;
+const numberedItem = /^\s*(\d+)[.)]\s+(.*)$/;
+const headingLine = /^(#{1,6})\s+(.*)$/;
+
+function startsBlock(line: string): boolean {
+  return headingLine.test(line) || bulletItem.test(line) || numberedItem.test(line);
+}
+
+// Block Markdown: headings, bullet and numbered lists, and paragraphs split by blank lines. Lines within a paragraph
+// keep their breaks, and an indented line continues the list item above it.
 function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: Citation) => void): ReactNode {
+  const lines = text.split("\n");
+  const blocks: ReactNode[] = [];
+  const inlineOf = (source: string) => renderInline(source, citations, onPlay);
+  let i = 0;
+  // Takes lines from the current one while they pass the test.
+  const take = (test: (line: string) => boolean): string[] => {
+    const taken: string[] = [];
+    for (let line = lines[i]; line !== undefined && test(line); line = lines[++i]) taken.push(line);
+    return taken;
+  };
+  for (let line = lines[i]; line !== undefined; line = lines[i]) {
+    const key = i;
+    const heading = headingLine.exec(line);
+    const numbered = numberedItem.exec(line);
+    if (line.trim() === "") {
+      i++;
+    } else if (heading !== null) {
+      i++;
+      blocks.push(
+        <h4 key={key} className={heading[1]?.length === 1 ? "text-[17px] font-semibold" : "font-semibold"}>
+          {inlineOf(heading[2] ?? "")}
+        </h4>,
+      );
+    } else if (numbered !== null || bulletItem.test(line)) {
+      const item = numbered === null ? bulletItem : numberedItem;
+      const items: string[] = [];
+      for (let next = lines[i]; next !== undefined && item.test(next); next = lines[i]) {
+        i++;
+        const continuation = take((more) => /^\s+\S/.test(more) && !startsBlock(more)).map((more) => more.trim());
+        items.push([item.exec(next)?.at(-1) ?? "", ...continuation].join("\n"));
+      }
+      const children = items.map((source, index) => (
+        <li key={index} className="whitespace-pre-line">
+          {inlineOf(source)}
+        </li>
+      ));
+      blocks.push(
+        numbered === null ? (
+          <ul key={key} className="list-disc space-y-1 pl-6">
+            {children}
+          </ul>
+        ) : (
+          <ol key={key} start={Number(numbered[1])} className="list-decimal space-y-1 pl-6">
+            {children}
+          </ol>
+        ),
+      );
+    } else {
+      const paragraph = take((next) => next.trim() !== "" && !startsBlock(next));
+      blocks.push(
+        <p key={key} className="whitespace-pre-line">
+          {inlineOf(paragraph.join("\n"))}
+        </p>,
+      );
+    }
+  }
+  return blocks;
+}
+
+function renderInline(text: string, citations: Citation[], onPlay: (citation: Citation) => void): ReactNode {
   const parts: ReactNode[] = [];
   let last = 0;
   for (const match of text.matchAll(inline)) {
     parts.push(text.slice(last, match.index));
-    const [whole, label, labelled, bare, bold, code] = match;
+    const [whole, label, labelled, bare, bold, starred, underscored, code] = match;
     const key = match.index;
     const href = labelled ?? bare;
     if (href !== undefined) {
@@ -393,7 +573,7 @@ function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: 
       parts.push(
         <a
           key={key}
-          className="text-machine underline decoration-machine/40 underline-offset-2 hover:decoration-machine"
+          className={linkClass}
           href={href}
           target="_blank"
           rel="noreferrer"
@@ -405,7 +585,9 @@ function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: 
       );
     } else if (bold !== undefined) {
       // Models often bold a cited claim, link included.
-      parts.push(<strong key={key}>{renderMarkdown(bold, citations, onPlay)}</strong>);
+      parts.push(<strong key={key}>{renderInline(bold, citations, onPlay)}</strong>);
+    } else if (starred !== undefined || underscored !== undefined) {
+      parts.push(<em key={key}>{renderInline(starred ?? underscored ?? "", citations, onPlay)}</em>);
     } else {
       parts.push(
         <code key={key} className="rounded-[2px] bg-ink/5 px-1 text-[14px]">

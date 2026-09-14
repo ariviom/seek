@@ -14,6 +14,7 @@ from mentor.config import HOST, Config, ConfigError, load_config
 from mentor.errors import NotFound
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.service import TIMER_NAME, UNIT_NAME, install_service
+from mentor.status_command import format_list, format_status, list_all, status
 from mentor.sync_command import SyncCommandError, answers, sync_channels
 from mentor.youtube import YouTubeSettings, YouTubeTranscriptSource
 
@@ -38,6 +39,13 @@ def _youtube(config: Config) -> YouTubeTranscriptSource:
     )
 
 
+def _chat_engine(config: Config) -> ClaudeChatEngine:
+    # The chat drives the user's own Claude CLI, the one logged in to their subscription.
+    on_path = shutil.which("claude")
+    claude = config.claude_cli_path or (Path(on_path) if on_path else None)
+    return ClaudeChatEngine(config.data_dir / "chat", claude)
+
+
 def serve() -> None:
     config = _config()
     # proxy_headers=False: forwarded headers are handled deliberately by the app (ticket 17's
@@ -46,11 +54,7 @@ def serve() -> None:
     embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu)
     reranker = CrossEncoderReranker(config.reranker_model, gpu)
     youtube = _youtube(config)
-    # The chat drives the user's own Claude CLI, the one logged in to their subscription.
-    on_path = shutil.which("claude")
-    claude = config.claude_cli_path or (Path(on_path) if on_path else None)
-    chat = ClaudeChatEngine(config.data_dir / "chat", claude)
-    app = create_app(config, youtube, embedder, reranker, chat)
+    app = create_app(config, youtube, embedder, reranker, _chat_engine(config))
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
     uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 
@@ -88,6 +92,21 @@ def sync(channel: str | None, reindex: bool = False) -> None:
         print(f"  {finished.mentor_name} / {finished.channel_name}: {outcome}")
     if any(s.status == "failed" for s in report.syncs):
         sys.exit(1)
+
+
+def show_status() -> None:
+    config = _config()
+    try:
+        print(format_status(asyncio.run(status(config, _chat_engine(config)))))
+    except SyncCommandError as e:
+        sys.exit(f"mentor: {e}")
+
+
+def show_list() -> None:
+    try:
+        print(format_list(asyncio.run(list_all(_config()))))
+    except SyncCommandError as e:
+        sys.exit(f"mentor: {e}")
 
 
 def _systemctl(args: list[str]) -> None:
@@ -147,6 +166,8 @@ def main() -> None:
     reindex_target = reindex_parser.add_mutually_exclusive_group(required=True)
     reindex_target.add_argument("--all", action="store_true", help="every indexed Channel")
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    commands.add_parser("status", help="the server, models, Claude CLI, and running and queued Syncs")
+    commands.add_parser("list", help="Mentors and their Channels, with Video counts and when each last synced")
     install_parser = commands.add_parser(
         "install-service", help="run the server as a systemd user service that starts at login"
     )
@@ -164,5 +185,9 @@ def main() -> None:
         sync(args.channel)
     elif args.command == "reindex":
         sync(args.channel, reindex=True)
+    elif args.command == "status":
+        show_status()
+    elif args.command == "list":
+        show_list()
     elif args.command == "install-service":
         install(args.timer)

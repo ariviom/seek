@@ -1,23 +1,38 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type ConversationSummary, type MentorGroup } from "./api";
-import { alertClass, hintClass, inputClass, outlineButtonClass, sectionHeadingClass } from "./ui";
+import {
+  alertClass,
+  buttonClass,
+  dangerButtonClass,
+  hintClass,
+  inputClass,
+  outlineButtonClass,
+  quietButtonClass,
+  sectionHeadingClass,
+} from "./ui";
 
 // Saved Conversations, most recently active first, for every Mentor Group or one. `version` changes whenever one may
-// have changed.
+// have changed elsewhere.
 export function Conversations({
   groups,
   version,
   openId,
   onOpen,
+  onDeleted,
 }: {
   groups: MentorGroup[] | null;
   version: number;
   openId: number | null;
   onOpen: (conversation: ConversationSummary) => void;
+  onDeleted: (conversationId: number) => void;
 }) {
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
   const [groupId, setGroupId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: number; title: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Counts this section's own changes, each followed by a reload.
+  const [changes, setChanges] = useState(0);
   // A Group that has since been deleted shows every Conversation again.
   const shownGroupId = groups?.some((g) => g.id === groupId) ? groupId : null;
 
@@ -34,7 +49,34 @@ export function Conversations({
     return () => {
       current = false;
     };
-  }, [version, shownGroupId]);
+  }, [version, shownGroupId, changes]);
+
+  async function change(run: () => Promise<unknown>): Promise<boolean> {
+    setError(null);
+    setBusy(true);
+    try {
+      await run();
+      return true;
+    } catch (e) {
+      setError(errorText(e));
+      return false;
+    } finally {
+      setBusy(false);
+      setChanges((c) => c + 1);
+    }
+  }
+
+  async function rename(event: FormEvent) {
+    event.preventDefault();
+    if (renaming === null) return;
+    const { id, title } = renaming;
+    if (await change(() => api.renameConversation(id, title))) setRenaming(null);
+  }
+
+  async function remove(conversation: ConversationSummary) {
+    if (!confirm(`Delete the Conversation “${conversation.title}”?`)) return;
+    if (await change(() => api.deleteConversation(conversation.id))) onDeleted(conversation.id);
+  }
 
   return (
     <section aria-labelledby="conversations-heading">
@@ -75,7 +117,23 @@ export function Conversations({
           {conversations.map((conversation) => (
             <li key={conversation.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3">
               <div className="min-w-0">
-                <p className="truncate text-[15px] text-ink">{conversation.title}</p>
+                {renaming?.id === conversation.id ? (
+                  <form onSubmit={rename} className="flex flex-wrap gap-2">
+                    <input
+                      className={inputClass}
+                      value={renaming.title}
+                      onChange={(e) => setRenaming({ id: conversation.id, title: e.target.value })}
+                      aria-label="New Conversation title"
+                      maxLength={200}
+                      autoFocus
+                    />
+                    <button className={buttonClass} type="submit" disabled={busy || !renaming.title.trim()}>
+                      Save
+                    </button>
+                  </form>
+                ) : (
+                  <p className="truncate text-[15px] text-ink">{conversation.title}</p>
+                )}
                 <p className="text-[13px] text-pencil tabular-nums">
                   {conversation.group_name}
                   {conversation.group_id === null && " (deleted, read-only)"} ·{" "}
@@ -83,14 +141,29 @@ export function Conversations({
                   {conversation.message_count} {conversation.message_count === 1 ? "message" : "messages"}
                 </p>
               </div>
-              <button
-                className={outlineButtonClass}
-                type="button"
-                onClick={() => onOpen(conversation)}
-                disabled={conversation.id === openId}
-              >
-                {conversation.group_id === null ? "Read" : "Open"}
-              </button>
+              <div className="flex flex-wrap items-center gap-1">
+                <button
+                  className={quietButtonClass}
+                  type="button"
+                  onClick={() =>
+                    setRenaming(renaming?.id === conversation.id ? null : { id: conversation.id, title: conversation.title })
+                  }
+                  disabled={busy}
+                >
+                  {renaming?.id === conversation.id ? "Cancel" : "Rename"}
+                </button>
+                <button className={dangerButtonClass} type="button" onClick={() => void remove(conversation)} disabled={busy}>
+                  Delete
+                </button>
+                <button
+                  className={`${outlineButtonClass} ml-1`}
+                  type="button"
+                  onClick={() => onOpen(conversation)}
+                  disabled={conversation.id === openId}
+                >
+                  {conversation.group_id === null ? "Read" : "Open"}
+                </button>
+              </div>
             </li>
           ))}
         </ul>

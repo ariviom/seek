@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorText, type Channel, type ChannelProposal, type Mentor } from "./api";
 import {
   alertClass,
@@ -13,6 +13,7 @@ import {
   type Act,
 } from "./ui";
 import { ChannelFiltersForm, filtersSummary } from "./ChannelFilters";
+import { useServerEvents } from "./events";
 import { ChannelVideos } from "./Videos";
 
 export function Mentors({ onLoaded }: { onLoaded: (mentors: Mentor[]) => void }) {
@@ -35,6 +36,18 @@ export function Mentors({ onLoaded }: { onLoaded: (mentors: Mentor[]) => void })
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Channel counts follow Syncs and Video changes, at most one reload a second while they stream in.
+  const countsTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(countsTimer.current), []);
+  useServerEvents((event) => {
+    if (event.type !== "sync" && event.type !== "videos" && event.type !== "ready") return;
+    if (countsTimer.current !== undefined) return;
+    countsTimer.current = window.setTimeout(() => {
+      countsTimer.current = undefined;
+      void refresh();
+    }, 1000);
+  });
 
   return (
     <section aria-labelledby="mentors-heading">
@@ -219,6 +232,19 @@ function MentorCard({ mentor, act }: { mentor: Mentor; act: Act }) {
   );
 }
 
+function channelCounts(channel: Channel): string {
+  const parts = [`${channel.indexed_videos} ${channel.indexed_videos === 1 ? "Video" : "Videos"} searchable`];
+  if (channel.failed_videos > 0) parts.push(`${channel.failed_videos} failed`);
+  if (channel.excluded_videos > 0) parts.push(`${channel.excluded_videos} excluded`);
+  const synced = channel.last_synced_at && new Date(channel.last_synced_at);
+  parts.push(
+    synced
+      ? `synced ${synced.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+      : "never synced",
+  );
+  return parts.join(" · ");
+}
+
 function ChannelRow({ channel, canDetach, act }: { channel: Channel; canDetach: boolean; act: Act }) {
   const [panel, setPanel] = useState<"filters" | "videos" | null>(null);
   const filters = filtersSummary(channel.filters);
@@ -239,6 +265,7 @@ function ChannelRow({ channel, canDetach, act }: { channel: Channel; canDetach: 
             </a>
             {!channel.indexed && <span className="ml-2 text-[13px] font-normal">Not indexed, so left out of search</span>}
           </p>
+          <p className="text-[13px] text-pencil tabular-nums">{channelCounts(channel)}</p>
           {filters && <p className="text-[13px] text-pencil">Filtered to {filters}</p>}
         </div>
         <button className={outlineButtonClass} onClick={() => void act(() => api.startSync(channel.id))}>

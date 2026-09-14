@@ -29,14 +29,23 @@ const recencyLabels: Record<PreferRecent, string> = {
 
 type Outcome = { query: string; results: SearchResult[] };
 
-// `mentors` and `groups` are null until their sections have loaded.
-export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: MentorGroup[] | null }) {
+// `mentors` and `groups` are null until their sections have loaded. `onAsk` opens a Group's chat with a question drafted.
+export function Search({
+  mentors,
+  groups,
+  onAsk,
+}: {
+  mentors: Mentor[] | null;
+  groups: MentorGroup[] | null;
+  onAsk: (group: MentorGroup, draft: string) => void;
+}) {
   const [query, setQuery] = useState("");
   // "everything", "mentors" (the ticked Mentors), or `group:<id>`.
   const [scope, setScope] = useState("everything");
   const [chosen, setChosen] = useState<number[]>([]);
   const [preferRecent, setPreferRecent] = useState<PreferRecent>("gentle");
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  // The Group searched, if any, so "Ask about this" asks the same Group.
+  const [outcome, setOutcome] = useState<(Outcome & { groupId: number | null }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   // One player at a time, in the result it was opened from (by Segment id).
@@ -60,13 +69,22 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
         ...(scopeShown === "mentors" ? { mentors: chosenIds } : {}),
         ...(scopeShown === scope && groupId !== null ? { group: groupId } : {}),
       });
-      setOutcome({ query: query.trim(), results });
+      setOutcome({ query: query.trim(), results, groupId: scopeShown === scope ? groupId : null });
     } catch (e) {
       setOutcome(null);
       setError(errorText(e));
     } finally {
       setSearching(false);
     }
+  }
+
+  // The Group searched, else the first Group with the result's Mentor (Mentor names are unique); none hides "Ask about
+  // this".
+  function askGroup(result: SearchResult, searchedGroupId: number | null): MentorGroup | undefined {
+    return (
+      groups?.find((g) => g.id === searchedGroupId) ??
+      groups?.find((g) => g.mentors.some((m) => m.name === result.mentor_name))
+    );
   }
 
   function toggle(mentorId: number, ticked: boolean) {
@@ -165,6 +183,8 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
                 playing={player.playing?.where === result.segment_id ? player.playing : null}
                 onPlay={(seconds) => player.play(result.segment_id, { ...result, seconds })}
                 onClosePlayer={player.close}
+                askGroup={askGroup(result, outcome.groupId)}
+                onAsk={onAsk}
               />
             ))}
           </ol>
@@ -178,11 +198,15 @@ function Result({
   playing,
   onPlay,
   onClosePlayer,
+  askGroup,
+  onAsk,
 }: {
   result: SearchResult;
   playing: { citation: PlayerCitation; opening: number } | null;
   onPlay: (seconds: number) => void;
   onClosePlayer: () => void;
+  askGroup: MentorGroup | undefined;
+  onAsk: (group: MentorGroup, draft: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState<Expansion | null>(null);
@@ -240,6 +264,21 @@ function Result({
         <button className={quietButtonClass} type="button" onClick={toggleContext} disabled={loading} aria-expanded={open}>
           {loading ? "Loading context…" : open ? "Hide context" : "Show context"}
         </button>
+        {askGroup !== undefined && (
+          <button
+            className={quietButtonClass}
+            type="button"
+            title={`Ask ${askGroup.name}`}
+            onClick={() =>
+              onAsk(
+                askGroup,
+                `About what ${result.mentor_name} says in “${result.video_title}” at ${formatDuration(matched)}: `,
+              )
+            }
+          >
+            Ask about this
+          </button>
+        )}
       </div>
       {playing !== null && <CitationPlayer {...playing} onClose={onClosePlayer} />}
     </li>

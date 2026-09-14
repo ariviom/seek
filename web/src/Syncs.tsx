@@ -1,8 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { api, errorText, type Sync } from "./api";
 import { useLiveList, type Reaction, type ServerEvent } from "./events";
 import { StageRule } from "./StageRule";
-import { alertClass, hintClass, sectionHeadingClass } from "./ui";
+import { alertClass, hintClass, quietButtonClass, sectionHeadingClass } from "./ui";
 
 // As many as the API lists.
 const SHOWN = 50;
@@ -32,13 +32,34 @@ function when(sync: Sync): string {
 export function Syncs() {
   const load = useCallback(() => api.listSyncs(), []);
   const { items: syncs, error } = useLiveList(load, react);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  // The new Syncs arrive as events.
+  async function syncAll() {
+    setStartError(null);
+    setStarting(true);
+    try {
+      await api.syncAll();
+    } catch (e) {
+      setStartError(errorText(e));
+    } finally {
+      setStarting(false);
+    }
+  }
 
   return (
     <section aria-labelledby="syncs-heading">
-      <h2 id="syncs-heading" className={sectionHeadingClass}>
-        Syncs
-      </h2>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id="syncs-heading" className={sectionHeadingClass}>
+          Syncs
+        </h2>
+        <button className={quietButtonClass} type="button" onClick={() => void syncAll()} disabled={starting}>
+          Sync all
+        </button>
+      </div>
       {error !== null && <p role="alert" className={alertClass}>Could not load Syncs: {errorText(error)}</p>}
+      {startError !== null && <p role="alert" className={alertClass}>Could not start the Syncs: {startError}</p>}
       {syncs === null ? (
         error === null && <p className={`mt-4 ${hintClass}`}>Loading…</p>
       ) : syncs.length === 0 ? (
@@ -60,6 +81,11 @@ export function Syncs() {
                     {status[sync.status].label}
                   </span>
                 </div>
+                {sync.status === "running" && sync.fetching && (
+                  <p className="mt-1 truncate text-[13px] text-pencil" title={sync.fetching}>
+                    Fetching {sync.fetching}
+                  </p>
+                )}
                 <div className="mt-2">
                   <StageRule counts={sync.stage_counts} detailed={active} />
                 </div>

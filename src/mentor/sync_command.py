@@ -84,7 +84,7 @@ def _find_channel(mentor_list: list[Mentor], ref: str) -> Channel:
     return channels[0]
 
 
-def _request(url: str, method: str = "GET", payload: dict[str, object] | None = None) -> bytes:
+def request(url: str, method: str = "GET", payload: dict[str, object] | None = None) -> bytes:
     data = None if payload is None else json.dumps(payload).encode()
     headers = {} if payload is None else {"Content-Type": "application/json"}
     try:
@@ -105,10 +105,10 @@ def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
     options: dict[str, object] = {"reindex": reindex}
     try:
         if channel is None:
-            return TypeAdapter(list[Sync]).validate_json(_request(f"{url}api/syncs", "POST", options))
-        found = _find_channel(TypeAdapter(list[Mentor]).validate_json(_request(f"{url}api/mentors")), channel)
+            return TypeAdapter(list[Sync]).validate_json(request(f"{url}api/syncs", "POST", options))
+        found = _find_channel(TypeAdapter(list[Mentor]).validate_json(request(f"{url}api/mentors")), channel)
         return [
-            TypeAdapter(Sync).validate_json(_request(f"{url}api/channels/{found.id}/syncs", "POST", options))
+            TypeAdapter(Sync).validate_json(request(f"{url}api/channels/{found.id}/syncs", "POST", options))
         ]
     except ValidationError as e:
         # e.g. a timer ran this upgraded mentor against the server from before the upgrade.

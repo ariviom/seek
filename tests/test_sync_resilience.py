@@ -229,3 +229,30 @@ async def test_retry_failed_during_a_sync_also_retries_failures_that_sync_record
     assert (running_during_retry["status"], retried["status"]) == ("done", "done")
     assert fetched(transcripts) == ["v-members", "v-members"]
 
+
+
+async def test_one_permanently_failed_video_can_be_retried(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    members = fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only video", permanent=True))
+    fake_channel(transcripts, "UC-wright").videos.append(members)
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        channel_id = mentor["channels"][0]["id"]
+        await start_sync(client, channel_id)
+        await wait_for_syncs(client)
+        failed = (await list_videos(client, channel_id))["Members stream"]
+        members.failure = None
+        response = await client.post(f"/api/videos/{failed['id']}/retry")
+        retried, *_ = await wait_for_syncs(client)
+        after = (await list_videos(client, channel_id))["Members stream"]
+        unknown = await client.post("/api/videos/999/retry")
+
+    assert (failed["stage"], failed["permanent_failure"]) == ("failed", True)
+    assert response.status_code == 202
+    assert (response.json()["channel_id"], response.json()["status"]) == (channel_id, "queued")
+    assert (retried["id"], retried["status"]) == (response.json()["id"], "done")
+    assert (after["stage"], after["failure_stage"], after["reason"]) == ("done", None, None)
+    assert fetched(transcripts).count("v-members") == 2
+    assert unknown.status_code == 404

@@ -1,7 +1,16 @@
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
-from harness import Json, done_message, send, start_conversation, stream_events, woodworkers
+from harness import (
+    Json,
+    done_message,
+    new_group_conversation,
+    send,
+    start_conversation,
+    stream_events,
+    woodworkers,
+)
 
 from mentor.fakes import FakeChatEngine, FakeTranscriptSource
 from mentor.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, PastMessage, TextDelta
@@ -139,3 +148,88 @@ async def test_each_conversation_keeps_the_model_it_was_started_with(
 
     assert [r.model for r in engine.requests] == [None, "haiku"]
     assert (default["model"], haiku["model"]) == (None, "haiku")
+
+
+async def test_a_conversation_can_be_renamed(client: httpx.AsyncClient) -> None:
+    conversation = await new_group_conversation(client)
+    await send(client, conversation["id"], "Which stone?")
+
+    renamed = await client.patch(f"/api/conversations/{conversation['id']}", json={"title": "  Sharpening  "})
+    [listed] = await list_conversations(client)
+    blank = await client.patch(f"/api/conversations/{conversation['id']}", json={"title": "   "})
+    unknown = await client.patch("/api/conversations/999", json={"title": "Glue"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert (renamed.json()["title"], renamed.json()["message_count"]) == ("Sharpening", 2)
+    assert listed["title"] == "Sharpening"
+    assert blank.status_code == 422
+    assert unknown.status_code == 404
+
+
+async def wait_for_request(engine: FakeChatEngine) -> None:
+    async with asyncio.timeout(5):
+        while not engine.requests:
+            await asyncio.sleep(0.01)
+
+
+async def test_a_conversation_can_be_deleted_but_not_while_answering(
+    client: httpx.AsyncClient, engine: FakeChatEngine
+) -> None:
+    conversation = await new_group_conversation(client)
+    kept = await start_conversation(client, conversation["group_id"])
+    release = asyncio.Event()
+
+    async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        await release.wait()
+        yield ChatDone("session-1")
+
+    engine.respond = respond
+    answering = asyncio.create_task(send(client, conversation["id"], "Which stone?"))
+    await wait_for_request(engine)
+    while_answering = await client.delete(f"/api/conversations/{conversation['id']}")
+    release.set()
+    assert (await answering).status_code == 200
+
+    deleted = await client.delete(f"/api/conversations/{conversation['id']}")
+    again = await client.delete(f"/api/conversations/{conversation['id']}")
+
+    assert (while_answering.status_code, while_answering.json()) == (
+        409,
+        {"detail": "This Conversation is still answering; stop it first"},
+    )
+    assert deleted.status_code == 204
+    assert again.status_code == 404
+    assert [c["id"] for c in await list_conversations(client)] == [kept["id"]]
+    assert (await client.get(f"/api/conversations/{conversation['id']}")).status_code == 404
+
+
+async def test_stopping_a_turn_keeps_the_question_without_an_answer(
+    client: httpx.AsyncClient, engine: FakeChatEngine
+) -> None:
+    conversation = await new_group_conversation(client)
+    never = asyncio.Event()
+
+    async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        yield TextDelta("Half an ans")
+        await never.wait()
+        yield ChatDone("session-1")
+
+    engine.respond = respond
+    answering = asyncio.create_task(send(client, conversation["id"], "Which stone?"))
+    await wait_for_request(engine)
+    stopped = await client.delete(f"/api/conversations/{conversation['id']}/turn")
+    response = await answering
+    not_answering = await client.delete(f"/api/conversations/{conversation['id']}/turn")
+    engine.respond = None
+    again = await send(client, conversation["id"], "Which stone, then?")
+
+    assert stopped.status_code == 204
+    assert stream_events(response)[-1] == {"type": "error", "message": "Stopped before the answer finished"}
+    assert not_answering.status_code == 404
+    assert again.status_code == 200
+    reopened = await get_conversation(client, conversation["id"])
+    assert [(m["role"], m["content"]) for m in reopened["messages"]] == [
+        ("user", "Which stone?"),
+        ("user", "Which stone, then?"),
+        ("assistant", "Nothing to say."),
+    ]

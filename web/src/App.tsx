@@ -54,18 +54,21 @@ export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
   const [groups, setGroups] = useState<MentorGroup[] | null>(null);
-  // The open chat: a Group's new Conversation, or a saved one (whose Group may be gone). `opening` remounts the chat
-  // for each Ask or Open, but not when a new Conversation gets its id.
-  const [chat, setChat] = useState<{ groupId: number | null; conversationId: number | null; opening: number } | null>(
-    null,
-  );
+  // The open chat: a Group's new Conversation, or a saved one (whose Group may be gone), with any prefilled question.
+  // `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
+  const [chat, setChat] = useState<{
+    groupId: number | null;
+    conversationId: number | null;
+    draft: string;
+    opening: number;
+  } | null>(null);
   const [conversationsVersion, setConversationsVersion] = useState(0);
   // Shown with the Group's latest name and Mentors; read-only once the Group is deleted.
   const chatGroup = groups?.find((g) => g.id === chat?.groupId) ?? null;
 
   const openings = useRef(0);
-  const openChat = (groupId: number | null, conversationId: number | null) => {
-    setChat({ groupId, conversationId, opening: ++openings.current });
+  const openChat = (groupId: number | null, conversationId: number | null, draft = "") => {
+    setChat({ groupId, conversationId, draft, opening: ++openings.current });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const groupsLoaded = useCallback((loaded: MentorGroup[]) => {
@@ -134,6 +137,7 @@ export function App() {
               group={chatGroup}
               conversationId={chat.conversationId}
               claude={state.kind === "ok" ? state.health.claude_cli : null}
+              draft={chat.draft}
               onClose={() => setChat(null)}
               onChanged={(conversationId) => {
                 // A chat replaced mid-answer still finishes its turn; it mustn't retarget the chat now open.
@@ -143,7 +147,7 @@ export function App() {
               }}
             />
           )}
-          <Search mentors={mentors} groups={groups} />
+          <Search mentors={mentors} groups={groups} onAsk={(group, draft) => openChat(group.id, null, draft)} />
           <Mentors onLoaded={setMentors} />
           <Groups mentors={mentors} onLoaded={groupsLoaded} onAsk={(group) => openChat(group.id, null)} />
           <Conversations
@@ -151,6 +155,9 @@ export function App() {
             version={conversationsVersion}
             openId={chat?.conversationId ?? null}
             onOpen={(conversation) => openChat(conversation.group_id, conversation.id)}
+            onDeleted={(conversationId) =>
+              setChat((current) => (current?.conversationId === conversationId ? null : current))
+            }
           />
         </main>
         <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">

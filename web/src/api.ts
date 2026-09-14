@@ -41,6 +41,11 @@ export type Channel = {
   name: string;
   indexed: boolean;
   filters: ChannelFilters;
+  indexed_videos: number;
+  failed_videos: number;
+  excluded_videos: number;
+  // When the Channel's last Sync finished successfully.
+  last_synced_at: string | null;
 };
 export type Mentor = { id: number; name: string; channels: Channel[] };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
@@ -73,6 +78,8 @@ export type Sync = {
   finished_at: string | null;
   new_videos: number;
   stage_counts: Record<Stage, number>;
+  // The title of the Video being fetched, on the event a running Sync publishes as it starts fetching it.
+  fetching: string | null;
 };
 
 export type PreferRecent = "off" | "gentle" | "strong";
@@ -132,6 +139,7 @@ export type Citation = {
   mentor_name: string;
   channel_name: string;
   url: string;
+  published_on: string | null;
 };
 export type ChatMessage = {
   id: number;
@@ -143,7 +151,7 @@ export type ChatMessage = {
 };
 // `group_id` is null once the Group is deleted, which leaves the Conversation read-only.
 export type ConversationSummary = Conversation & {
-  // The first question, shortened.
+  // The title given to the Conversation, or else its first question, shortened.
   title: string;
   message_count: number;
   last_message_at: string | null;
@@ -216,6 +224,9 @@ export const api = {
     request<MentorGroup>(`groups/${id}/members`, { method: "PUT", body: { mentor_ids: mentorIds } }),
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
+  retryVideo: (videoId: number) => request<Sync>(`videos/${videoId}/retry`, { method: "POST" }),
+  // Queues a Sync for every indexed Channel.
+  syncAll: () => request<Sync[]>("syncs", { method: "POST" }),
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
@@ -226,6 +237,11 @@ export const api = {
   listConversations: (groupId: number | null) =>
     request<ConversationSummary[]>(groupId === null ? "conversations" : `conversations?group_id=${groupId}`),
   getConversation: (id: number) => request<ConversationDetail>(`conversations/${id}`),
+  renameConversation: (id: number, title: string) =>
+    request<ConversationSummary>(`conversations/${id}`, { method: "PATCH", body: { title } }),
+  deleteConversation: (id: number) => request<void>(`conversations/${id}`, { method: "DELETE" }),
+  // Stops the answer under way; its stream ends with an error.
+  stopAnswer: (id: number) => request<void>(`conversations/${id}/turn`, { method: "DELETE" }),
   sendMessage,
 };
 
