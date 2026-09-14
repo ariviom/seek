@@ -9,3 +9,6 @@
 - [ ] Agent researches the current Cloudflare Access options for MCP clients (Access-managed OAuth, MCP server portals, service tokens) from primary docs and writes a short setup checklist
 - [ ] Drew applies the setup; Claude Code, Codex, and Claude Desktop each list and call `search` over the public URL, or the blocker for each client is recorded
 - [ ] README documents the working Access configuration per client, or states which client is unsupported and why
+
+From ticket 15 review:
+- README "Register mentor with your agents" shows only local URLs for Claude Code and Codex, and a bare public URL for Claude Desktop with a warning to gate it. Once the Access setup is decided, add the public-URL variants and the Access steps there.
