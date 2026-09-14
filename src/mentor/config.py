@@ -1,4 +1,5 @@
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
@@ -56,6 +57,9 @@ class Config:
     gentle_recency_max_penalty_percent: int = DEFAULT_GENTLE_RECENCY_MAX_PENALTY_PERCENT
     strong_recency_half_life_days: int = DEFAULT_STRONG_RECENCY_HALF_LIFE_DAYS
     strong_recency_max_penalty_percent: int = DEFAULT_STRONG_RECENCY_MAX_PENALTY_PERCENT
+    # Host headers the MCP endpoint accepts besides loopback, such as a reverse proxy's public hostname; the rest are
+    # refused to stop DNS rebinding. "host:*" allows any port.
+    mcp_allowed_hosts: tuple[str, ...] = ()
 
     @property
     def database_path(self) -> Path:
@@ -90,6 +94,17 @@ def _absolute_path(key: str, value: object, source: str) -> Path:
     if not path.is_absolute():
         raise ConfigError(f"{source}: {key} must be an absolute path")
     return path
+
+
+def _hosts(key: str, value: object, source: str) -> tuple[str, ...]:
+    """A list of hosts, or a comma-separated string as an environment variable gives."""
+    items = value.split(",") if isinstance(value, str) else value
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise ConfigError(f"{source}: {key} must be a list of hosts")
+    hosts = tuple(item.strip() for item in items if item.strip())
+    if any(re.search(r"[\s/]", host) for host in hosts):
+        raise ConfigError(f"{source}: {key} must be hosts such as mentor.example.com, without a scheme or path")
+    return hosts
 
 
 def load_config(env: Mapping[str, str] = os.environ) -> Config:
@@ -159,6 +174,7 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         strong_penalty = _integer(
             "strong_recency_max_penalty_percent", *raw["strong_recency_max_penalty_percent"], 0, 100
         )
+    mcp_allowed_hosts = _hosts("mcp_allowed_hosts", *raw["mcp_allowed_hosts"]) if "mcp_allowed_hosts" in raw else ()
     return Config(
         data_dir=data_dir,
         port=port,
@@ -175,4 +191,5 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         gentle_recency_max_penalty_percent=gentle_penalty,
         strong_recency_half_life_days=strong_half_life,
         strong_recency_max_penalty_percent=strong_penalty,
+        mcp_allowed_hosts=mcp_allowed_hosts,
     )

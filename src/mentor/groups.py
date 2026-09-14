@@ -44,6 +44,48 @@ def _select_groups(conn: sqlite3.Connection, group_id: int | None = None) -> lis
     return list(groups.values())
 
 
+@dataclass(frozen=True)
+class MentorSummary:
+    id: int
+    name: str
+    # Searchable Videos: done, on indexed Channels.
+    video_count: int
+
+
+@dataclass(frozen=True)
+class GroupSummary:
+    id: int
+    name: str
+    video_count: int
+    mentors: list[MentorSummary]
+
+
+def group_summaries(conn: sqlite3.Connection) -> list[GroupSummary]:
+    """Every Group with its Mentors and how many searchable Videos each has."""
+    rows = conn.execute(
+        """
+        SELECT mentor_groups.id AS group_id, mentor_groups.name AS group_name,
+               mentors.id AS mentor_id, mentors.name AS mentor_name,
+               (SELECT count(*) FROM videos JOIN channels ON channels.id = videos.channel_id
+                WHERE channels.mentor_id = mentors.id AND channels.indexed = 1 AND videos.pipeline_stage = 'done'
+               ) AS video_count
+        FROM mentor_groups
+        LEFT JOIN mentor_group_members ON mentor_group_members.group_id = mentor_groups.id
+        LEFT JOIN mentors ON mentors.id = mentor_group_members.mentor_id
+        ORDER BY mentor_groups.name COLLATE NOCASE, mentor_groups.id, mentors.name COLLATE NOCASE, mentors.id
+        """
+    )
+    members: dict[tuple[int, str], list[MentorSummary]] = {}
+    for row in rows:
+        mentors = members.setdefault((row["group_id"], row["group_name"]), [])
+        if row["mentor_id"] is not None:
+            mentors.append(MentorSummary(id=row["mentor_id"], name=row["mentor_name"], video_count=row["video_count"]))
+    return [
+        GroupSummary(id=group_id, name=name, video_count=sum(m.video_count for m in mentors), mentors=mentors)
+        for (group_id, name), mentors in members.items()
+    ]
+
+
 def _get_group(conn: sqlite3.Connection, group_id: int) -> MentorGroup:
     found = _select_groups(conn, group_id)
     if not found:

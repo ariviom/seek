@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI
+from mcp import Client
 
 from mentor import db
 from mentor.config import Config
@@ -26,6 +27,11 @@ async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:7337") as client:
             yield client
+
+
+def mcp_client(app: FastAPI) -> Client:
+    """An in-memory MCP client of the app's MCP server, to open inside `running(app)`."""
+    return Client(app.state.mcp)
 
 
 type Json = dict[str, Any]
@@ -197,6 +203,19 @@ async def start_sync(client: httpx.AsyncClient, channel_id: int) -> Json:
     assert response.status_code == 202, response.text
     sync: Json = response.json()
     return sync
+
+
+def said(*lines: str, every: float = 5.0) -> list[Cue]:
+    """Cues for the lines, one after another, each lasting `every` seconds."""
+    return [Cue(start=i * every, end=(i + 1) * every, text=line) for i, line in enumerate(lines)]
+
+
+async def sync(client: httpx.AsyncClient, *mentors: Json) -> None:
+    """Syncs every Channel of the Mentors and checks each Sync finished."""
+    for mentor in mentors:
+        for channel in mentor["channels"]:
+            await start_sync(client, channel["id"])
+    assert all(s["status"] == "done" for s in await wait_for_syncs(client))
 
 
 async def list_videos(client: httpx.AsyncClient, channel_id: int) -> dict[str, Json]:

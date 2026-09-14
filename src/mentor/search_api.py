@@ -1,21 +1,31 @@
 from typing import Annotated, Self
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field, StrictInt, StringConstraints, model_validator
 
+from mentor import sources
+from mentor.db import Database
 from mentor.mentors_api import Name
 from mentor.search import CANDIDATES, PreferRecent, Search, SearchResult
+from mentor.sources import DEFAULT_EXPAND_SECONDS, MAX_EXPAND_SECONDS, Expansion
+
+
+# Shared with the MCP search tool, which validates its arguments with them before building a SearchBody.
+type SearchQuery = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+# A JSON number is a Group id and a string is a Group name, so a Group named "12" stays reachable by name.
+type GroupRef = StrictInt | Name
+type MentorIds = Annotated[list[StrictInt], Field(min_length=1)]
+# Only as many results as go to the reranker can come back.
+type ResultLimit = Annotated[StrictInt, Field(ge=1, le=CANDIDATES)]
 
 
 class SearchBody(BaseModel):
     """At most one scope: a Group or a list of Mentors. Neither searches every Mentor."""
 
-    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
-    # A JSON number is a Group id and a string is a Group name, so a Group named "12" stays reachable by name.
-    group: StrictInt | Name | None = None
-    mentors: Annotated[list[StrictInt], Field(min_length=1)] | None = None
-    # Only as many results as go to the reranker can come back.
-    limit: Annotated[StrictInt, Field(ge=1, le=CANDIDATES)] = 10
+    query: SearchQuery
+    group: GroupRef | None = None
+    mentors: MentorIds | None = None
+    limit: ResultLimit = 10
     prefer_recent: PreferRecent = "gentle"
 
     @model_validator(mode="after")
@@ -25,7 +35,10 @@ class SearchBody(BaseModel):
         return self
 
 
-def search_router(search: Search) -> APIRouter:
+type ExpandSeconds = Annotated[int, Query(ge=0, le=MAX_EXPAND_SECONDS)]
+
+
+def search_router(search: Search, database: Database) -> APIRouter:
     router = APIRouter()
 
     @router.post("/search")
@@ -33,5 +46,13 @@ def search_router(search: Search) -> APIRouter:
         return await search.search(
             body.query, group=body.group, mentor_ids=body.mentors, limit=body.limit, prefer_recent=body.prefer_recent
         )
+
+    @router.get("/segments/{segment_id}/expand")
+    async def expand(
+        segment_id: int,
+        before_seconds: ExpandSeconds = DEFAULT_EXPAND_SECONDS,
+        after_seconds: ExpandSeconds = DEFAULT_EXPAND_SECONDS,
+    ) -> Expansion:
+        return await database.run(lambda conn: sources.expand(conn, segment_id, before_seconds, after_seconds))
 
     return router

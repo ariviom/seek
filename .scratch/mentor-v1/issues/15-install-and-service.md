@@ -17,3 +17,7 @@ From ticket 08 review:
 - README: document `reranker_model`, `reranker_temperature` (3), `gentle_recency_half_life_days` (3650), `gentle_recency_max_penalty_percent` (15), `strong_recency_half_life_days` (1095), `strong_recency_max_penalty_percent` (50), from tickets 09 and 10; defaults and their meaning are in `config.py`.
 - README: models download on first start (about 2.2 GB) into the Hugging Face cache (`~/.cache/huggingface`, or `HF_HOME`) and need a CUDA GPU with about 3.5 GB free; the unit must see the same cache and GPU.
 - A Sync blocked in a backoff sleep holds a worker thread that shutdown can't interrupt, so stopping the service while throttled waits out the backoff (30+60+120 s by default); consider `TimeoutStopSec`.
+
+From ticket 11 review:
+- README registration snippets must use the exact `/mcp` path: `/mcp/` falls through to the static mount and answers 405.
+- README: document `mcp_allowed_hosts` (TOML list or comma-separated `MENTOR_MCP_ALLOWED_HOSTS`; `host:*` allows any port). Loopback is always allowed.

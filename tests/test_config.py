@@ -145,3 +145,30 @@ def test_search_scoring_and_recency_are_configurable(tmp_path: Path) -> None:
 def test_invalid_search_settings_are_rejected(tmp_path: Path, env: dict[str, str]) -> None:
     with pytest.raises(ConfigError):
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
+
+
+def test_mcp_allowed_hosts_come_from_a_list_or_a_comma_separated_variable(tmp_path: Path) -> None:
+    write_config(tmp_path, 'mcp_allowed_hosts = ["mentor.example.com", "10.0.0.5:*"]\n')
+
+    defaults = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
+    from_file = load_config({"XDG_CONFIG_HOME": str(tmp_path)})
+    from_env = load_config({"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_MCP_ALLOWED_HOSTS": " a.example , b.example:8443,"})
+
+    assert defaults.mcp_allowed_hosts == ()
+    assert from_file.mcp_allowed_hosts == ("mentor.example.com", "10.0.0.5:*")
+    assert from_env.mcp_allowed_hosts == ("a.example", "b.example:8443")
+
+
+@pytest.mark.parametrize(
+    ("file_text", "env"),
+    [
+        ("mcp_allowed_hosts = [5]\n", {}),
+        ("", {"MENTOR_MCP_ALLOWED_HOSTS": "https://mentor.example.com"}),
+        ("", {"MENTOR_MCP_ALLOWED_HOSTS": "mentor example"}),
+    ],
+)
+def test_invalid_mcp_allowed_hosts_are_rejected(tmp_path: Path, file_text: str, env: dict[str, str]) -> None:
+    write_config(tmp_path, file_text)
+
+    with pytest.raises(ConfigError):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})

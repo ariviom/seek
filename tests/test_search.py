@@ -3,7 +3,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import Json, add_mentor, fake_channel, fake_video, running, start_sync, wait_for_syncs
+from harness import Json, add_mentor, fake_channel, fake_video, running, said, start_sync, sync, wait_for_syncs
 
 from mentor.app import create_app
 from mentor.config import Config
@@ -11,22 +11,11 @@ from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import Chapter, Cue
 
 
-def said(*lines: str, every: float = 5.0) -> list[Cue]:
-    return [Cue(start=i * every, end=(i + 1) * every, text=line) for i, line in enumerate(lines)]
-
-
 async def search(client: httpx.AsyncClient, query: str, **scope: object) -> list[Json]:
     response = await client.post("/api/search", json={"query": query, **scope})
     assert response.status_code == 200, response.text
     results: list[Json] = response.json()
     return results
-
-
-async def sync(client: httpx.AsyncClient, *mentors: Json) -> None:
-    for mentor in mentors:
-        for channel in mentor["channels"]:
-            await start_sync(client, channel["id"])
-    assert all(s["status"] == "done" for s in await wait_for_syncs(client))
 
 
 async def test_a_result_carries_its_mentor_video_chapter_and_a_citation_to_the_matched_cue(

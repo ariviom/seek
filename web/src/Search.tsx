@@ -1,5 +1,13 @@
-import { useState, type FormEvent } from "react";
-import { api, errorText, type Mentor, type MentorGroup, type PreferRecent, type SearchResult } from "./api";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  api,
+  errorText,
+  type Expansion,
+  type Mentor,
+  type MentorGroup,
+  type PreferRecent,
+  type SearchResult,
+} from "./api";
 import {
   alertClass,
   buttonClass,
@@ -8,6 +16,7 @@ import {
   hintClass,
   inputClass,
   outlineButtonClass,
+  quietButtonClass,
   sectionHeadingClass,
 } from "./ui";
 
@@ -155,6 +164,27 @@ export function Search({ mentors, groups }: { mentors: Mentor[] | null; groups: 
 }
 
 function Result({ result }: { result: SearchResult }) {
+  const [open, setOpen] = useState(false);
+  const [context, setContext] = useState<Expansion | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function toggleContext() {
+    const opening = !open;
+    setOpen(opening);
+    // Fetched on first opening only.
+    if (!opening || context !== null) return;
+    setError(null);
+    setLoading(true);
+    try {
+      setContext(await api.expand(result.segment_id));
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <li className="rounded-md bg-panel px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] text-pencil">
@@ -166,10 +196,65 @@ function Result({ result }: { result: SearchResult }) {
       </div>
       <h3 className="mt-1 font-condensed text-[1.375rem] leading-tight font-semibold">{result.video_title}</h3>
       {result.chapter_title && <p className="text-[13px] text-pencil">Chapter: {result.chapter_title}</p>}
-      <p className="mt-2 text-[15px] leading-relaxed">{result.text}</p>
-      <a className={`mt-3 inline-block ${outlineButtonClass}`} href={result.url} target="_blank" rel="noreferrer">
-        Watch at {formatDuration(Math.floor(result.matched_seconds))}
-      </a>
+      {open && context !== null ? (
+        <TranscriptContext context={context} />
+      ) : (
+        <p className="mt-2 text-[15px] leading-relaxed">{result.text}</p>
+      )}
+      {open && error && (
+        <p role="alert" className={alertClass}>
+          {error}
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <a className={outlineButtonClass} href={result.url} target="_blank" rel="noreferrer">
+          Watch at {formatDuration(Math.floor(result.matched_seconds))}
+        </a>
+        <button className={quietButtonClass} type="button" onClick={toggleContext} disabled={loading} aria-expanded={open}>
+          {loading ? "Loading context…" : open ? "Hide context" : "Show context"}
+        </button>
+      </div>
     </li>
+  );
+}
+
+// The Transcript either side of a result, scrolled to where the Segment starts; the Segment's lines stand out.
+function TranscriptContext({ context }: { context: Expansion }) {
+  const firstInSegment = useRef<HTMLLIElement>(null);
+  const list = useRef<HTMLOListElement>(null);
+  const firstIndex = context.cues.findIndex((cue) => cue.start_seconds >= context.start_seconds);
+
+  useEffect(() => {
+    // The list is positioned, so a line's offsetTop is measured within it.
+    if (list.current && firstInSegment.current) list.current.scrollTop = firstInSegment.current.offsetTop;
+  }, []);
+
+  return (
+    <ol
+      ref={list}
+      className="relative mt-2 max-h-72 space-y-0.5 overflow-y-auto border-l-2 border-rule pl-3"
+      aria-label={`Transcript around this moment in ${context.video_title}`}
+    >
+      {context.cues.map((cue, index) => {
+        const inSegment = cue.start_seconds >= context.start_seconds && cue.start_seconds < context.end_seconds;
+        return (
+          <li
+            key={index}
+            ref={index === firstIndex ? firstInSegment : undefined}
+            className={`grid grid-cols-[3.5rem_1fr] gap-2 text-[15px] leading-relaxed ${inSegment ? "text-ink" : "text-pencil"}`}
+          >
+            <a
+              className="text-[13px] leading-[1.6rem] text-machine tabular-nums underline-offset-2 hover:underline"
+              href={`https://www.youtube.com/watch?v=${context.youtube_video_id}&t=${Math.floor(cue.start_seconds)}s`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {formatDuration(Math.floor(cue.start_seconds))}
+            </a>
+            <span>{cue.text}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

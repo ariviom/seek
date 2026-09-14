@@ -16,3 +16,10 @@
 - [ ] API tests with FakeChatEngine assert every lockdown option and the Group binding it received, plus persistence
 
 From ticket 01 review: ChatRequest has no fields for the tool lockdown, Group binding, or replay history, and ChatFailed cannot signal an unresumable session; reshape the port here.
+
+From ticket 11 review:
+- `mcp_server.create_mcp_server(database, search, sql_time_limit_seconds)` has no Group binding and its tools are closures; reshape it so the in-process server reuses the tool bodies with a bound Group. `expand`, `get_video`, and `sql` read across every Group, so either scope them or leave `sql` out of the chat.
+- `mcp_server.GROUNDED_ADVISOR` is the grounded-advisor text already worded from the spec's chat system prompt; build the system prompt from it so the two don't drift.
+- `list_groups` only lists Mentors that belong to a Group, so a Mentor in no Group has no id the model can find except through `sql`.
+- `sql` runs on the default thread pool shared with `Database.run`; stateless MCP has no concurrency limit, so many slow `sql` calls at once can stall the API and the Sync worker. Consider a small dedicated executor.
+- Building `MCPServer` calls `logging.basicConfig` (at WARNING, with a Rich handler when `rich` is installed), which changes how existing `log.exception` output looks.

@@ -93,6 +93,21 @@ export type SearchResult = {
   url: string;
 };
 
+// The Transcript around a Segment: its own span, and the timed lines from before it to after it.
+export type Expansion = {
+  segment_id: number;
+  start_seconds: number;
+  end_seconds: number;
+  video_id: number;
+  youtube_video_id: string;
+  video_title: string;
+  published_on: string | null;
+  channel_name: string;
+  mentor_name: string;
+  url: string;
+  cues: { start_seconds: number; text: string }[];
+};
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -155,4 +170,5 @@ export const api = {
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
+  expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
 };
