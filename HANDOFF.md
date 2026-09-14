@@ -1,5 +1,14 @@
 # Handoff — Mentor
 
+**Next up (decided 2026-09-14, evening): v2, the sidebar chat UI on a Channel model.** Read ADR 0003, then
+`docs/specs/0002-sidebar-chat-ui.md` (reviewed; its decisions win over spec 0001 where they differ), then the six tickets
+in `.scratch/mentor-v2/issues/`. Start with ticket 01 (backend) on a `mentor-v2` branch off `main`, one ticket per
+session as before. The prototype the spec cites is commit `8d51635` on branch `t3code/sidebar-chat-ui-prototype`
+(`pnpm --dir web dev`, then `?variant=B2`); it is a reference, never merged. Drew's calls from the prototype rounds:
+rail + list + main + Sources inspector; shadcn zinc with Geist, dark and light; chats filed under the Group or Channel
+they consult, one flat folder list; Channels before Groups in the Library with the add buttons in the sidebar; a real
+YouTube embed in the inspector with a centred lightbox; "Mentor" survives only as the product name.
+
 State as of 2026-09-14 (end of day): tickets 01–17 and 19–21 are done, reviewed on both axes against the old `main`, and fast-forwarded into `main` (deferred findings are appended to tickets 19, 20, and 21). Ticket 18 is the only one open: its setup checklist is in the ticket, and it waits on Drew creating the Access application for `remote.example.com` (Google login; Managed OAuth only if Claude Desktop should connect) and sending the AUD tag and team domain, which go in `~/.config/mentor/config.toml` with `allowed_hosts`. Reinstalled from `main` on 2026-09-14 (schema 8; backup at `~/.local/share/mentor/mentor.db.pre-66d93bf.bak`). The live knowledge base has no Mentors yet, so no reindex is needed. Remote access (2026-09-14): Access (Google login) is live on `remote.example.com`; the Cloudflare route reaches this machine's port 7337 directly, as for Drew's other apps, so instead of a tunnel mentor got `listen_all_interfaces` (refused without the Access keys). `~/.config/mentor/config.toml` sets `allowed_hosts`, both Access keys, and `listen_all_interfaces = true`; checked that loopback gets 200 and a LAN request with the public Host gets 403. Ticket 18 still needs Drew to sign in through the hostname, the Managed OAuth decision for Claude Desktop, and the per-client checks. mentor is installed as a uv tool from the main checkout and runs as the `mentor` systemd user service on 7337 (data in `~/.local/share/mentor`).
 
 Read in this order:
