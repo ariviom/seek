@@ -14,6 +14,7 @@ import jwt
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.websockets import WebSocketClose
 
 log = logging.getLogger(__name__)
 
@@ -122,7 +123,8 @@ class AccessMiddleware:
         self._verifier = verifier
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        # WebSockets are checked too: mentor has none today, and one added later mustn't be reachable around Access.
+        if scope["type"] not in ("http", "websocket"):
             await self._app(scope, receive, send)
             return
         headers = Headers(scope=scope)
@@ -132,10 +134,13 @@ class AccessMiddleware:
                 if token is None:
                     raise AccessDenied("Requests from outside this machine must come through Cloudflare Access")
                 await self._verifier.verify(token)
-            except AccessDenied as e:
-                await JSONResponse({"detail": str(e)}, 403)(scope, receive, send)
-                return
-            except AccessUnavailable as e:
-                await JSONResponse({"detail": str(e)}, 503)(scope, receive, send)
+            except (AccessDenied, AccessUnavailable) as e:
+                if scope["type"] == "websocket":
+                    # Closing before accepting refuses the handshake with a 403.
+                    await WebSocketClose(1008, str(e))(scope, receive, send)
+                else:
+                    await JSONResponse({"detail": str(e)}, 403 if isinstance(e, AccessDenied) else 503)(
+                        scope, receive, send
+                    )
                 return
         await self._app(scope, receive, send)

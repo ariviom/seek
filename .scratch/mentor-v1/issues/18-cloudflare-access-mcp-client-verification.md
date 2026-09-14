@@ -39,3 +39,13 @@ Approach: one **self-hosted** Access application over the whole hostname with **
 13. Claude Desktop: Settings → Connectors → Add custom connector → `https://mentor.<domain>/mcp` → Connect.
 
 Failure hints: OAuth succeeds but mentor answers 403 → AUD mismatch. Desktop callback rejected → redirect URI missing in step 4. Fallback for Claude Code and Codex only: a service token plus a Service Auth policy, sent as `CF-Access-Client-Id`/`CF-Access-Client-Secret` headers; Desktop has no header option.
+
+## Exposure check (2026-09-14)
+
+mentor runs with `listen_all_interfaces` behind the Access app (AUD `<aud>…`, team `myteam.cloudflareaccess.com`);
+requests arrive from a relay at 192.168.50.247, which the router's port 443 on the public IP also reaches.
+- Through `remote.example.com` unauthenticated: every path and method probed (API, `/mcp`, events, docs, assets,
+  `.well-known`, path-normalisation variants) stops at Cloudflare with a 302 to login, or 403 for OPTIONS.
+- Around Cloudflare (public IP with the mentor hostname, the LAN address, a forged or `alg: none` token): mentor 403.
+- WebSockets now go through the same check (they previously passed it and only failed on the static mount).
+- Not checkable from here: the Access policy's include rules (who may sign in).

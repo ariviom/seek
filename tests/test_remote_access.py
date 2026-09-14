@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from harness import event_stream, running
 from jwt.algorithms import RSAAlgorithm
+from starlette.types import Message
 
 from mentor.app import create_app
 from mentor.config import Config
@@ -259,6 +260,36 @@ async def test_only_requests_made_directly_on_this_machine_go_without_a_token(
     assert direct == [200, 200]
     assert relayed == [403, 403, 403, 403]
     assert from_another_address == 403
+
+
+async def test_a_websocket_from_another_machine_is_refused_without_a_token(published: Config, tmp_path: Path) -> None:
+    app = guarded_app(published, Certs(), tmp_path / "no-bundle")
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "ws",
+        "path": "/api/events",
+        "raw_path": b"/api/events",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"mentor.example.com")],
+        "client": ("192.0.2.10", 50000),
+        "server": ("127.0.0.1", 7337),
+        "subprotocols": [],
+    }
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return {"type": "websocket.connect"}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await app(scope, receive, send)
+
+    [closed] = sent
+    assert (closed["type"], closed["code"]) == ("websocket.close", 1008)
+    assert "Cloudflare Access" in str(closed["reason"])
 
 
 async def test_access_keys_are_cached_and_fetched_again_for_a_rotated_key(published: Config, tmp_path: Path) -> None:
