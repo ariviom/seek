@@ -135,7 +135,15 @@ def create_app(
         "strong": Recency(config.strong_recency_half_life_days, config.strong_recency_max_penalty_percent / 100),
     }
     search = Search(database, embedder, reranker, config.reranker_temperature, recency)
-    worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds, events)
+    worker = SyncWorker(
+        database,
+        transcripts,
+        embedder,
+        config.min_duration_seconds,
+        sync_poll_seconds,
+        events,
+        cooldown_seconds=config.youtube_backoff_seconds,
+    )
     models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
     chat = Chat(database, search, chat_engine)
     mcp = create_mcp_server(database, search, sql_time_limit_seconds)

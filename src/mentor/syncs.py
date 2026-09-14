@@ -38,6 +38,7 @@ class ClaimedSync:
     channel_id: int
     youtube_channel_id: str
     retry_failed: bool
+    reindex: bool
     # As they were when the Sync started; changes apply from the next Sync.
     filters: ChannelFilters
 
@@ -71,17 +72,20 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
     ]
 
 
-def enqueue(conn: sqlite3.Connection, channel_id: int) -> Sync:
-    """Queues a Sync for the Channel, or returns the one already queued for it."""
+def enqueue(conn: sqlite3.Connection, channel_id: int, reindex: bool = False) -> Sync:
+    """Queues a Sync for the Channel, or returns the one already queued for it.
+
+    A reindex Sync re-segments and re-embeds the Channel's indexed Videos when it starts.
+    """
     with transaction(conn):
-        return _enqueue(conn, channel_id, retry_failed=False)
+        return _enqueue(conn, channel_id, retry_failed=False, reindex=reindex)
 
 
-def enqueue_all(conn: sqlite3.Connection) -> list[Sync]:
+def enqueue_all(conn: sqlite3.Connection, reindex: bool = False) -> list[Sync]:
     """Queues a Sync for every indexed Channel, as enqueue does for one."""
     with transaction(conn):
         channel_ids = [row["id"] for row in conn.execute("SELECT id FROM channels WHERE indexed = 1 ORDER BY id")]
-        return [_enqueue(conn, channel_id, retry_failed=False) for channel_id in channel_ids]
+        return [_enqueue(conn, channel_id, retry_failed=False, reindex=reindex) for channel_id in channel_ids]
 
 
 def retry_failed(conn: sqlite3.Connection, channel_id: int) -> Sync:
@@ -101,23 +105,27 @@ def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
         raise NotFound(f"Channel {channel_id} not found")
 
 
-def _enqueue(conn: sqlite3.Connection, channel_id: int, retry_failed: bool) -> Sync:
+def _enqueue(conn: sqlite3.Connection, channel_id: int, retry_failed: bool, reindex: bool = False) -> Sync:
     _require_channel(conn, channel_id)
     counts = json.dumps(videos.stage_counts(conn, channel_id))
     row = conn.execute("SELECT id FROM syncs WHERE channel_id = ? AND status = 'queued'", (channel_id,)).fetchone()
     if row is None:
         row = conn.execute(
             """
-            INSERT INTO syncs (channel_id, status, queued_at, stage_counts, retry_failed) VALUES (?, 'queued', ?, ?, ?)
+            INSERT INTO syncs (channel_id, status, queued_at, stage_counts, retry_failed, reindex)
+            VALUES (?, 'queued', ?, ?, ?, ?)
             RETURNING id
             """,
-            (channel_id, now_iso(), counts, retry_failed),
+            (channel_id, now_iso(), counts, retry_failed, reindex),
         ).fetchone()
     else:
-        # The Sync already queued takes on the current counts and any retry request.
+        # The Sync already queued takes on the current counts and any retry or reindex request.
         conn.execute(
-            "UPDATE syncs SET stage_counts = ?, retry_failed = max(retry_failed, ?) WHERE id = ?",
-            (counts, retry_failed, row["id"]),
+            """
+            UPDATE syncs SET stage_counts = ?, retry_failed = max(retry_failed, ?), reindex = max(reindex, ?)
+            WHERE id = ?
+            """,
+            (counts, retry_failed, reindex, row["id"]),
         )
     [sync] = _select(conn, "WHERE syncs.id = ?", (row["id"],))
     return sync
@@ -132,6 +140,14 @@ def get_syncs(conn: sqlite3.Connection, sync_ids: list[int]) -> list[Sync]:
     """The Syncs with these ids that still exist, oldest first."""
     placeholders = ", ".join("?" * len(sync_ids))
     return _select(conn, f"WHERE syncs.id IN ({placeholders}) ORDER BY syncs.id", tuple(sync_ids))
+
+
+def completed_before(conn: sqlite3.Connection, channel_id: int) -> bool:
+    """Whether a Sync of the Channel has ever finished, so its older Videos are all known."""
+    return (
+        conn.execute("SELECT 1 FROM syncs WHERE channel_id = ? AND status = 'done' LIMIT 1", (channel_id,)).fetchone()
+        is not None
+    )
 
 
 def has_work(conn: sqlite3.Connection) -> bool:
@@ -188,7 +204,7 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
             return None
         row = conn.execute(
             """
-            SELECT syncs.id AS sync_id, syncs.retry_failed, channels.*
+            SELECT syncs.id AS sync_id, syncs.retry_failed, syncs.reindex, channels.*
             FROM syncs JOIN channels ON channels.id = syncs.channel_id
             WHERE syncs.status = 'queued' ORDER BY syncs.id LIMIT 1
             """
@@ -198,11 +214,14 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         conn.execute("UPDATE syncs SET status = 'running', started_at = ? WHERE id = ?", (now_iso(), row["sync_id"]))
         if row["retry_failed"]:
             videos.clear_failures(conn, row["id"])
+        if row["reindex"]:
+            videos.step_back_for_reindex(conn, row["id"])
         return ClaimedSync(
             id=row["sync_id"],
             channel_id=row["id"],
             youtube_channel_id=row["youtube_channel_id"],
             retry_failed=bool(row["retry_failed"]),
+            reindex=bool(row["reindex"]),
             filters=mentors.read_filters(row),
         )
 

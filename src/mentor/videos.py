@@ -240,6 +240,11 @@ def _apply_exclusions(
             complete_stage(conn, row["id"], "transcript_fetched")
 
 
+def youtube_ids(conn: sqlite3.Connection, channel_id: int) -> set[str]:
+    """The YouTube ids of every Video of the Channel."""
+    return {row["youtube_video_id"] for row in conn.execute("SELECT youtube_video_id FROM videos WHERE channel_id = ?", (channel_id,))}
+
+
 def pending_videos(conn: sqlite3.Connection, channel_id: int) -> list[PendingVideo]:
     """Videos a Sync should advance: not done, not excluded, and not permanently failed."""
     rows = conn.execute(
@@ -347,6 +352,19 @@ def record_failure(
             (attempted, failure.reason, failure.permanent, failure.language, video_id),
         )
         return cursor.rowcount == 1
+
+
+def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> None:
+    """Within a transaction: every segmented, embedded, or done Video of the Channel goes back to
+    transcript_fetched, so the Sync cuts and embeds it again from its stored Transcript. Its Segments stay until
+    they are replaced, but leave search at once, since only a done Video's are searchable."""
+    conn.execute(
+        """
+        UPDATE videos SET pipeline_stage = 'transcript_fetched'
+        WHERE channel_id = ? AND pipeline_stage IN ('segmented', 'embedded', 'done')
+        """,
+        (channel_id,),
+    )
 
 
 def clear_failures(conn: sqlite3.Connection, channel_id: int) -> None:

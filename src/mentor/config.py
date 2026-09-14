@@ -2,7 +2,7 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 # The server listens on loopback only; remote access goes through a reverse proxy.
@@ -53,6 +53,10 @@ class Config:
     youtube_backoff_seconds: int = DEFAULT_YOUTUBE_BACKOFF_SECONDS
     # A Netscape-format cookies.txt exported from a signed-in browser; yt-dlp also writes refreshed cookies back to it.
     youtube_cookie_file: Path | None = None
+    # Cookies read from a browser's profile instead, in yt-dlp's BROWSER[+KEYRING][:PROFILE][::CONTAINER] form.
+    youtube_cookies_from_browser: str | None = None
+    # yt-dlp's youtube extractor arguments (e.g. player_client, po_token), merged over the defaults.
+    youtube_extractor_args: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     reranker_temperature: int = DEFAULT_RERANKER_TEMPERATURE
     # Search's prefer_recent levels "gentle" (the default) and "strong".
     gentle_recency_half_life_days: int = DEFAULT_GENTLE_RECENCY_HALF_LIFE_DAYS
@@ -115,6 +119,32 @@ def _hosts(key: str, value: object, source: str) -> tuple[str, ...]:
     return hosts
 
 
+def _browser_cookies(key: str, value: object, source: str) -> str:
+    text = _text(key, value, source)
+    if not re.fullmatch(r"[A-Za-z]+(\s*\+\s*[A-Za-z0-9_]+)?(\s*:\s*[^:]+)?(\s*::\s*.+)?", text):
+        raise ConfigError(f"{source}: {key} must be a browser such as firefox, or firefox:profile, or chrome+keyring")
+    return text
+
+
+def _extractor_args(key: str, value: object, source: str) -> Mapping[str, tuple[str, ...]]:
+    """A TOML table of yt-dlp youtube extractor arguments, each a string or a list of strings; an environment
+    variable gives the table's body, e.g. `player_client = ["mweb"]`."""
+    if isinstance(value, str):
+        try:
+            value = tomllib.loads(value)
+        except tomllib.TOMLDecodeError as e:
+            raise ConfigError(f"{source}: {key} must be TOML such as player_client = [\"mweb\"]: {e}") from None
+    if not isinstance(value, dict):
+        raise ConfigError(f"{source}: {key} must be a table of yt-dlp youtube extractor arguments")
+    args: dict[str, tuple[str, ...]] = {}
+    for name, given in value.items():
+        values = [given] if isinstance(given, str) else given
+        if not isinstance(values, list) or not values or not all(isinstance(v, str) for v in values):
+            raise ConfigError(f"{source}: {key}.{name} must be a string or a list of strings")
+        args[name] = tuple(values)
+    return args
+
+
 def _team_domain(key: str, value: object, source: str) -> str:
     """A bare hostname; an https:// prefix and a trailing slash, as copied from the dashboard, are dropped."""
     text = _text(key, value, source).removeprefix("https://").rstrip("/")
@@ -171,6 +201,12 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     cookie_file = None
     if "youtube_cookie_file" in raw:
         cookie_file = _absolute_path("youtube_cookie_file", *raw["youtube_cookie_file"])
+    browser_cookies = None
+    if "youtube_cookies_from_browser" in raw:
+        browser_cookies = _browser_cookies("youtube_cookies_from_browser", *raw["youtube_cookies_from_browser"])
+    extractor_args: Mapping[str, tuple[str, ...]] = {}
+    if "youtube_extractor_args" in raw:
+        extractor_args = _extractor_args("youtube_extractor_args", *raw["youtube_extractor_args"])
     temperature = DEFAULT_RERANKER_TEMPERATURE
     if "reranker_temperature" in raw:
         temperature = _integer("reranker_temperature", *raw["reranker_temperature"], 1, 100)
@@ -209,6 +245,8 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         youtube_retries=youtube_retries,
         youtube_backoff_seconds=youtube_backoff,
         youtube_cookie_file=cookie_file,
+        youtube_cookies_from_browser=browser_cookies,
+        youtube_extractor_args=extractor_args,
         reranker_temperature=temperature,
         gentle_recency_half_life_days=gentle_half_life,
         gentle_recency_max_penalty_percent=gentle_penalty,

@@ -32,6 +32,8 @@ def _youtube(config: Config) -> YouTubeTranscriptSource:
             retries=config.youtube_retries,
             backoff_seconds=config.youtube_backoff_seconds,
             cookie_file=config.youtube_cookie_file,
+            cookies_from_browser=config.youtube_cookies_from_browser,
+            extractor_args=config.youtube_extractor_args,
         )
     )
 
@@ -60,14 +62,16 @@ def _service_active() -> bool:
         return False
 
 
-def sync(channel: str | None) -> None:
+def sync(channel: str | None, reindex: bool = False) -> None:
     config = _config()
     embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, GpuRunner())
     # The service counts as active as soon as it starts, before it answers: at login a scheduled Sync can start
     # alongside it, and waiting keeps the models from loading twice.
     server_wait_seconds = 30 if _service_active() else 0
     try:
-        report = asyncio.run(sync_channels(config, channel, _youtube(config), embedder, server_wait_seconds))
+        report = asyncio.run(
+            sync_channels(config, channel, _youtube(config), embedder, server_wait_seconds, reindex=reindex)
+        )
     except (SyncCommandError, NotFound) as e:
         sys.exit(f"mentor: {e}")
     if not report.syncs:
@@ -137,6 +141,12 @@ def main() -> None:
     target = sync_parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--all", action="store_true", help="every indexed Channel")
     target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    reindex_parser = commands.add_parser(
+        "reindex", help="Sync Channels as `sync` does, re-segmenting and re-embedding the Videos already indexed"
+    )
+    reindex_target = reindex_parser.add_mutually_exclusive_group(required=True)
+    reindex_target.add_argument("--all", action="store_true", help="every indexed Channel")
+    reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
     install_parser = commands.add_parser(
         "install-service", help="run the server as a systemd user service that starts at login"
     )
@@ -152,5 +162,7 @@ def main() -> None:
         serve()
     elif args.command == "sync":
         sync(args.channel)
+    elif args.command == "reindex":
+        sync(args.channel, reindex=True)
     elif args.command == "install-service":
         install(args.timer)

@@ -13,13 +13,23 @@ from mentor.ports import Chapter, Cue
 from mentor.segmentation import segment
 
 
+def passage_context(video_title: str, chapter_title: str | None) -> str:
+    """What frames a Segment for the indexes: its Video's title and, when it has one, its chapter."""
+    return video_title if chapter_title is None else f"{video_title} — {chapter_title}"
+
+
+def passage_text(context: str, text: str) -> str:
+    """The text a Segment is embedded and reranked as: its context, then the bare cue text."""
+    return f"{context}\n{text}"
+
+
 def record_segments(conn: sqlite3.Connection, video_id: int) -> bool:
     """Cuts the Video's Transcript into Segments, replacing any it had, and advances the stage.
 
     Replacing a Segment also removes its FTS5 row and its vector. False if the Video is gone.
     """
     with transaction(conn):
-        video = conn.execute("SELECT chapters FROM videos WHERE id = ?", (video_id,)).fetchone()
+        video = conn.execute("SELECT title, chapters FROM videos WHERE id = ?", (video_id,)).fetchone()
         if video is None:
             return False
         transcript = conn.execute("SELECT cues FROM transcripts WHERE video_id = ?", (video_id,)).fetchone()
@@ -30,11 +40,19 @@ def record_segments(conn: sqlite3.Connection, video_id: int) -> bool:
         conn.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
         conn.executemany(
             """
-            INSERT INTO segments (video_id, start_seconds, end_seconds, text, chapter_title, cues)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO segments (video_id, start_seconds, end_seconds, text, chapter_title, context, cues)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                (video_id, s.start, s.end, s.text, s.chapter_title, json.dumps([asdict(c) for c in s.cues]))
+                (
+                    video_id,
+                    s.start,
+                    s.end,
+                    s.text,
+                    s.chapter_title,
+                    passage_context(video["title"], s.chapter_title),
+                    json.dumps([asdict(c) for c in s.cues]),
+                )
                 for s in segment(cues, chapters)
             ],
         )
@@ -42,9 +60,9 @@ def record_segments(conn: sqlite3.Connection, video_id: int) -> bool:
 
 
 def segment_texts(conn: sqlite3.Connection, video_id: int) -> list[tuple[int, str]]:
-    """The Video's Segments as (id, text)."""
-    rows = conn.execute("SELECT id, text FROM segments WHERE video_id = ? ORDER BY id", (video_id,))
-    return [(row["id"], row["text"]) for row in rows]
+    """The Video's Segments as (id, passage text): what each is embedded as."""
+    rows = conn.execute("SELECT id, context, text FROM segments WHERE video_id = ? ORDER BY id", (video_id,))
+    return [(row["id"], passage_text(row["context"], row["text"])) for row in rows]
 
 
 def record_embeddings(

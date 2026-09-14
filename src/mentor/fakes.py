@@ -3,7 +3,7 @@
 import hashlib
 import math
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 
 from mentor.ports import (
@@ -45,6 +45,12 @@ class FakeChannel:
     info: ChannelInfo
     handles: Sequence[str]
     videos: list[FakeVideo] = field(default_factory=list)
+    # The streams tab: past livestreams, listed after the videos tab.
+    streams: list[FakeVideo] = field(default_factory=list)
+
+    @property
+    def all_videos(self) -> list[FakeVideo]:
+        return [*self.videos, *self.streams]
 
 
 @dataclass
@@ -56,6 +62,8 @@ class FakeTranscriptSource:
     unavailable: str | None = None
     # Every call as (method, argument), in order.
     calls: list[tuple[str, str]] = field(default_factory=list)
+    # The known ids each list_videos call was given, in order. The fake lists everything regardless.
+    listings_known: list[frozenset[str]] = field(default_factory=list)
 
     def _call(self, method: str, argument: str) -> None:
         self.calls.append((method, argument))
@@ -69,11 +77,12 @@ class FakeTranscriptSource:
                 return channel.info
         raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
 
-    def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
+    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> Sequence[VideoListing]:
         self._call("list_videos", channel_id)
+        self.listings_known.append(frozenset(known_ids))
         for channel in self.channels:
             if channel.info.channel_id == channel_id:
-                return [v.listing for v in channel.videos]
+                return [v.listing for v in channel.all_videos]
         raise ChannelNotFound(f"No YouTube channel found for {channel_id}")
 
     def list_playlist(self, playlist_id: str) -> Sequence[str]:
@@ -84,7 +93,7 @@ class FakeTranscriptSource:
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         for channel in self.channels:
-            for video in channel.videos:
+            for video in channel.all_videos:
                 if video.listing.video_id == video_id:
                     if video.before_fetch is not None:
                         video.before_fetch()

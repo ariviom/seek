@@ -1,12 +1,22 @@
 """The yt-dlp adapter's parsing and classification, below the API seam because yt-dlp can't be faked usefully."""
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
 
 from mentor.ports import Chapter, ChannelNotFound, Cue, VideoDetails, VideoListing, VideoUnavailable
-from mentor.youtube import CaptionTrack, caption_track, channel_url, classify_error, listings, parse_json3, video_details
+from mentor.youtube import (
+    CaptionTrack,
+    caption_track,
+    channel_url,
+    classify_error,
+    cookies_from_browser,
+    listings,
+    parse_json3,
+    take_until_known,
+    video_details,
+)
 
 DETAILS = VideoDetails(
     video_id="v2jtQ96A2_Q", title="Why", published_on=date(2026, 9, 3), duration_seconds=559, description="", chapters=[]
@@ -165,6 +175,42 @@ def test_videos_without_captions_fail_permanently_unless_youtube_withheld_them_f
     )
     assert withheld.value.permanent is False
     assert "bgutil-ytdlp-pot-provider" in withheld.value.reason
+
+
+def test_a_new_video_without_captions_fails_transiently_while_youtube_may_still_be_generating_them() -> None:
+    info: dict[str, Any] = {"subtitles": {}, "automatic_captions": {}}
+
+    with pytest.raises(VideoUnavailable) as fresh:
+        caption_track(info, [], DETAILS, today=DETAILS.published_on + timedelta(days=7))
+    with pytest.raises(VideoUnavailable) as old:
+        caption_track(info, [], DETAILS, today=DETAILS.published_on + timedelta(days=8))
+
+    assert (fresh.value.permanent, fresh.value.details) == (False, DETAILS)
+    assert "still be generating" in fresh.value.reason
+    assert (old.value.reason, old.value.permanent) == ("No captions", True)
+
+
+def test_a_listing_stops_after_the_first_page_holding_only_known_videos() -> None:
+    entries = [{"id": f"v{n}"} for n in range(10)]
+    known = {f"v{n}" for n in range(3, 10)}
+
+    # Page 3 (v6–v8) is the first holding only known ids; page 2 has the new v3... no: v3 is known, page 2 is v3–v5.
+    assert [e["id"] for e in take_until_known(entries, known, page_size=3)] == ["v0", "v1", "v2", "v3", "v4", "v5"]
+    assert take_until_known(entries, set(), page_size=3) == entries
+    # A page that is only partly known keeps the listing going.
+    assert take_until_known(entries, {"v1", "v2", "v4", "v5"}, page_size=3) == entries
+
+
+@pytest.mark.parametrize(
+    ("given", "parsed"),
+    [
+        ("firefox", ("firefox", None, None, None)),
+        ("Chrome:Profile 1", ("chrome", "Profile 1", None, None)),
+        ("chromium+gnomekeyring:Default::work", ("chromium", "Default", "GNOMEKEYRING", "work")),
+    ],
+)
+def test_browser_cookie_settings_take_yt_dlps_form(given: str, parsed: tuple[str | None, ...]) -> None:
+    assert cookies_from_browser(given) == parsed
 
 
 def test_json3_captions_become_cues_without_blank_lines_or_overlaps() -> None:

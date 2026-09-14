@@ -17,12 +17,16 @@ from mentor.errors import NotFound
 from mentor.ports import Embedder, Reranker
 from mentor.ranking import Recency, fuse, matched_seconds, recency_score
 from mentor.segmentation import SegmentCue
+from mentor.segments import passage_text
 from mentor.sources import watch_url
 
 type PreferRecent = Literal["off", "gentle", "strong"]
 
 # Hits taken from each of the vector and lexical searches, and fused hits passed to the reranker.
 CANDIDATES = 50
+# Segments of one Video among the results before others get a turn: adjacent windows overlap, so one passage
+# would otherwise fill the top of the list on its own.
+PER_VIDEO = 3
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,13 @@ class SearchResult:
     mentor_name: str
     score: float
     url: str
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    result: SearchResult
+    # What the Segment was embedded as, for the reranker.
+    passage: str
 
 
 # Blocking: run through Database.run.
@@ -82,7 +93,7 @@ def _scope_channels(conn: sqlite3.Connection, group: int | str | None, mentor_id
 # Blocking: run through Database.run.
 def _candidates(
     conn: sqlite3.Connection, channel_ids: Sequence[int], query: str, query_vector: Sequence[float]
-) -> list[SearchResult]:
+) -> list[_Candidate]:
     """The fused top vector and lexical hits within the Channels, best first and not yet scored."""
     in_channels = ", ".join("?" * len(channel_ids))
     # Scoped inside the KNN query, so a small Channel still gets its nearest Segments.
@@ -113,8 +124,8 @@ def _candidates(
     fused = fuse(rankings, limit=CANDIDATES)
     rows = conn.execute(
         """
-        SELECT segments.id, segments.text, segments.start_seconds, segments.cues, segments.chapter_title,
-               videos.id AS video_id, videos.youtube_video_id, videos.title, videos.published_on,
+        SELECT segments.id, segments.text, segments.context, segments.start_seconds, segments.cues,
+               segments.chapter_title, videos.id AS video_id, videos.youtube_video_id, videos.title, videos.published_on,
                channels.name AS channel_name, mentors.name AS mentor_name
         FROM segments
         JOIN videos ON videos.id = segments.video_id
@@ -129,10 +140,10 @@ def _candidates(
     return [by_id[segment_id] for segment_id in fused if segment_id in by_id]
 
 
-def _unscored(query: str, row: sqlite3.Row) -> SearchResult:
+def _unscored(query: str, row: sqlite3.Row) -> _Candidate:
     cues = [SegmentCue(**cue) for cue in json.loads(row["cues"])]
     matched = matched_seconds(query, row["text"], cues, row["start_seconds"])
-    return SearchResult(
+    result = SearchResult(
         segment_id=row["id"],
         text=row["text"],
         start_seconds=row["start_seconds"],
@@ -147,6 +158,7 @@ def _unscored(query: str, row: sqlite3.Row) -> SearchResult:
         score=0.0,
         url=watch_url(row["youtube_video_id"], int(matched)),
     )
+    return _Candidate(result, passage_text(row["context"], row["text"]))
 
 
 class Search:
@@ -183,13 +195,28 @@ class Search:
         candidates = await self._database.run(lambda conn: _candidates(conn, channel_ids, query, query_vector))
         if not candidates:
             return []
-        reranked = await asyncio.to_thread(self._reranker.score, query, [c.text for c in candidates])
+        reranked = await asyncio.to_thread(self._reranker.score, query, [c.passage for c in candidates])
         today = datetime.now(UTC).date()
         recency = self._recency[prefer_recent]
         scored = [
-            replace(c, score=recency_score(logit, c.published_on, today, self._temperature, recency))
+            replace(c.result, score=recency_score(logit, c.result.published_on, today, self._temperature, recency))
             for logit, c in zip(reranked, candidates, strict=True)
         ]
         # Stable: equal scores keep the fused order.
         scored.sort(key=lambda result: -result.score)
-        return scored[:limit]
+        return spread_across_videos(scored, limit)
+
+
+def spread_across_videos(scored: Sequence[SearchResult], limit: int) -> list[SearchResult]:
+    """The best `limit` results with at most PER_VIDEO from any one Video; the rest fill in only after every
+    Video's best windows, so a scope with few Videos still gets a full list."""
+    taken: dict[int, int] = {}
+    within: list[SearchResult] = []
+    overflow: list[SearchResult] = []
+    for result in scored:
+        if taken.get(result.video_id, 0) < PER_VIDEO:
+            taken[result.video_id] = taken.get(result.video_id, 0) + 1
+            within.append(result)
+        else:
+            overflow.append(result)
+    return (within + overflow)[:limit]

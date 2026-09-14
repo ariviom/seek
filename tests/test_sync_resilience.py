@@ -1,5 +1,7 @@
+import asyncio
+import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -145,6 +147,64 @@ async def test_a_normal_sync_skips_permanent_failures_and_retry_failed_recovers_
     assert [fetched(transcripts).count(v) for v in ("v-members", "v-live", "v-garbled", "v-ok")] == [2, 2, 1, 1]
     assert [embeds_of(embedder, title) for title in ("Members stream", "Garbled", "Fine")] == [1, 1, 1]
     assert unknown.status_code == 404
+
+
+async def test_a_refused_caption_fetch_fails_its_video_alone_and_a_run_of_them_stops_the_sync_and_cools_down(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    refused = VideoUnavailable("YouTube is rate limiting requests", permanent=False, throttled=True)
+    videos_tab = fake_channel(transcripts, "UC-wright").videos
+    videos_tab += [
+        fake_video("v-one", "One", failure=refused),
+        fake_video("v-two", "Two"),
+        fake_video("v-three", "Three", failure=refused),
+        fake_video("v-four", "Four", failure=refused),
+        fake_video("v-five", "Five", failure=refused),
+        fake_video("v-six", "Six"),
+    ]
+    app = create_app(
+        # The cooldown after a throttled Sync is youtube_backoff_seconds, doubling for each in a row.
+        replace(config, youtube_backoff_seconds=1),
+        transcripts,
+        FakeEmbedder(),
+        FakeReranker(),
+        FakeChatEngine(),
+        static_dir=tmp_path / "no-bundle",
+        sync_poll_seconds=0.2,
+    )
+    async with running(app) as client:
+        mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+        channel_id = mentor["channels"][0]["id"]
+        await start_sync(client, channel_id)
+        stopped, *_ = await wait_for_syncs(client)
+        after = await list_videos(client, channel_id)
+        fetched_first = fetched(transcripts)
+        for video in videos_tab:
+            video.failure = None
+        started = time.monotonic()
+        queued = await start_sync(client, channel_id)
+        await asyncio.sleep(0.5)
+        during = (await client.get("/api/syncs")).json()[0]
+        rerun, *_ = await wait_for_syncs(client)
+        cooled = time.monotonic() - started
+        recovered = await list_videos(client, channel_id)
+
+    # One refusal fails one Video; the Sync goes on until three in a row show YouTube is blocking this machine.
+    assert stopped["status"] == "failed"
+    assert "3 Videos in a row were refused" in stopped["error"]
+    assert {t: v["stage"] for t, v in after.items()} == {
+        "One": "failed",
+        "Two": "done",
+        "Three": "failed",
+        "Four": "failed",
+        "Five": "failed",
+        "Six": "discovered",
+    }
+    assert after["One"]["permanent_failure"] is False
+    assert fetched_first == ["v-one", "v-two", "v-three", "v-four", "v-five"]
+    assert (queued["id"], during["id"], during["status"]) == (queued["id"], queued["id"], "queued")
+    assert rerun["status"] == "done" and cooled >= 1
+    assert {t: v["stage"] for t, v in recovered.items()} == {t: "done" for t in after}
 
 
 async def test_retry_failed_during_a_sync_also_retries_failures_that_sync_records_afterwards(

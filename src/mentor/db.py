@@ -159,6 +159,28 @@ MIGRATIONS = [
     );
     CREATE INDEX messages_conversation_id ON messages(conversation_id);
     """,
+    """
+    -- Each Segment carries its Video's title and chapter as context, so the embedding, the lexical index, and the
+    -- reranker all see what the passage is about. Stored, not derived, so the FTS5 delete trigger removes exactly
+    -- what the insert trigger added even if the title changed meanwhile. FTS5 tables can't be altered, so the index
+    -- is rebuilt with the new column; it isn't a foreign-key parent, so dropping it cascades nothing.
+    ALTER TABLE segments ADD COLUMN context TEXT NOT NULL DEFAULT '';
+    DROP TRIGGER segments_fts_insert;
+    DROP TRIGGER segments_fts_delete;
+    DROP TABLE segments_fts;
+    CREATE VIRTUAL TABLE segments_fts USING fts5(
+        context, text, content = 'segments', content_rowid = 'id', tokenize = 'porter unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER segments_fts_insert AFTER INSERT ON segments BEGIN
+        INSERT INTO segments_fts (rowid, context, text) VALUES (new.id, new.context, new.text);
+    END;
+    CREATE TRIGGER segments_fts_delete AFTER DELETE ON segments BEGIN
+        INSERT INTO segments_fts (segments_fts, rowid, context, text) VALUES ('delete', old.id, old.context, old.text);
+    END;
+    INSERT INTO segments_fts (segments_fts) VALUES ('rebuild');
+    -- A reindex Sync re-segments and re-embeds the Channel's indexed Videos, e.g. after the passage text changed.
+    ALTER TABLE syncs ADD COLUMN reindex INTEGER NOT NULL DEFAULT 0 CHECK (reindex IN (0, 1));
+    """,
 ]
 
 

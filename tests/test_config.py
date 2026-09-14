@@ -89,10 +89,35 @@ def test_youtube_politeness_and_cookie_file_are_configurable(tmp_path: Path) -> 
     assert config.youtube_cookie_file == Path("~/cookies.txt").expanduser()
 
 
+def test_browser_cookies_and_extractor_args_are_configurable(tmp_path: Path) -> None:
+    write_config(
+        tmp_path,
+        'youtube_cookies_from_browser = "firefox:default"\n'
+        "[youtube_extractor_args]\n"
+        'player_client = ["mweb", "web"]\n'
+        'po_token = "mweb.gvs+abc"\n',
+    )
+
+    defaults = load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")})
+    config = load_config({"XDG_CONFIG_HOME": str(tmp_path)})
+    overridden = load_config(
+        {"XDG_CONFIG_HOME": str(tmp_path), "MENTOR_YOUTUBE_EXTRACTOR_ARGS": 'player_client = "tv"'}
+    )
+
+    assert (defaults.youtube_cookies_from_browser, defaults.youtube_extractor_args) == (None, {})
+    assert config.youtube_cookies_from_browser == "firefox:default"
+    assert config.youtube_extractor_args == {"player_client": ("mweb", "web"), "po_token": ("mweb.gvs+abc",)}
+    assert overridden.youtube_extractor_args == {"player_client": ("tv",)}
+
+
 @pytest.mark.parametrize(
     ("file_text", "env"),
     [
         ("youtube_delay_seconds = -1\n", {}),
+        ('youtube_cookies_from_browser = "/home/me/cookies.txt"\n', {}),
+        ("youtube_extractor_args = 'player_client=web'\n", {}),
+        ("[youtube_extractor_args]\nplayer_client = 3\n", {}),
+        ("", {"MENTOR_YOUTUBE_EXTRACTOR_ARGS": "player_client"}),
         ("", {"MENTOR_YOUTUBE_RETRIES": "many"}),
         ("youtube_backoff_seconds = 0\n", {}),
         ("youtube_cookie_file = 'cookies.txt'\n", {}),

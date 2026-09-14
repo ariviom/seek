@@ -3,7 +3,7 @@
 TranscriptSource, Embedder, and Reranker methods are blocking; ChatEngine streams asynchronously.
 """
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Collection, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Protocol
@@ -77,17 +77,26 @@ class VideoUnavailable(Exception):
     """One Video cannot be ingested: members-only, age-restricted, live or upcoming, no captions, not in English.
 
     Transient failures (e.g. upcoming) may succeed on a later Sync. `language` names the Video's caption
-    language when that is the reason; `details` carries whatever metadata was fetched before failing.
+    language when that is the reason; `details` carries whatever metadata was fetched before failing. `throttled`
+    marks a refusal by the source rather than anything about the Video: one is retried later like any transient
+    failure, but a run of them means the source is blocking this machine and the Sync should stop.
     """
 
     def __init__(
-        self, reason: str, *, permanent: bool, language: str | None = None, details: VideoDetails | None = None
+        self,
+        reason: str,
+        *,
+        permanent: bool,
+        language: str | None = None,
+        details: VideoDetails | None = None,
+        throttled: bool = False,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.permanent = permanent
         self.language = language
         self.details = details
+        self.throttled = throttled
 
 
 class TranscriptSource(Protocol):
@@ -95,10 +104,11 @@ class TranscriptSource(Protocol):
         """Accepts a channel URL, an @handle, or a bare channel id."""
         ...
 
-    def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
-        """A cheap flat listing of the channel's videos tab, newest first, which excludes Shorts.
+    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> Sequence[VideoListing]:
+        """A cheap flat listing of the channel's videos and streams tabs, each newest first, which excludes Shorts.
 
-        Raises ChannelNotFound for an unknown channel id.
+        The listing may stop once a page holds only `known_ids`, so pass them only when the older ones are known to
+        be complete. Raises ChannelNotFound for an unknown channel id.
         """
         ...
 

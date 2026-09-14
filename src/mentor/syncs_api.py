@@ -1,6 +1,7 @@
 from collections.abc import Callable
 
 from fastapi import APIRouter, status
+from pydantic import BaseModel
 
 from mentor import syncs, videos
 from mentor.db import Database
@@ -9,19 +10,26 @@ from mentor.syncs import Sync
 from mentor.videos import Video
 
 
+class SyncOptions(BaseModel):
+    # Re-segment and re-embed the indexed Videos, e.g. after upgrading to a mentor that composes passages differently.
+    reindex: bool = False
+
+
 def syncs_router(database: Database, events: Events, wake_worker: Callable[[], None]) -> APIRouter:
     router = APIRouter()
 
     @router.post("/channels/{channel_id}/syncs", status_code=status.HTTP_202_ACCEPTED)
-    async def start_sync(channel_id: int) -> Sync:
-        sync = await database.run(lambda conn: syncs.enqueue(conn, channel_id))
+    async def start_sync(channel_id: int, options: SyncOptions | None = None) -> Sync:
+        reindex = options is not None and options.reindex
+        sync = await database.run(lambda conn: syncs.enqueue(conn, channel_id, reindex))
         events.sync(sync)
         wake_worker()
         return sync
 
     @router.post("/syncs", status_code=status.HTTP_202_ACCEPTED)
-    async def start_all_syncs() -> list[Sync]:
-        queued = await database.run(syncs.enqueue_all)
+    async def start_all_syncs(options: SyncOptions | None = None) -> list[Sync]:
+        reindex = options is not None and options.reindex
+        queued = await database.run(lambda conn: syncs.enqueue_all(conn, reindex))
         for sync in queued:
             events.sync(sync)
         wake_worker()

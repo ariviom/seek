@@ -5,13 +5,14 @@ The module-level functions parse what yt-dlp returns and classify its errors wit
 
 import json
 import logging
+import random
 import re
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,9 +46,20 @@ _PO_TOKEN_FIX = (
     "YouTube wants a PO token; install the bgutil-ytdlp-pot-provider plugin "
     "(https://github.com/Brainicism/bgutil-ytdlp-pot-provider)"
 )
-_NO_VIDEOS_TAB = "does not have a videos tab"
+_NO_TAB = re.compile(r"does not have an? \w+ tab")
 # Between the requests within one Sync call: a listing's pages, or a Video's page, player, and captions.
 _REQUEST_PAUSE_SECONDS = 1
+# A listing page of a channel tab; a listing given known ids stops once a page holds nothing else.
+PAGE_SIZE = 30
+# YouTube generates automatic captions some time after upload: until then "no captions" is worth retrying.
+CAPTIONS_GRACE = timedelta(days=7)
+# Stream manifests aren't needed for metadata and captions, and cost requests.
+DEFAULT_EXTRACTOR_ARGS: Mapping[str, Sequence[str]] = {"skip": ("hls", "dash")}
+
+
+def _jitter(seconds: float) -> float:
+    """±30%, so paced requests don't land on a fixed beat."""
+    return seconds * random.uniform(0.7, 1.3)
 
 
 @dataclass(frozen=True)
@@ -58,6 +70,10 @@ class YouTubeSettings:
     retries: int
     backoff_seconds: float
     cookie_file: Path | None
+    # yt-dlp's BROWSER[+KEYRING][:PROFILE][::CONTAINER]; None reads no browser.
+    cookies_from_browser: str | None = None
+    # Merged over DEFAULT_EXTRACTOR_ARGS.
+    extractor_args: Mapping[str, Sequence[str]] = field(default_factory=dict)
 
 
 class _Log:
@@ -92,6 +108,14 @@ class _Failed(Exception):
         self.error = error
 
 
+class _CaptionsRefused(_Failed):
+    """YouTube throttled the caption request itself, after the Video's page came through."""
+
+    def __init__(self, error: "YouTubeError", details: VideoDetails) -> None:
+        super().__init__(error)
+        self.details = details
+
+
 class YouTubeTranscriptSource:
     """Blocking. Sync calls come from one worker thread at a time; web UI calls may run alongside them."""
 
@@ -113,14 +137,22 @@ class YouTubeTranscriptSource:
             raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
         return ChannelInfo(channel_id=channel_id, name=str(info.get("channel") or info.get("uploader") or channel_id))
 
-    def list_videos(self, channel_id: str) -> Sequence[VideoListing]:
-        try:
-            entries = self._call(_flat_entries(f"{_YOUTUBE}/channel/{channel_id}/videos"), sync=True)
-        except _Failed as failed:
-            if _NO_VIDEOS_TAB in failed.error.message:
-                return []
-            raise _channel_error(failed.error, channel_id) from None
-        return listings(entries)
+    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> Sequence[VideoListing]:
+        # The streams tab after the videos tab, so a listing's order stays newest first within each.
+        found: list[VideoListing] = []
+        for tab in ("videos", "streams"):
+            try:
+                entries = self._call(_tab_entries(f"{_YOUTUBE}/channel/{channel_id}/{tab}", known_ids), sync=True)
+            except _Failed as failed:
+                if _NO_TAB.search(failed.error.message):
+                    continue
+                raise _channel_error(failed.error, channel_id) from None
+            found += listings(entries)
+        # Merged by id: a stream can appear on both tabs.
+        merged: dict[str, VideoListing] = {}
+        for listing in found:
+            merged.setdefault(listing.video_id, listing)
+        return list(merged.values())
 
     def list_playlist(self, playlist_id: str) -> Sequence[str]:
         try:
@@ -138,23 +170,33 @@ class YouTubeTranscriptSource:
             # process=False: without format selection, formats YouTube withholds can't fail the extraction.
             info = ydl.sanitize_info(ydl.extract_info(url, download=False, process=False))
             details = video_details(info)
-            track = caption_track(info, logger.po_token_messages, details)
-            time.sleep(_REQUEST_PAUSE_SECONDS)
+            track = caption_track(info, logger.po_token_messages, details, datetime.now(UTC).date())
+            time.sleep(_jitter(_REQUEST_PAUSE_SECONDS))
             try:
                 data = json.load(ydl.urlopen(track.url))
             except Exception as e:
                 error = classify_error(str(e), _http_status(e))
-                if error.kind in ("throttled", "unreachable"):
+                if error.kind == "unreachable":
                     raise
+                if error.kind == "throttled":
+                    raise _CaptionsRefused(error, details) from e
                 raise VideoUnavailable(error.message, permanent=error.permanent, details=details) from e
             return details, Transcript(source=track.source, language="en", cues=parse_json3(data))
 
         try:
             return self._call(fetch, sync=True)
+        except _CaptionsRefused as refused:
+            # One refused caption request fails this Video alone; the Sync worker stops after a run of them.
+            raise VideoUnavailable(
+                refused.error.message, permanent=False, details=refused.details, throttled=True
+            ) from None
         except _Failed as failed:
             if failed.error.kind in ("throttled", "unreachable"):
                 raise SourceUnavailable(failed.error.message) from None
             raise VideoUnavailable(failed.error.message, permanent=failed.error.permanent) from None
+
+    def _extractor_args(self) -> dict[str, Sequence[str]]:
+        return {**DEFAULT_EXTRACTOR_ARGS, **self._settings.extractor_args}
 
     def _call[T](self, work: Callable[[Any, _Log], T], sync: bool) -> T:
         """Runs `work` in a fresh yt-dlp session.
@@ -177,25 +219,29 @@ class YouTubeTranscriptSource:
                 "skip_download": True,
                 "extract_flat": "in_playlist",
                 "socket_timeout": 30,
-                # Stream manifests aren't needed for metadata and captions, and cost requests.
-                "extractor_args": {"youtube": {"skip": ["hls", "dash"]}},
+                "extractor_args": {"youtube": {k: list(v) for k, v in self._extractor_args().items()}},
             }
             if sync:
-                params["sleep_interval_requests"] = _REQUEST_PAUSE_SECONDS
+                params["sleep_interval_requests"] = _jitter(_REQUEST_PAUSE_SECONDS)
             if self._settings.cookie_file is not None:
                 params["cookiefile"] = str(self._settings.cookie_file)
+            if self._settings.cookies_from_browser is not None:
+                params["cookiesfrombrowser"] = cookies_from_browser(self._settings.cookies_from_browser)
+            failed: _Failed | None = None
             try:
                 with self._session, yt_dlp.YoutubeDL(params) as ydl:
                     return work(ydl, logger)
             except VideoUnavailable:
                 raise
+            except _Failed as e:
+                failed, error = e, e.error
             except Exception as e:
                 error = classify_error(str(e), _http_status(e))
             finally:
                 if sync:
-                    self._next_sync_call = time.monotonic() + self._settings.delay_seconds
+                    self._next_sync_call = time.monotonic() + _jitter(self._settings.delay_seconds)
             if not sync or error.kind not in ("throttled", "unreachable") or attempt >= self._settings.retries:
-                raise _Failed(error)
+                raise failed or _Failed(error)
             wait = self._settings.backoff_seconds * 2**attempt
             log.warning("%s; retrying in %s s", error.message, wait)
             time.sleep(wait)
@@ -207,6 +253,42 @@ def _flat_entries(url: str) -> Callable[[Any, _Log], list[Mapping[str, Any]]]:
         return list(ydl.sanitize_info(ydl.extract_info(url, download=False)).get("entries") or [])
 
     return extract
+
+
+def _tab_entries(url: str, known_ids: Collection[str]) -> Callable[[Any, _Log], list[Mapping[str, Any]]]:
+    def extract(ydl: Any, _: _Log) -> list[Mapping[str, Any]]:
+        # process=False leaves the entries as a generator that fetches a page at a time, so stopping early
+        # spares the requests for the pages of Videos already known.
+        entries = ydl.extract_info(url, download=False, process=False).get("entries") or []
+        return take_until_known(entries, known_ids)
+
+    return extract
+
+
+def take_until_known(
+    entries: Iterable[Mapping[str, Any]], known_ids: Collection[str], page_size: int = PAGE_SIZE
+) -> list[Mapping[str, Any]]:
+    """The entries up to the end of the first full page holding only known ids; all of them when none are known."""
+    taken: list[Mapping[str, Any]] = []
+    run = 0
+    for entry in entries:
+        taken.append(entry)
+        run = run + 1 if entry.get("id") in known_ids else 0
+        if known_ids and run >= page_size and len(taken) % page_size == 0:
+            break
+    return taken
+
+
+def cookies_from_browser(text: str) -> tuple[str, str | None, str | None, str | None]:
+    """yt-dlp's cookiesfrombrowser parameter from its BROWSER[+KEYRING][:PROFILE][::CONTAINER] form."""
+    match = re.fullmatch(
+        r"(?P<name>[^+:]+)(?:\s*\+\s*(?P<keyring>[^:]+))?(?:\s*:\s*(?!:)(?P<profile>.+?))?(?:\s*::\s*(?P<container>.+))?",
+        text,
+    )
+    if match is None:
+        raise ValueError(f"invalid cookies from browser: {text!r}")
+    name, keyring, profile, container = match.group("name", "keyring", "profile", "container")
+    return (name.strip().lower(), profile, keyring and keyring.strip().upper(), container)
 
 
 def _http_status(error: BaseException) -> int | None:
@@ -333,11 +415,15 @@ def _json3_url(formats: Sequence[Mapping[str, Any]]) -> str | None:
     return next((f["url"] for f in formats if f.get("ext") == "json3" and f.get("url")), None)
 
 
-def caption_track(info: Mapping[str, Any], po_token_messages: Sequence[str], details: VideoDetails) -> CaptionTrack:
+def caption_track(
+    info: Mapping[str, Any], po_token_messages: Sequence[str], details: VideoDetails, today: date | None = None
+) -> CaptionTrack:
     """The English captions to ingest: manual subtitles first, else automatic captions of English speech.
 
     Automatic captions come in every language by translation; the "-orig" track is the spoken language. Without one,
-    only a lone automatic track (a language YouTube doesn't translate) can be trusted to be what was spoken.
+    only a lone automatic track (a language YouTube doesn't translate) can be trusted to be what was spoken. A Video
+    published within CAPTIONS_GRACE of `today` may not have its automatic captions yet, so its lack of them is
+    transient.
     """
     manual = {key: formats for key, formats in (info.get("subtitles") or {}).items() if key != "live_chat"}
     automatic = info.get("automatic_captions") or {}
@@ -359,6 +445,10 @@ def caption_track(info: Mapping[str, Any], po_token_messages: Sequence[str], det
     # Formats withheld for a PO token are reported too; only the subtitle reports explain missing captions.
     if any("subtitles" in m.lower() and "not provided" in m.lower() for m in po_token_messages):
         raise VideoUnavailable(f"No captions: {_PO_TOKEN_FIX}", permanent=False, details=details)
+    if (today or datetime.now(UTC).date()) - details.published_on <= CAPTIONS_GRACE:
+        raise VideoUnavailable(
+            "No captions yet; YouTube may still be generating them for this new Video", permanent=False, details=details
+        )
     raise VideoUnavailable("No captions", permanent=True, details=details)
 
 

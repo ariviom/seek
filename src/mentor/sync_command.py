@@ -41,17 +41,19 @@ async def sync_channels(
     embedder: Embedder,
     server_wait_seconds: float = 0,
     poll_seconds: float = 5.0,
+    reindex: bool = False,
 ) -> SyncReport:
     """Syncs the Channel with this name or YouTube channel id, or every indexed Channel when None.
 
     A server that answers within server_wait_seconds gets the Syncs. Otherwise they run here once the embedding
-    model loads, and this returns when they have finished.
+    model loads, and this returns when they have finished. With reindex, the Syncs re-segment and re-embed the
+    Videos already indexed.
     """
     url = f"http://{HOST}:{config.port}/"
     # Not Health: its Claude CLI check can take seconds.
     if await asyncio.to_thread(answers, f"{url}api/syncs", server_wait_seconds):
-        return SyncReport(url, await asyncio.to_thread(_hand_off, url, channel))
-    return SyncReport(None, await _run_here(config, channel, transcripts, embedder, poll_seconds))
+        return SyncReport(url, await asyncio.to_thread(_hand_off, url, channel, reindex))
+    return SyncReport(None, await _run_here(config, channel, transcripts, embedder, poll_seconds, reindex))
 
 
 def answers(url: str, seconds: float) -> bool:
@@ -82,9 +84,11 @@ def _find_channel(mentor_list: list[Mentor], ref: str) -> Channel:
     return channels[0]
 
 
-def _request(url: str, method: str = "GET") -> bytes:
+def _request(url: str, method: str = "GET", payload: dict[str, object] | None = None) -> bytes:
+    data = None if payload is None else json.dumps(payload).encode()
+    headers = {} if payload is None else {"Content-Type": "application/json"}
     try:
-        with _opener.open(urllib.request.Request(url, method=method), timeout=30) as response:
+        with _opener.open(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=30) as response:
             body: bytes = response.read()
             return body
     except urllib.error.HTTPError as e:
@@ -97,12 +101,15 @@ def _request(url: str, method: str = "GET") -> bytes:
         raise SyncCommandError(f"The server stopped answering at {url}: {e}") from e
 
 
-def _hand_off(url: str, channel: str | None) -> list[Sync]:
+def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
+    options: dict[str, object] = {"reindex": reindex}
     try:
         if channel is None:
-            return TypeAdapter(list[Sync]).validate_json(_request(f"{url}api/syncs", "POST"))
+            return TypeAdapter(list[Sync]).validate_json(_request(f"{url}api/syncs", "POST", options))
         found = _find_channel(TypeAdapter(list[Mentor]).validate_json(_request(f"{url}api/mentors")), channel)
-        return [TypeAdapter(Sync).validate_json(_request(f"{url}api/channels/{found.id}/syncs", "POST"))]
+        return [
+            TypeAdapter(Sync).validate_json(_request(f"{url}api/channels/{found.id}/syncs", "POST", options))
+        ]
     except ValidationError as e:
         # e.g. a timer ran this upgraded mentor against the server from before the upgrade.
         raise SyncCommandError(
@@ -111,7 +118,12 @@ def _hand_off(url: str, channel: str | None) -> list[Sync]:
 
 
 async def _run_here(
-    config: Config, channel: str | None, transcripts: TranscriptSource, embedder: Embedder, poll_seconds: float
+    config: Config,
+    channel: str | None,
+    transcripts: TranscriptSource,
+    embedder: Embedder,
+    poll_seconds: float,
+    reindex: bool,
 ) -> list[Sync]:
     try:
         await asyncio.to_thread(db.initialize, config.database_path, embedder.model_name, embedder.dimension)
@@ -122,12 +134,20 @@ async def _run_here(
 
     def enqueue(conn: sqlite3.Connection) -> list[Sync]:
         if channel is None:
-            return syncs.enqueue_all(conn)
-        return [syncs.enqueue(conn, _find_channel(mentors.list_mentors(conn), channel).id)]
+            return syncs.enqueue_all(conn, reindex)
+        return [syncs.enqueue(conn, _find_channel(mentors.list_mentors(conn), channel).id, reindex)]
 
     queued = await database.run(enqueue)
     if not queued:
         return []
     await asyncio.to_thread(embedder.load)
-    worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, poll_seconds, Events())
+    worker = SyncWorker(
+        database,
+        transcripts,
+        embedder,
+        config.min_duration_seconds,
+        poll_seconds,
+        Events(),
+        cooldown_seconds=config.youtube_backoff_seconds,
+    )
     return await worker.run_until_finished([s.id for s in queued])

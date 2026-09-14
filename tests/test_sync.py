@@ -245,7 +245,52 @@ async def test_rerunning_a_sync_upserts_by_video_id_and_fetches_only_new_videos(
     assert latest["stage_counts"] == NO_COUNTS | {"done": 2}
     assert sorted(await list_videos(client, channel_id)) == ["First video", "Second video"]
     assert fetched(transcripts) == ["v-first", "v-second"]
-    assert embedder.passages == ["Welcome to First video Let's begin", "Welcome to Second video Let's begin"]
+    # Each passage is embedded with its Video's title as context.
+    assert embedder.passages == [
+        "First video\nWelcome to First video Let's begin",
+        "Second video\nWelcome to Second video Let's begin",
+    ]
+
+
+async def test_discovery_lists_past_streams_too_and_later_syncs_may_stop_at_the_videos_already_known(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    channel = fake_channel(transcripts, "UC-wright")
+    channel.videos.append(fake_video("v-first", "First video"))
+    channel.streams.append(fake_video("v-stream", "Shop livestream"))
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+
+    await start_sync(client, channel_id)
+    first, = await wait_for_syncs(client)
+    await start_sync(client, channel_id)
+    await wait_for_syncs(client)
+    retry = await client.post(f"/api/channels/{channel_id}/retry-failed")
+    assert retry.status_code == 202, retry.text
+    await wait_for_syncs(client)
+
+    assert (first["status"], first["new_videos"]) == ("done", 2)
+    assert sorted(await list_videos(client, channel_id)) == ["First video", "Shop livestream"]
+    # The first listing knows nothing; the next may stop at known Videos; a retry looks at everything again.
+    assert transcripts.listings_known == [frozenset(), frozenset({"v-first", "v-stream"}), frozenset()]
+
+
+async def test_a_reindex_sync_cuts_and_embeds_the_indexed_videos_again_without_fetching(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-first", "First video"))
+    mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
+    channel_id = mentor["channels"][0]["id"]
+    await start_sync(client, channel_id)
+    await wait_for_syncs(client)
+
+    response = await client.post(f"/api/channels/{channel_id}/syncs", json={"reindex": True})
+    assert response.status_code == 202, response.text
+    latest, _ = await wait_for_syncs(client)
+
+    assert (latest["status"], latest["new_videos"], latest["stage_counts"]) == ("done", 0, NO_COUNTS | {"done": 1})
+    assert fetched(transcripts) == ["v-first"]
+    assert embedder.passages == ["First video\nWelcome to First video Let's begin"] * 2
 
 
 async def test_syncs_run_one_at_a_time_in_queue_order_and_a_queued_channel_is_queued_once(

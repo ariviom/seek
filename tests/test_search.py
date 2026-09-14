@@ -190,6 +190,49 @@ async def test_exact_jargon_is_found_lexically_beyond_the_nearest_vectors(
     assert syntax.json()[0]["youtube_video_id"] == "v-domino"
 
 
+async def test_a_segment_is_indexed_and_reranked_with_its_video_title_and_chapter(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder, reranker: FakeReranker
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(
+            "v-scraper",
+            "Sharpening a card scraper",
+            chapters=[Chapter(title="Burnishing", start=0, end=600)],
+            cues=said("push the burnisher along the edge at a slight angle"),
+        ),
+        fake_video("v-plane", "Plane setup", cues=said("set the cap iron close to the edge")),
+    ]
+    await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
+
+    # Nothing spoken mentions a scraper: only the title does, and only the lexical index sees it.
+    results = await search(client, "card scraper")
+
+    assert [r["youtube_video_id"] for r in results] == ["v-scraper", "v-plane"]
+    assert results[0]["text"] == "push the burnisher along the edge at a slight angle"
+    passage = "Sharpening a card scraper — Burnishing\npush the burnisher along the edge at a slight angle"
+    assert passage in embedder.passages
+    assert "Plane setup\nset the cap iron close to the edge" in embedder.passages
+    assert reranker.calls[0][1][0] == passage
+
+
+async def test_results_spread_across_videos_before_one_videos_overlapping_windows_fill_the_list(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        # Five minutes of one passage: several overlapping Segments, all matching equally well.
+        fake_video("v-long", "Long", cues=said(*["hone the chisel bevel"] * 60)),
+        fake_video("v-other", "Other", cues=said("hone the chisel bevel")),
+    ]
+    await sync(client, await add_mentor(client, "Wood By Wright", "@woodbywright"))
+
+    results = await search(client, "hone the chisel bevel")
+    windows = [r["youtube_video_id"] for r in results]
+
+    assert windows[:4] == ["v-long", "v-long", "v-long", "v-other"]
+    # With every Video's best windows listed, the rest fill in rather than leaving the list short.
+    assert 4 < len(windows) <= 10 and set(windows[4:]) == {"v-long"}
+
+
 async def test_videos_still_in_the_pipeline_are_not_searchable(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
 ) -> None:

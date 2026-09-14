@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-from harness import Gate, add_mentor, fake_channel, fake_video, fetched, running, serving, wait_for_syncs
+from harness import Gate, add_mentor, fake_channel, fake_video, fetched, running, serving, start_sync, wait_for_syncs
 
 from mentor import db, syncs
 from mentor.app import create_app
@@ -64,6 +64,30 @@ async def test_mentor_sync_hands_the_syncs_to_the_running_server(
     # The server's models did the work; this process loaded none and called nothing.
     assert cli_embedder.status().state == "waiting"
     assert cli_source.calls == []
+
+
+async def test_mentor_reindex_hands_reindex_syncs_to_the_running_server(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    with_videos(transcripts)
+    embedder = FakeEmbedder()
+    app = create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        rex = await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        await start_sync(client, rex["channels"][0]["id"])
+        await wait_for_syncs(client)
+        port = urlsplit(url).port
+        assert port is not None
+        report = await sync_channels(
+            replace(config, port=port), None, FakeTranscriptSource(), FakeEmbedder(), reindex=True
+        )
+        finished = await wait_for_syncs(client)
+
+    assert report.server_url == url
+    assert [(s["status"], s["stage_counts"]["done"]) for s in finished] == [("done", 1), ("done", 1)]
+    assert fetched(transcripts) == ["v-rex"]
+    assert len(embedder.passages) == 2
 
 
 async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_youtube_channel_id(

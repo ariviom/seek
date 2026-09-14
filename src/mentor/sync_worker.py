@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import sqlite3
+import time
 import uuid
 
 from mentor import segments, syncs, videos
@@ -23,6 +24,8 @@ log = logging.getLogger(__name__)
 
 # Short enough that a crashed server's Syncs resume soon after restart; renewed every quarter of it.
 LEASE_SECONDS = 20.0
+# Videos in a row the source may refuse before the Sync stops: YouTube is blocking this machine, not one Video.
+THROTTLE_LIMIT = 3
 
 
 class SyncWorker:
@@ -36,6 +39,7 @@ class SyncWorker:
         min_duration_seconds: int,
         poll_seconds: float,
         events: Events,
+        cooldown_seconds: float = 30.0,
     ) -> None:
         self._database = database
         self._transcripts = transcripts
@@ -47,6 +51,13 @@ class SyncWorker:
         self._holder = uuid.uuid4().hex
         self._wake = asyncio.Event()
         self._lease_lost = False
+        # After a Sync stops for throttling, no Sync is claimed for cooldown_seconds, doubling for each Sync in a
+        # row that stops so, rather than running the next one into the same wall.
+        self._cooldown_seconds = cooldown_seconds
+        self._cooldown_until = 0.0
+        self._throttled_syncs = 0
+        # Videos refused in a row within the running Sync.
+        self._throttled_videos = 0
 
     def wake(self) -> None:
         self._wake.set()
@@ -75,7 +86,7 @@ class SyncWorker:
                 await asyncio.wait_for(self._wake.wait(), self._poll_seconds)
 
     async def _drain(self) -> None:
-        if not await self._database.run(syncs.has_work):
+        if time.monotonic() < self._cooldown_until or not await self._database.run(syncs.has_work):
             return
         if not await self._database.run(lambda conn: syncs.acquire_lease(conn, self._holder, LEASE_SECONDS)):
             return
@@ -118,6 +129,7 @@ class SyncWorker:
         # Returning without finishing is deliberate in two cases: the Channel was deleted (its Sync went with
         # it), or the lease was lost (the next holder requeues the Sync).
         rules = ExclusionRules(self._min_duration_seconds, sync.filters)
+        self._throttled_videos = 0
         try:
             # Shows the Sync running, with any failures a retry cleared when it was claimed.
             if not await self._progress(sync):
@@ -132,7 +144,18 @@ class SyncWorker:
                 playlist_video_ids = set(
                     await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id)
                 )
-            listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id)
+            # A listing may stop at the Videos already known once a Sync has completed, unless the most-recent
+            # filter needs the whole order or a retry wants everything looked at again.
+            known: set[str] = set()
+            if sync.filters.most_recent is None and not sync.retry_failed:
+                known = await self._database.run(
+                    lambda conn: (
+                        videos.youtube_ids(conn, sync.channel_id)
+                        if syncs.completed_before(conn, sync.channel_id)
+                        else set()
+                    )
+                )
+            listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id, known)
             new_videos = await self._database.run(
                 lambda conn: videos.record_discovery(
                     conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules
@@ -163,13 +186,20 @@ class SyncWorker:
                 ):
                     return
                 self._events.videos(sync.channel_id)
-        except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
+        except _Throttled as e:
             error: str | None = str(e)
+            wait = self._cooldown_seconds * 2**self._throttled_syncs
+            self._throttled_syncs += 1
+            self._cooldown_until = time.monotonic() + wait
+            log.warning("Sync %s stopped: %s; no Sync runs for the next %.0f s", sync.id, e, wait)
+        except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
+            error = str(e)
         except Exception as e:
             log.exception("Sync %s failed", sync.id)
             error = f"Unexpected error: {e}"
         else:
             error = None
+            self._throttled_syncs = 0
         finished = await self._database.run(lambda conn: syncs.finish(conn, sync.id, error))
         if finished is not None:
             self._events.sync(finished)
@@ -248,13 +278,28 @@ class SyncWorker:
             details, transcript = await asyncio.to_thread(self._transcripts.fetch_video, video.youtube_video_id)
         except VideoUnavailable as e:
             failure = e
+            if e.throttled:
+                # This Video fails on its own and is retried by a later Sync; a run of them stops the Sync.
+                self._throttled_videos += 1
+                if self._throttled_videos >= THROTTLE_LIMIT:
+                    outcome = await self._record_failure(rules, video, "transcript_fetched", failure)
+                    if outcome == "gone":
+                        return outcome
+                    raise _Throttled(
+                        f"{e.reason}. {THROTTLE_LIMIT} Videos in a row were refused, so the Sync stopped; the "
+                        "Channel's remaining Videos wait for the next Sync"
+                    ) from None
+            else:
+                self._throttled_videos = 0
         except SourceUnavailable:
             raise
         except Exception as e:
             # One misbehaving Video must not stop its Channel's Syncs for good; it is retried next Sync.
             log.exception("Fetching Video %s failed", video.youtube_video_id)
             failure = VideoUnavailable(f"Unexpected error: {e}", permanent=False)
+            self._throttled_videos = 0
         else:
+            self._throttled_videos = 0
             if transcript.language != "en":
                 failure = VideoUnavailable(
                     f"Captions are in {transcript.language!r}; only English is ingested",
@@ -267,3 +312,7 @@ class SyncWorker:
         return await self._database.run(
             lambda conn: videos.record_transcript(conn, video.id, details, transcript, rules)
         )
+
+
+class _Throttled(SourceUnavailable):
+    """The source refused THROTTLE_LIMIT Videos in a row."""

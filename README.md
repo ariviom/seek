@@ -67,6 +67,16 @@ the web UI. When it isn't, `mentor sync` loads the embedding model and runs the 
 first. Only one process runs Syncs at a time: a server started meanwhile waits for it, and a `mentor sync` started
 while another process runs Syncs waits for that process to run its Syncs too.
 
+A Sync lists a Channel's videos and streams tabs (past livestreams included). Once a Channel has completed a Sync, later
+Syncs stop listing at the first page of Videos already known, unless the Channel has a most-recent filter or the Sync
+retries failures. A Video published in the last week without captions is retried by later Syncs, since YouTube may
+still be generating them. When YouTube refuses the captions of three Videos in a row, the Sync stops and the failed
+Videos wait for the next one; no Sync runs for `youtube_backoff_seconds`, doubling for each Sync in a row that stops so.
+
+`mentor reindex --all` (or `--channel`) Syncs the same way but first re-cuts and re-embeds every Video already indexed
+from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a mentor that indexes
+passages differently; until each Video is done again it is out of search.
+
 To Sync every indexed Channel on a schedule, install the service with a timer:
 
 ```sh
@@ -123,6 +133,8 @@ allowed_hosts = ["mentor.example.com"]
 | `youtube_retries` | `3` | Retries when YouTube rate-limits or can't be reached |
 | `youtube_backoff_seconds` | `30` | First wait before a retry, doubling each time |
 | `youtube_cookie_file` | none | A Netscape `cookies.txt` exported from a signed-in browser |
+| `youtube_cookies_from_browser` | none | Read cookies from a browser profile instead, in yt-dlp's `BROWSER[+KEYRING][:PROFILE][::CONTAINER]` form, e.g. `firefox` or `chrome:Profile 1` |
+| `youtube_extractor_args` | `skip = ["hls", "dash"]` | A table of yt-dlp `youtube` extractor arguments merged over the default, e.g. `player_client` or `po_token` |
 | `allowed_hosts` | none | Host headers accepted besides loopback, such as your proxy's public hostname |
 | `claude_cli_path` | `claude` on PATH | The Claude CLI the web chat drives |
 | `cf_access_team_domain` | none | With `cf_access_aud`, requires a Cloudflare Access token on requests from outside this machine (see [Publishing](#publishing-through-a-reverse-proxy)) |
@@ -134,6 +146,19 @@ Notes:
   refuses to start with a different one, so give a new model a new `data_dir`.
 - **Rate limits.** Without a cookie file, YouTube tolerates roughly 300 Videos an hour; a signed-in cookie file allows
   about three times that. yt-dlp writes refreshed cookies back to the file, so it must be writable.
+  `youtube_cookies_from_browser` reads the browser's own cookie store instead (the browser must be closed for Chrome and
+  Chromium); the service then needs access to that profile. Sync waits between YouTube calls are jittered by ±30%.
+- **Extractor arguments.** `youtube_extractor_args` is a TOML table whose values are strings or lists of strings:
+
+  ```toml
+  [youtube_extractor_args]
+  player_client = ["mweb"]
+  po_token = "mweb.gvs+<token>"
+  ```
+
+  In `MENTOR_YOUTUBE_EXTRACTOR_ARGS`, give the table's body, e.g. `player_client = ["mweb"]`. See yt-dlp's
+  documentation of `--extractor-args youtube:` for what it accepts; a wrong value fails the next Sync with yt-dlp's
+  message.
 - **Allowed hosts.** `allowed_hosts` takes a TOML list, or a comma-separated string in `MENTOR_ALLOWED_HOSTS`.
   `host:*` allows any port. Loopback is always allowed. Every request's `Host`, `X-Forwarded-Host`, and `Origin` must
   name an allowed host, which stops a web page on another site from reaching mentor by pointing its hostname at this
