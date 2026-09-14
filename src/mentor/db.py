@@ -134,6 +134,31 @@ MIGRATIONS = [
     -- still running when the retry was asked for.
     ALTER TABLE syncs ADD COLUMN retry_failed INTEGER NOT NULL DEFAULT 0 CHECK (retry_failed IN (0, 1));
     """,
+    """
+    -- A Conversation outlives its Group: group_id is cleared and the name it had is kept, so it stays readable.
+    CREATE TABLE conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER REFERENCES mentor_groups(id) ON DELETE SET NULL,
+        group_name TEXT NOT NULL,
+        -- The Claude model; NULL uses the Claude CLI's default.
+        model TEXT,
+        claude_session_id TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX conversations_group_id ON conversations(group_id);
+    -- Assistant messages keep what they cited (Video ids, seconds, names) as JSON, so citations survive the removal
+    -- of their Videos and Mentors.
+    CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        tool_calls TEXT NOT NULL DEFAULT '[]',
+        citations TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX messages_conversation_id ON messages(conversation_id);
+    """,
 ]
 
 

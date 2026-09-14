@@ -10,7 +10,7 @@ from harness import Json, add_mentor, fake_channel, fake_video, running, start_s
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeTranscriptSource
+from mentor.fakes import FakeChatEngine, FakeTranscriptSource
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.ports import Cue
 
@@ -63,7 +63,7 @@ async def test_the_real_models_rank_a_planted_segment_first_and_recency_only_bre
     gpu = GpuRunner()
     embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu)
     reranker = CrossEncoderReranker(config.reranker_model, gpu)
-    app = create_app(config, transcripts, embedder, reranker, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, embedder, reranker, FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         models = await wait_for_models(client)

@@ -20,7 +20,7 @@ from harness import (
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import Chapter, VideoDetails, VideoUnavailable
 
 NO_COUNTS = {
@@ -214,7 +214,7 @@ async def test_the_minimum_duration_is_configurable(
         fake_video("v-medium", "Medium", listed_duration=90, duration=90),
     ]
     app = create_app(
-        replace(config, min_duration_seconds=30), transcripts, FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle"
+        replace(config, min_duration_seconds=30), transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle"
     )
 
     async with running(app) as client:
@@ -341,7 +341,7 @@ async def test_a_sync_waits_while_another_process_holds_the_lease(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
-    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02)
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02)
 
     async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
@@ -368,13 +368,13 @@ async def test_a_sync_left_running_by_a_stopped_server_resumes_at_startup(
     gate = Gate()
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", before_fetch=gate))
 
-    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle")) as client:
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
         sync = await start_sync(client, mentor["channels"][0]["id"])
         await gate.wait_entered()
     gate.released.set()
 
-    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle")) as client:
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
         [finished] = await wait_for_syncs(client)
         videos = await list_videos(client, mentor["channels"][0]["id"])
 

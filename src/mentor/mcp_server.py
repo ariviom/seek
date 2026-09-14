@@ -1,4 +1,5 @@
-"""The MCP tools, the product's primary interface, served over Streamable HTTP at /mcp."""
+"""The MCP tools, the product's primary interface: served over Streamable HTTP at /mcp, and in-process to the web
+chat bound to one Mentor Group."""
 
 import asyncio
 from collections.abc import Iterator
@@ -37,6 +38,24 @@ Groups. Each Mentor owns Channels, and each Video's Transcript is cut into times
 Start with search (after list_groups when a Group should scope it), use expand when a Segment needs more context, \
 get_video for a Video's chapters and description, and sql only for counting or listing questions."""
 
+GROUP_INSTRUCTIONS = f"""\
+This server searches the Transcripts of one Mentor Group's Mentors: YouTube creators the user trusts. Each Video's \
+Transcript is cut into timestamped Segments.
+
+{GROUNDED_ADVISOR}
+
+Start with search, use expand when a Segment needs more context, and get_video for a Video's chapters and \
+description."""
+
+# sql reads every Group's data, so a chat bound to one Group goes without it.
+GROUP_TOOL_NAMES = ("list_groups", "search", "expand", "get_video")
+
+_SEARCH_RESULTS = (
+    f"limit is 1 to {CANDIDATES} (default 10). prefer_recent is off, gentle (default), or strong. Each result has the "
+    "Segment's text, Mentor, Channel, Video title and ids, publish date, chapter, and url: a link to the moment that "
+    "best matched, for citing."
+)
+
 type ExpandSeconds = Annotated[int, Field(ge=0, le=MAX_EXPAND_SECONDS)]
 
 
@@ -63,43 +82,80 @@ def _tool_errors() -> Iterator[None]:
 
 
 def create_mcp_server(database: Database, search: Search, sql_time_limit_seconds: float) -> MCPServer:
-    # The SDK configures root logging at this level; INFO would log every library's chatter.
-    server = MCPServer("mentor", instructions=INSTRUCTIONS, log_level="WARNING")
+    """Every tool, over every Group."""
+    return _server(database, search, None, sql_time_limit_seconds)
 
+
+def create_group_server(database: Database, search: Search, group_id: int) -> MCPServer:
+    """The tools a chat with one Group may use: search covers only the Group, Segments and Videos outside it aren't
+    found, and there is no sql."""
+    return _server(database, search, group_id, None)
+
+
+# Given a Group, sql_time_limit_seconds is None: sql would read every Group.
+def _server(
+    database: Database, search: Search, group_id: int | None, sql_time_limit_seconds: float | None
+) -> MCPServer:
+    # The SDK configures root logging at this level; INFO would log every library's chatter.
+    instructions = INSTRUCTIONS if group_id is None else GROUP_INSTRUCTIONS
+    server = MCPServer("mentor", instructions=instructions, log_level="WARNING")
     @server.tool(
         name="list_groups",
         description=_describe(
             "The Mentor Groups, each with its Mentors and how many searchable Videos each has. Scope search with a "
             "Group's id or name, or with Mentor ids."
+            if group_id is None
+            else "The Mentor Group this Conversation consults, with its Mentors and how many searchable Videos each "
+            "has."
         ),
     )
     async def list_groups() -> list[GroupSummary]:
-        return await database.run(groups.group_summaries)
+        return await database.run(lambda conn: groups.group_summaries(conn, group_id))
 
-    @server.tool(
-        name="search",
-        description=_describe(
-            "Find the Transcript Segments that best answer a question, matched by meaning and by exact words, "
-            "reranked, with newer Videos preferred on near-ties. Scope it with at most one of group (a number is a "
-            "Group id, a string is a Group name) or mentors (Mentor ids); give neither to search every Mentor. "
-            f"limit is 1 to {CANDIDATES} (default 10). prefer_recent is off, gentle (default), or strong. Each result "
-            "has the Segment's text, Mentor, Channel, Video title and ids, publish date, chapter, and url: a link to "
-            "the moment that best matched, for citing."
-        ),
-    )
-    async def search_segments(
-        query: SearchQuery,
-        group: GroupRef | None = None,
-        mentors: MentorIds | None = None,
-        limit: ResultLimit = 10,
-        prefer_recent: PreferRecent = "gentle",
-    ) -> list[SearchResult]:
-        with _tool_errors():
-            # The arguments are already valid one by one; the body adds the rule that they give one scope.
-            body = SearchBody(query=query, group=group, mentors=mentors, limit=limit, prefer_recent=prefer_recent)
-            return await search.search(
-                body.query, group=body.group, mentor_ids=body.mentors, limit=body.limit, prefer_recent=body.prefer_recent
-            )
+    if group_id is None:
+
+        @server.tool(
+            name="search",
+            description=_describe(
+                "Find the Transcript Segments that best answer a question, matched by meaning and by exact words, "
+                "reranked, with newer Videos preferred on near-ties. Scope it with at most one of group (a number is "
+                "a Group id, a string is a Group name) or mentors (Mentor ids); give neither to search every Mentor. "
+                + _SEARCH_RESULTS
+            ),
+        )
+        async def search_segments(
+            query: SearchQuery,
+            group: GroupRef | None = None,
+            mentors: MentorIds | None = None,
+            limit: ResultLimit = 10,
+            prefer_recent: PreferRecent = "gentle",
+        ) -> list[SearchResult]:
+            with _tool_errors():
+                # The arguments are already valid one by one; the body adds the rule that they give one scope.
+                body = SearchBody(query=query, group=group, mentors=mentors, limit=limit, prefer_recent=prefer_recent)
+                return await search.search(
+                    body.query,
+                    group=body.group,
+                    mentor_ids=body.mentors,
+                    limit=body.limit,
+                    prefer_recent=body.prefer_recent,
+                )
+
+    else:
+
+        @server.tool(
+            name="search",
+            description=_describe(
+                "Find the Transcript Segments of this Conversation's Mentor Group that best answer a question, "
+                "matched by meaning and by exact words, reranked, with newer Videos preferred on near-ties. "
+                + _SEARCH_RESULTS
+            ),
+        )
+        async def search_group(
+            query: SearchQuery, limit: ResultLimit = 10, prefer_recent: PreferRecent = "gentle"
+        ) -> list[SearchResult]:
+            with _tool_errors():
+                return await search.search(query, group=group_id, limit=limit, prefer_recent=prefer_recent)
 
     @server.tool(
         name="expand",
@@ -116,7 +172,9 @@ def create_mcp_server(database: Database, search: Search, sql_time_limit_seconds
         after_seconds: ExpandSeconds = DEFAULT_EXPAND_SECONDS,
     ) -> Expansion:
         with _tool_errors():
-            return await database.run(lambda conn: sources.expand(conn, segment_id, before_seconds, after_seconds))
+            return await database.run(
+                lambda conn: sources.expand(conn, segment_id, before_seconds, after_seconds, group_id)
+            )
 
     @server.tool(
         name="get_video",
@@ -127,21 +185,25 @@ def create_mcp_server(database: Database, search: Search, sql_time_limit_seconds
     )
     async def get_video(video_id: int) -> VideoInfo:
         with _tool_errors():
-            return await database.run(lambda conn: sources.get_video(conn, video_id))
+            return await database.run(lambda conn: sources.get_video(conn, video_id, group_id))
 
-    @server.tool(
-        name="sql",
-        description=_describe(
-            "Run one read-only SQLite SELECT over the knowledge base, for counting or listing questions search can't "
-            "answer, such as how many Videos a Mentor has from a given year. Tables include mentors, channels, "
-            "mentor_groups, mentor_group_members, videos (pipeline_stage 'done' means searchable), transcripts, "
-            "segments, and segments_fts (FTS5 over segments.text); read sqlite_master for the full schema. Returns "
-            f"at most {ROW_LIMIT} rows within {sql_time_limit_seconds:g} seconds; text over {TEXT_LIMIT} characters "
-            "is cut short, blobs come back as placeholders, and rows stop early for a very large result."
-        ),
-    )
-    async def sql(query: str) -> QueryResult:
-        with _tool_errors():
-            return await asyncio.to_thread(run_query, database.path, query, sql_time_limit_seconds)
+    if sql_time_limit_seconds is not None:
+        time_limit = sql_time_limit_seconds
+
+        @server.tool(
+            name="sql",
+            description=_describe(
+                "Run one read-only SQLite SELECT over the knowledge base, for counting or listing questions search "
+                "can't answer, such as how many Videos a Mentor has from a given year. Tables include mentors, "
+                "channels, mentor_groups, mentor_group_members, videos (pipeline_stage 'done' means searchable), "
+                "transcripts, segments, and segments_fts (FTS5 over segments.text); read sqlite_master for the full "
+                f"schema. Returns at most {ROW_LIMIT} rows within {time_limit:g} seconds; text over "
+                f"{TEXT_LIMIT} characters is cut short, blobs come back as placeholders, and rows stop early for a "
+                "very large result."
+            ),
+        )
+        async def sql(query: str) -> QueryResult:
+            with _tool_errors():
+                return await asyncio.to_thread(run_query, database.path, query, time_limit)
 
     return server

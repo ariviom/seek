@@ -52,14 +52,25 @@ class VideoInfo:
     url: str
 
 
+# Matches when no Group is given, or the Channel's Mentor belongs to it.
+_IN_GROUP = """(
+    :group_id IS NULL OR channels.mentor_id IN (SELECT mentor_id FROM mentor_group_members WHERE group_id = :group_id)
+)"""
+
+
 def _watch_url(youtube_video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={youtube_video_id}"
 
 
-def expand(conn: sqlite3.Connection, segment_id: int, before_seconds: float, after_seconds: float) -> Expansion:
-    """The Transcript's lines overlapping the Segment widened by before_seconds and after_seconds."""
+def expand(
+    conn: sqlite3.Connection, segment_id: int, before_seconds: float, after_seconds: float, group_id: int | None = None
+) -> Expansion:
+    """The Transcript's lines overlapping the Segment widened by before_seconds and after_seconds.
+
+    Given a Group, a Segment of a Mentor outside it is not found.
+    """
     row = conn.execute(
-        """
+        f"""
         SELECT segments.start_seconds, segments.end_seconds, transcripts.cues,
                videos.id AS video_id, videos.youtube_video_id, videos.title, videos.published_on,
                channels.name AS channel_name, mentors.name AS mentor_name
@@ -68,9 +79,9 @@ def expand(conn: sqlite3.Connection, segment_id: int, before_seconds: float, aft
         JOIN transcripts ON transcripts.video_id = videos.id
         JOIN channels ON channels.id = videos.channel_id
         JOIN mentors ON mentors.id = channels.mentor_id
-        WHERE segments.id = ? AND channels.indexed = 1
+        WHERE segments.id = :segment_id AND channels.indexed = 1 AND {_IN_GROUP}
         """,
-        (segment_id,),
+        {"segment_id": segment_id, "group_id": group_id},
     ).fetchone()
     # A not-indexed Channel is left out everywhere, as in search.
     if row is None:
@@ -97,16 +108,17 @@ def expand(conn: sqlite3.Connection, segment_id: int, before_seconds: float, aft
     )
 
 
-def get_video(conn: sqlite3.Connection, video_id: int) -> VideoInfo:
+def get_video(conn: sqlite3.Connection, video_id: int, group_id: int | None = None) -> VideoInfo:
+    """Given a Group, a Video of a Mentor outside it is not found."""
     row = conn.execute(
-        """
+        f"""
         SELECT videos.*, channels.name AS channel_name, mentors.name AS mentor_name
         FROM videos
         JOIN channels ON channels.id = videos.channel_id
         JOIN mentors ON mentors.id = channels.mentor_id
-        WHERE videos.id = ? AND channels.indexed = 1
+        WHERE videos.id = :video_id AND channels.indexed = 1 AND {_IN_GROUP}
         """,
-        (video_id,),
+        {"video_id": video_id, "group_id": group_id},
     ).fetchone()
     if row is None:
         raise NotFound(f"Video {video_id} not found")

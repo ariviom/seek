@@ -7,6 +7,7 @@ import {
   dangerButtonClass,
   hintClass,
   inputClass,
+  outlineButtonClass,
   quietButtonClass,
   sectionHeadingClass,
   useChanges,
@@ -17,9 +18,11 @@ import {
 export function Groups({
   mentors,
   onLoaded,
+  onAsk,
 }: {
   mentors: Mentor[] | null;
   onLoaded: (groups: MentorGroup[]) => void;
+  onAsk: (group: MentorGroup) => void;
 }) {
   const [groups, setGroups] = useState<MentorGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +71,7 @@ export function Groups({
         ) : (
           <ul className="mt-5 space-y-4">
             {groups.map((group) => (
-              <GroupCard key={group.id} group={group} mentors={mentors ?? group.mentors} act={act} />
+              <GroupCard key={group.id} group={group} mentors={mentors ?? group.mentors} act={act} onAsk={onAsk} />
             ))}
           </ul>
         )}
@@ -102,7 +105,17 @@ function AddGroup({ act }: { act: Act }) {
 }
 
 // `mentors` is every Mentor that can be ticked: all of them once loaded, else just the members.
-function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: MentorGroup["mentors"]; act: Act }) {
+function GroupCard({
+  group,
+  mentors,
+  act,
+  onAsk,
+}: {
+  group: MentorGroup;
+  mentors: MentorGroup["mentors"];
+  act: Act;
+  onAsk: (group: MentorGroup) => void;
+}) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const memberIds = group.mentors.map((m) => m.id);
 
@@ -140,13 +153,16 @@ function GroupCard({ group, mentors, act }: { group: MentorGroup; mentors: Mento
           </form>
         )}
         <div className="flex gap-1">
+          <button className={outlineButtonClass} onClick={() => onAsk(group)} disabled={group.mentors.length === 0}>
+            Ask
+          </button>
           <button className={quietButtonClass} onClick={() => setRenaming(renaming === null ? group.name : null)}>
             {renaming === null ? "Rename" : "Cancel"}
           </button>
           <button
             className={dangerButtonClass}
             onClick={() => {
-              if (confirm(`Delete the Mentor Group ${group.name}? Its Mentors are kept.`)) {
+              if (confirm(`Delete the Mentor Group ${group.name}? Its Mentors are kept, and its Conversations stay readable.`)) {
                 void act(() => api.deleteGroup(group.id));
               }
             }}

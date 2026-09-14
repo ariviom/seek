@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, type Health, type Mentor, type MentorGroup, type Models, type ModelStatus } from "./api";
+import { Chat } from "./Chat";
 import { useServerEvents } from "./events";
 import { Groups } from "./Groups";
 import { Mentors } from "./Mentors";
@@ -52,6 +53,9 @@ export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [mentors, setMentors] = useState<Mentor[] | null>(null);
   const [groups, setGroups] = useState<MentorGroup[] | null>(null);
+  const [chatGroupId, setChatGroupId] = useState<number | null>(null);
+  // Shown with the Group's latest name and Mentors; closed if the Group is deleted.
+  const chatGroup = groups?.find((g) => g.id === chatGroupId) ?? null;
   // The newest model statuses from the event stream, and how many have arrived, so a Health response that was
   // already in flight can't undo them.
   const latestModels = useRef<Models | null>(null);
@@ -99,9 +103,17 @@ export function App() {
       </header>
       <div className="mx-auto grid max-w-6xl gap-x-10 gap-y-12 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <main className="min-w-0 space-y-12">
+          {chatGroup && <Chat key={chatGroup.id} group={chatGroup} onClose={() => setChatGroupId(null)} />}
           <Search mentors={mentors} groups={groups} />
           <Mentors onLoaded={setMentors} />
-          <Groups mentors={mentors} onLoaded={setGroups} />
+          <Groups
+            mentors={mentors}
+            onLoaded={setGroups}
+            onAsk={(group) => {
+              setChatGroupId(group.id);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          />
         </main>
         <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
           <Syncs />

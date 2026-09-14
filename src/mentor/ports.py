@@ -3,10 +3,12 @@
 TranscriptSource, Embedder, and Reranker methods are blocking; ChatEngine streams asynchronously.
 """
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Protocol
+
+from mcp.server.mcpserver import MCPServer
 
 
 @dataclass(frozen=True)
@@ -160,8 +162,12 @@ class Reranker(Model, Protocol):
 class ChatRequest:
     message: str
     system_prompt: str
+    # None uses the Claude CLI's default model.
     model: str | None
     resume_session_id: str | None
+    # The only tools the model may use: served in-process under the name "mentor", already bound to one Mentor Group.
+    tools: MCPServer
+    tool_names: Sequence[str]
 
 
 @dataclass(frozen=True)
@@ -197,4 +203,4 @@ type ChatEvent = TextDelta | ToolCall | ToolResult | ChatDone | ChatFailed
 
 
 class ChatEngine(Protocol):
-    def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]: ...
+    def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]: ...

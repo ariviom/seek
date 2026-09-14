@@ -7,7 +7,7 @@ from harness import Json, add_mentor, fake_channel, fake_video, running, said, s
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import Chapter, Cue
 
 
@@ -223,7 +223,7 @@ async def test_a_small_mentor_in_a_large_corpus_still_gets_vector_hits_and_at_mo
         fake_video(f"v-wright-{n}", f"Wright {n}", cues=said(f"sharpen chisel bevel {n}")) for n in range(60)
     ]
     fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex", cues=said("hone blade")))
-    app = create_app(config, transcripts, Synonyms(), reranker, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, Synonyms(), reranker, FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         wright = await add_mentor(client, "Wood By Wright", "@woodbywright")

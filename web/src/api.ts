@@ -108,6 +108,39 @@ export type Expansion = {
   cues: { start_seconds: number; text: string }[];
 };
 
+// A null model uses the Claude CLI's default.
+export type Conversation = {
+  id: number;
+  group_id: number | null;
+  group_name: string;
+  model: string | null;
+  created_at: string;
+};
+export type Citation = {
+  video_id: number;
+  youtube_video_id: string;
+  seconds: number;
+  video_title: string;
+  mentor_name: string;
+  channel_name: string;
+  url: string;
+};
+export type ChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  tool_calls: { name: string; arguments: Record<string, unknown>; is_error: boolean }[];
+  citations: Citation[];
+  created_at: string;
+};
+// One turn's stream: text and tool activity as it happens, then the saved answer or an error.
+export type ChatStreamEvent =
+  | { type: "text"; text: string }
+  | { type: "tool_call"; call_id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_result"; call_id: string; content: string; is_error: boolean }
+  | { type: "done"; message: ChatMessage }
+  | { type: "error"; message: string };
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -171,4 +204,38 @@ export const api = {
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
+  createConversation: (groupId: number, model: string | null) =>
+    request<Conversation>(`groups/${groupId}/conversations`, { method: "POST", body: { model } }),
+  sendMessage,
 };
+
+// Posts a message and calls onEvent for each event of the answer's stream until it ends. EventSource can't POST, so
+// the stream is read directly. Rejects if the turn can't start (e.g. one is already answering).
+async function sendMessage(
+  conversationId: number,
+  message: string,
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  const response = await fetch(`api/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!response.ok || response.body === null) {
+    const body: unknown = await response.json().catch(() => null);
+    throw new Error(detailMessage(body, response.status));
+  }
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += value;
+    let end: number;
+    while ((end = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      if (frame.startsWith("data: ")) onEvent(JSON.parse(frame.slice("data: ".length)) as ChatStreamEvent);
+    }
+  }
+}

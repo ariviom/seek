@@ -12,7 +12,7 @@ from mcp.types import CallToolResult, TextContent
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import Chapter
 
 TOOLS = {"list_groups", "search", "expand", "get_video", "sql"}
@@ -30,7 +30,7 @@ async def served(
     setup and teardown.
     """
     app = create_app(
-        config, transcripts, embedder, reranker, static_dir=tmp_path / "no-bundle", sql_time_limit_seconds=0.5
+        config, transcripts, embedder, reranker, FakeChatEngine(), static_dir=tmp_path / "no-bundle", sql_time_limit_seconds=0.5
     )
     async with running(app) as client:
         yield client, app
@@ -356,6 +356,7 @@ async def test_the_mcp_endpoint_serves_tools_over_http_to_loopback_and_configure
         transcripts,
         embedder,
         reranker,
+        FakeChatEngine(),
         static_dir=tmp_path / "no-bundle",
     )
     initialize = {
@@ -395,7 +396,7 @@ async def test_the_mcp_endpoint_serves_tools_over_http_to_loopback_and_configure
 async def test_startup_fails_rather_than_hangs_when_the_mcp_server_cannot_start(
     config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbedder, reranker: FakeReranker, tmp_path: Path
 ) -> None:
-    app = create_app(config, transcripts, embedder, reranker, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, embedder, reranker, FakeChatEngine(), static_dir=tmp_path / "no-bundle")
     async with running(app):
         pass
 

@@ -1,9 +1,12 @@
 import argparse
+import shutil
 import sys
+from pathlib import Path
 
 import uvicorn
 
 from mentor.app import create_app
+from mentor.claude_chat import ClaudeChatEngine
 from mentor.config import ConfigError, load_config
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.youtube import YouTubeSettings, YouTubeTranscriptSource
@@ -29,7 +32,10 @@ def serve() -> None:
             cookie_file=config.youtube_cookie_file,
         )
     )
-    app = create_app(config, youtube, embedder, reranker)
+    # The chat drives the Claude CLI on PATH, the one logged in to the user's subscription.
+    claude = shutil.which("claude")
+    chat = ClaudeChatEngine(config.data_dir / "chat", Path(claude) if claude else None)
+    app = create_app(config, youtube, embedder, reranker, chat)
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
     uvicorn.run(app, host=HOST, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 

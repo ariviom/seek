@@ -3,18 +3,20 @@
 import hashlib
 import math
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 
 from mentor.ports import (
     ChannelInfo,
     ChannelNotFound,
+    ChatDone,
     ChatEvent,
     ChatRequest,
     ModelStatus,
     ModelUnavailable,
     PlaylistNotFound,
     SourceUnavailable,
+    TextDelta,
     Transcript,
     VideoDetails,
     VideoListing,
@@ -174,10 +176,19 @@ class FakeReranker(_FakeModel):
 
 @dataclass
 class FakeChatEngine:
-    script: list[ChatEvent] = field(default_factory=list)
+    """Streams the script for every turn, or, when `respond` is set, whatever it yields for the request."""
+
+    script: list[ChatEvent] = field(default_factory=lambda: [TextDelta("Nothing to say."), ChatDone("session-1")])
+    # E.g. calls the request's tools as a model would before answering.
+    respond: Callable[[ChatRequest], AsyncIterator[ChatEvent]] | None = None
+    # Every request, in order.
     requests: list[ChatRequest] = field(default_factory=list)
 
-    async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
+    async def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]:
         self.requests.append(request)
-        for event in self.script:
-            yield event
+        if self.respond:
+            async for event in self.respond(request):
+                yield event
+        else:
+            for event in self.script:
+                yield event

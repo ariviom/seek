@@ -5,7 +5,7 @@ from harness import Gate, add_mentor, event_stream, fake_channel, fake_video, ru
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import ModelStatus
 
 
@@ -16,7 +16,7 @@ async def test_models_load_in_the_background_while_health_and_events_report_thei
     downloading = ModelStatus("fake-embedder", "downloading", downloaded_bytes=340, total_bytes=1200)
     embedder = FakeEmbedder(before_load=gate, status_while_loading=downloading)
     app = create_app(
-        config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle", model_progress_seconds=0.02
+        config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle", model_progress_seconds=0.02
     )
 
     async with running(app) as client, event_stream(app) as events:
@@ -55,7 +55,7 @@ async def test_search_answers_models_loading_and_syncs_wait_until_the_embedding_
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
     embedder = FakeEmbedder(before_load=gate)
     app = create_app(
-        config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02
+        config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle", sync_poll_seconds=0.02
     )
 
     async with running(app) as client:
@@ -80,7 +80,7 @@ async def test_an_embedding_model_that_fails_to_load_fails_syncs_before_any_yout
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
     embedder = FakeEmbedder(load_error="The GPU ran out of memory loading fake-embedder")
-    app = create_app(config, transcripts, embedder, FakeReranker(), static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
@@ -100,7 +100,7 @@ async def test_a_reranking_model_that_fails_to_load_stops_search_but_not_syncs(
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
     reranker = FakeReranker(load_error="Hugging Face has no model named fake-reranker")
-    app = create_app(config, transcripts, FakeEmbedder(), reranker, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, FakeEmbedder(), reranker, FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")

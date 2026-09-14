@@ -13,6 +13,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from mentor import db
+from mentor.chat import Chat
+from mentor.chat_api import chat_router
 from mentor.config import Config
 from mentor.errors import Conflict, NotFound
 from mentor.events import Events
@@ -22,6 +24,7 @@ from mentor.mcp_server import create_mcp_server
 from mentor.mentors_api import mentors_router
 from mentor.ports import (
     ChannelNotFound,
+    ChatEngine,
     Embedder,
     Model,
     ModelStatus,
@@ -115,6 +118,7 @@ def create_app(
     transcripts: TranscriptSource,
     embedder: Embedder,
     reranker: Reranker,
+    chat_engine: ChatEngine,
     static_dir: Path = PACKAGE_STATIC_DIR,
     sync_poll_seconds: float = 5.0,
     events_keepalive_seconds: float = 15.0,
@@ -131,6 +135,7 @@ def create_app(
     search = Search(database, embedder, reranker, config.reranker_temperature, recency)
     worker = SyncWorker(database, transcripts, embedder, config.min_duration_seconds, sync_poll_seconds, events)
     models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
+    chat = Chat(database, search, chat_engine)
     mcp = create_mcp_server(database, search, sql_time_limit_seconds)
     mcp_hosts = [*LOOPBACK_HOSTS, *config.mcp_allowed_hosts]
     # Stateless JSON responses: the tools never call back to the client, and plain responses pass through proxies
@@ -162,6 +167,7 @@ def create_app(
             await mcp_started
             yield
         finally:
+            await chat.close()
             for task in tasks:
                 task.cancel()
             for task in tasks:
@@ -185,6 +191,7 @@ def create_app(
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(syncs_router(database, events, worker.wake), prefix="/api")
     app.include_router(search_router(search, database), prefix="/api")
+    app.include_router(chat_router(database, chat, events_keepalive_seconds), prefix="/api")
     app.include_router(events_router(events, events_keepalive_seconds), prefix="/api")
     # The MCP app routes /mcp itself; its session manager runs in the lifespan above.
     app.router.routes.append(Route("/mcp", mcp_app))

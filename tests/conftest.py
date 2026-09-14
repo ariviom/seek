@@ -7,7 +7,7 @@ from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.fakes import FakeChannel, FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.ports import ChannelInfo
 
 
@@ -47,10 +47,20 @@ def reranker() -> FakeReranker:
 
 
 @pytest.fixture
+def engine() -> FakeChatEngine:
+    return FakeChatEngine()
+
+
+@pytest.fixture
 async def client(
-    config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbedder, reranker: FakeReranker, tmp_path: Path
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    tmp_path: Path,
 ) -> AsyncIterator[httpx.AsyncClient]:
     # No web bundle: API tests don't need one.
-    app = create_app(config, transcripts, embedder, reranker, static_dir=tmp_path / "no-bundle")
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=tmp_path / "no-bundle")
     async with running(app) as c:
         yield c

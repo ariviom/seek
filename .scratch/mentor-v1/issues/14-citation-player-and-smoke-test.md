@@ -12,3 +12,6 @@
 
 From ticket 11 review:
 - The YouTube watch URL is built in `search.py` (`_unscored`), `sources.py` (`_watch_url`), and `web/src/Search.tsx` (per-line links in `TranscriptContext`). The Citation player should replace the web links; consider one server-side builder.
+
+From ticket 12 review:
+- Saved Citations carry `video_id`, `youtube_video_id`, `seconds`, names, and a canonical `url`; answer text links are rendered by `renderMarkdown` in `web/src/Chat.tsx`, where the player should hook in (match links with the same forms `chat.citation_links` reads).

@@ -6,6 +6,10 @@ from fastapi.responses import StreamingResponse
 
 from mentor.events import Events
 
+# Proxies otherwise hold events back until a buffer fills: nginx-style ones for X-Accel-Buffering, and compressing
+# ones for no-transform.
+SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
+
 
 def events_router(events: Events, keepalive_seconds: float) -> APIRouter:
     router = APIRouter()
@@ -25,9 +29,6 @@ def events_router(events: Events, keepalive_seconds: float) -> APIRouter:
                     else:
                         yield f"data: {data}\n\n"
 
-        # Proxies otherwise hold events back until a buffer fills: nginx-style ones for X-Accel-Buffering, and
-        # compressing ones for no-transform.
-        headers = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
-        return StreamingResponse(stream(), media_type="text/event-stream", headers=headers)
+        return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
 
     return router

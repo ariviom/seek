@@ -60,8 +60,8 @@ class GroupSummary:
     mentors: list[MentorSummary]
 
 
-def group_summaries(conn: sqlite3.Connection) -> list[GroupSummary]:
-    """Every Group with its Mentors and how many searchable Videos each has."""
+def group_summaries(conn: sqlite3.Connection, group_id: int | None = None) -> list[GroupSummary]:
+    """Every Group, or just the given one, with its Mentors and how many searchable Videos each has."""
     rows = conn.execute(
         """
         SELECT mentor_groups.id AS group_id, mentor_groups.name AS group_name,
@@ -72,8 +72,10 @@ def group_summaries(conn: sqlite3.Connection) -> list[GroupSummary]:
         FROM mentor_groups
         LEFT JOIN mentor_group_members ON mentor_group_members.group_id = mentor_groups.id
         LEFT JOIN mentors ON mentors.id = mentor_group_members.mentor_id
+        WHERE ?1 IS NULL OR mentor_groups.id = ?1
         ORDER BY mentor_groups.name COLLATE NOCASE, mentor_groups.id, mentors.name COLLATE NOCASE, mentors.id
-        """
+        """,
+        (group_id,),
     )
     members: dict[tuple[int, str], list[MentorSummary]] = {}
     for row in rows:
@@ -120,6 +122,8 @@ def rename_group(conn: sqlite3.Connection, group_id: int, name: str) -> MentorGr
         _require_group(conn, group_id)
         _name_taken(conn, name, except_id=group_id)
         conn.execute("UPDATE mentor_groups SET name = ? WHERE id = ?", (name, group_id))
+        # A Conversation keeps its Group's name for when the Group is gone.
+        conn.execute("UPDATE conversations SET group_name = ? WHERE group_id = ?", (name, group_id))
         return _get_group(conn, group_id)
 
 

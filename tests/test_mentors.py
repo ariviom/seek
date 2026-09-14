@@ -7,7 +7,7 @@ from harness import add_mentor, running
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeEmbedder, FakeReranker, FakeTranscriptSource
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 
 async def test_resolving_a_channel_proposes_its_display_name_as_the_mentor_name(
     client: httpx.AsyncClient,
@@ -127,7 +127,7 @@ async def test_an_unavailable_youtube_source_is_reported_as_service_unavailable(
     config: Config, tmp_path: Path
 ) -> None:
     source = FakeTranscriptSource(unavailable="YouTube is rate limiting requests")
-    app = create_app(config, source, FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle")
+    app = create_app(config, source, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     async with running(app) as client:
         response = await client.post("/api/channels/resolve", json={"channel": "@woodbywright"})
@@ -195,7 +195,7 @@ async def test_server_refuses_a_knowledge_base_from_a_newer_mentor(config: Confi
     conn = sqlite3.connect(config.database_path)
     conn.execute("PRAGMA user_version = 999")
     conn.close()
-    app = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), static_dir=tmp_path / "no-bundle")
+    app = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")
 
     with pytest.raises(RuntimeError, match="newer"):
         async with running(app):
