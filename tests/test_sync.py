@@ -262,7 +262,7 @@ async def test_discovery_lists_past_streams_too_and_later_syncs_may_stop_at_the_
     channel_id = mentor["channels"][0]["id"]
 
     await start_sync(client, channel_id)
-    first, = await wait_for_syncs(client)
+    [first] = await wait_for_syncs(client)
     await start_sync(client, channel_id)
     await wait_for_syncs(client)
     retry = await client.post(f"/api/channels/{channel_id}/retry-failed")

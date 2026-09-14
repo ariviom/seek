@@ -23,3 +23,11 @@ segmentation, so the FTS5 delete trigger removes exactly what was inserted; migr
 `{"reindex": true}`, `mentor reindex`) that steps Videos back to `transcript_fetched` when claimed, since the context
 is written at segmentation. `search.spread_across_videos` caps at 3 per Video and fills from the overflow so a
 one-Video scope still gets a full list.
+
+From ticket 21 review:
+- The ticket's test line says a one-Video search returns at most the cap for that Video; `spread_across_videos` fills
+  from the overflow instead (implementation note above), and `tests/test_search.py` asserts that. Drew to confirm
+  which behaviour is wanted.
+- Reindex steps a whole Channel's done Videos back when claimed, so they drop out of search until re-embedded.
+- Migration 7 drops and recreates `segments_fts` (a derived index FTS5 can't alter), against the letter of
+  "migrations are additive only".

@@ -22,3 +22,12 @@ throttled Sync. A throttled Video page (not caption URL) is still `SourceUnavail
 are listed after videos (listings carry no dates, so the merged order is per tab). Early stop: `take_until_known`
 stops after a full page (30) of known ids; the fake records `listings_known`. The `mentor[pot]` extra was left
 deferred.
+
+From ticket 21 review:
+- Fixed: Syncs already queued ignored the cooldown (only checked on entering `_drain`); a refused caption request was
+  retried by `_call` with backoff before failing its Video; the third refused Video's failure published no event.
+- Deferred: `sleep_interval_requests` is jittered once per yt-dlp session, not per request. `_throttled_syncs` resets
+  only on a successful Sync, so an unrelated failure between two throttled Syncs keeps the doubling. `take_until_known`
+  assumes yt-dlp pages channel tabs 30 at a time (unverified live; a mismatch only loses the saving).
+  `config.py` and `youtube.cookies_from_browser` parse the browser spec with two regexes. `caption_track`'s
+  `today` default hides a clock in a pure function. `_flat_entries(url)` equals `_tab_entries(url, ())`.

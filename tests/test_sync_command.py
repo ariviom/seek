@@ -1,5 +1,4 @@
 import asyncio
-import socket
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -7,21 +6,24 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-from harness import Gate, add_mentor, fake_channel, fake_video, fetched, running, serving, start_sync, wait_for_syncs
+from harness import (
+    Gate,
+    add_mentor,
+    fake_channel,
+    fake_video,
+    fetched,
+    free_port,
+    running,
+    serving,
+    start_sync,
+    wait_for_syncs,
+)
 
 from mentor import db, syncs
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from mentor.sync_command import SyncCommandError, sync_channels
-
-
-def free_port() -> int:
-    """A loopback port nothing is listening on."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port: int = sock.getsockname()[1]
-        return port
 
 
 def with_videos(transcripts: FakeTranscriptSource, gate: Gate | None = None) -> FakeTranscriptSource:

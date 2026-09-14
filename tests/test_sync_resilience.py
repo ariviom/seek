@@ -202,9 +202,45 @@ async def test_a_refused_caption_fetch_fails_its_video_alone_and_a_run_of_them_s
     }
     assert after["One"]["permanent_failure"] is False
     assert fetched_first == ["v-one", "v-two", "v-three", "v-four", "v-five"]
-    assert (queued["id"], during["id"], during["status"]) == (queued["id"], queued["id"], "queued")
+    assert (during["id"], during["status"]) == (queued["id"], "queued")
     assert rerun["status"] == "done" and cooled >= 1
     assert {t: v["stage"] for t, v in recovered.items()} == {t: "done" for t in after}
+
+
+async def test_syncs_already_queued_wait_out_the_cooldown_after_a_throttled_sync(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    refused = VideoUnavailable("YouTube is rate limiting requests", permanent=False, throttled=True)
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(f"v-{n}", f"Refused {n}", failure=refused) for n in range(3)
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex"))
+    app = create_app(
+        replace(config, youtube_backoff_seconds=1),
+        transcripts,
+        FakeEmbedder(),
+        FakeReranker(),
+        FakeChatEngine(),
+        static_dir=tmp_path / "no-bundle",
+        sync_poll_seconds=0.2,
+    )
+    async with running(app) as client:
+        await add_mentor(client, "Wood By Wright", "@woodbywright")
+        await add_mentor(client, "Rex Krueger", "@rexkrueger")
+        response = await client.post("/api/syncs")
+        started = time.monotonic()
+        while (await client.get("/api/syncs")).json()[-1]["status"] in ("queued", "running"):
+            await asyncio.sleep(0.05)
+        throttled_at = time.monotonic() - started
+        queued_after = (await client.get("/api/syncs")).json()[0]["status"]
+        rex, wright = await wait_for_syncs(client)
+        waited = time.monotonic() - started
+
+    assert response.status_code == 202
+    assert wright["status"] == "failed" and "Videos in a row were refused" in wright["error"]
+    assert queued_after == "queued" and throttled_at < 1
+    assert rex["status"] == "done" and waited >= 1
+    assert fetched(transcripts) == ["v-0", "v-1", "v-2", "v-rex"]
 
 
 async def test_retry_failed_during_a_sync_also_retries_failures_that_sync_records_afterwards(
@@ -230,14 +266,16 @@ async def test_retry_failed_during_a_sync_also_retries_failures_that_sync_record
     assert fetched(transcripts) == ["v-members", "v-members"]
 
 
-
 async def test_one_permanently_failed_video_can_be_retried(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     members = fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only video", permanent=True))
     fake_channel(transcripts, "UC-wright").videos.append(members)
 
-    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+    app = create_app(
+        config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle"
+    )
+    async with running(app) as client:
         mentor = await add_mentor(client, "Wood By Wright", "@woodbywright")
         channel_id = mentor["channels"][0]["id"]
         await start_sync(client, channel_id)

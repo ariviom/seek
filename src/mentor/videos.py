@@ -243,7 +243,8 @@ def _apply_exclusions(
 
 def youtube_ids(conn: sqlite3.Connection, channel_id: int) -> set[str]:
     """The YouTube ids of every Video of the Channel."""
-    return {row["youtube_video_id"] for row in conn.execute("SELECT youtube_video_id FROM videos WHERE channel_id = ?", (channel_id,))}
+    rows = conn.execute("SELECT youtube_video_id FROM videos WHERE channel_id = ?", (channel_id,))
+    return {row["youtube_video_id"] for row in rows}
 
 
 def pending_videos(conn: sqlite3.Connection, channel_id: int) -> list[PendingVideo]:

@@ -49,10 +49,10 @@ export function ChannelFiltersForm({ channel, act, onDone }: { channel: Channel;
           <input className={inputClass} type="date" value={before} onChange={(e) => setBefore(e.target.value)} />
         </label>
         <label className={label}>
-          In playlist (id)
+          In playlist
           <input
             className={inputClass}
-            placeholder="PL…"
+            placeholder="Playlist URL or PL… id"
             value={playlist}
             onChange={(e) => setPlaylist(e.target.value)}
           />

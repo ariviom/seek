@@ -50,6 +50,14 @@ async def serving(app: FastAPI) -> AsyncIterator[str]:
             await task
 
 
+def free_port() -> int:
+    """A loopback port nothing is listening on."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+        return port
+
+
 def mcp_client(app: FastAPI) -> Client:
     """An in-memory MCP client of the app's MCP server, to open inside `running(app)`."""
     return Client(app.state.mcp)

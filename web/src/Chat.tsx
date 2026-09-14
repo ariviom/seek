@@ -384,7 +384,7 @@ function Question({ text }: { text: string }) {
 
 const toolLabels: Record<string, (args: Record<string, unknown>) => string> = {
   search: (args) => `Searched “${String(args.query ?? "")}”`,
-  expand: (args) => `Read around Segment ${String(args.segment_id ?? "")}`,
+  expand: () => "Read around a search result",
   get_video: (args) => `Looked up Video ${String(args.video_id ?? "")}`,
   list_groups: () => "Listed the Group’s Mentors",
 };

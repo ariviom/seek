@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type ConversationSummary, type MentorGroup } from "./api";
 import {
   alertClass,
@@ -9,6 +9,7 @@ import {
   outlineButtonClass,
   quietButtonClass,
   sectionHeadingClass,
+  useChanges,
 } from "./ui";
 
 // Saved Conversations, most recently active first, for every Mentor Group or one. `version` changes whenever one may
@@ -30,9 +31,10 @@ export function Conversations({
   const [groupId, setGroupId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: number; title: string } | null>(null);
-  const [busy, setBusy] = useState(false);
   // Counts this section's own changes, each followed by a reload.
   const [changes, setChanges] = useState(0);
+  const reload = useCallback(async () => setChanges((c) => c + 1), []);
+  const { act, busy } = useChanges(reload, setError);
   // A Group that has since been deleted shows every Conversation again.
   const shownGroupId = groups?.some((g) => g.id === groupId) ? groupId : null;
 
@@ -51,31 +53,16 @@ export function Conversations({
     };
   }, [version, shownGroupId, changes]);
 
-  async function change(run: () => Promise<unknown>): Promise<boolean> {
-    setError(null);
-    setBusy(true);
-    try {
-      await run();
-      return true;
-    } catch (e) {
-      setError(errorText(e));
-      return false;
-    } finally {
-      setBusy(false);
-      setChanges((c) => c + 1);
-    }
-  }
-
   async function rename(event: FormEvent) {
     event.preventDefault();
     if (renaming === null) return;
     const { id, title } = renaming;
-    if (await change(() => api.renameConversation(id, title))) setRenaming(null);
+    if (await act(() => api.renameConversation(id, title))) setRenaming(null);
   }
 
   async function remove(conversation: ConversationSummary) {
     if (!confirm(`Delete the Conversation “${conversation.title}”?`)) return;
-    if (await change(() => api.deleteConversation(conversation.id))) onDeleted(conversation.id);
+    if (await act(() => api.deleteConversation(conversation.id))) onDeleted(conversation.id);
   }
 
   return (

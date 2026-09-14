@@ -194,7 +194,7 @@ def test_a_listing_stops_after_the_first_page_holding_only_known_videos() -> Non
     entries = [{"id": f"v{n}"} for n in range(10)]
     known = {f"v{n}" for n in range(3, 10)}
 
-    # Page 3 (v6–v8) is the first holding only known ids; page 2 has the new v3... no: v3 is known, page 2 is v3–v5.
+    # Page 2 (v3–v5) is the first holding only known ids, so the listing ends with it.
     assert [e["id"] for e in take_until_known(entries, known, page_size=3)] == ["v0", "v1", "v2", "v3", "v4", "v5"]
     assert take_until_known(entries, set(), page_size=3) == entries
     # A page that is only partly known keeps the listing going.

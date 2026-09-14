@@ -3,8 +3,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
-from harness import Gate, add_mentor, fake_channel, fake_video, running, serving, start_sync, wait_for_syncs
-from test_sync_command import free_port
+from harness import Gate, add_mentor, fake_channel, fake_video, free_port, running, serving, start_sync, wait_for_syncs
 
 from mentor import db, syncs
 from mentor.app import create_app

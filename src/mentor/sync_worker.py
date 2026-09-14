@@ -98,7 +98,12 @@ class SyncWorker:
         try:
             # Queued Syncs wait while the embedding model loads (the app wakes the worker when it's done); if it
             # failed to load, they fail with its reason.
-            while not self._lease_lost and self._embedder.status().state in ("ready", "failed"):
+            # A throttled Sync starts a cooldown that the Syncs still queued wait out too.
+            while (
+                not self._lease_lost
+                and time.monotonic() >= self._cooldown_until
+                and self._embedder.status().state in ("ready", "failed")
+            ):
                 claimed = await self._database.run(lambda conn: syncs.claim_next(conn, self._holder))
                 if claimed is None:
                     break
@@ -193,6 +198,8 @@ class SyncWorker:
             self._throttled_syncs += 1
             self._cooldown_until = time.monotonic() + wait
             log.warning("Sync %s stopped: %s; no Sync runs for the next %.0f s", sync.id, e, wait)
+            # The last refused Video's failure was recorded without its own event.
+            self._events.videos(sync.channel_id)
         except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
             error = str(e)
         except Exception as e:

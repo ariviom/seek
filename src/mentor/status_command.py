@@ -78,7 +78,16 @@ async def _read_store[T](config: Config, read: Callable[[sqlite3.Connection], T]
     # No knowledge base yet: nothing added, nothing to create just to read it.
     if not config.database_path.exists():
         return empty
-    return await db.Database(config.database_path).run(read)
+
+    def migrated(conn: sqlite3.Connection) -> T:
+        db.migrate(conn)
+        return read(conn)
+
+    try:
+        return await db.Database(config.database_path).run(migrated)
+    except RuntimeError as e:
+        # The knowledge base belongs to a newer mentor.
+        raise SyncCommandError(str(e)) from e
 
 
 def format_status(report: StatusReport) -> str:

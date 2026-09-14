@@ -196,7 +196,7 @@ def _server(
                 "Run one read-only SQLite SELECT over the knowledge base, for counting or listing questions search "
                 "can't answer, such as how many Videos a Mentor has from a given year. Tables include mentors, "
                 "channels, mentor_groups, mentor_group_members, videos (pipeline_stage 'done' means searchable), "
-                "transcripts, segments, and segments_fts (FTS5 over segments.text); read sqlite_master for the full "
+                "transcripts, segments, and segments_fts (FTS5 over segments.context and segments.text); read sqlite_master for the full "
                 f"schema. Returns at most {ROW_LIMIT} rows within {time_limit:g} seconds; text over "
                 f"{TEXT_LIMIT} characters is cut short, blobs come back as placeholders, and rows stop early for a "
                 "very large result."

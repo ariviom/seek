@@ -231,7 +231,8 @@ class YouTubeTranscriptSource:
             try:
                 with self._session, yt_dlp.YoutubeDL(params) as ydl:
                     return work(ydl, logger)
-            except VideoUnavailable:
+            except (VideoUnavailable, _CaptionsRefused):
+                # A refused caption request fails its Video at once; the Sync worker decides when to stop.
                 raise
             except _Failed as e:
                 failed, error = e, e.error
