@@ -2,7 +2,7 @@
 
 **Next up (decided 2026-09-14, evening): v2, the sidebar chat UI on a Channel model.** Read ADR 0003, then
 `docs/specs/0002-sidebar-chat-ui.md` (reviewed; its decisions win over spec 0001 where they differ), then the six tickets
-in `.scratch/mentor-v2/issues/`. Tickets 01 (backend) to 05 are done; continue with 06 in a worktree off `main`, one ticket per
+in `.scratch/mentor-v2/issues/`. Tickets 01 (backend) to 05 are done; continue with 07 (ingest feedback, the more urgent) then 06 in a worktree off `main`, one ticket per
 session as before. The prototype the spec cites is commit `8d51635` on branch `t3code/sidebar-chat-ui-prototype`
 (`pnpm --dir web dev`, then `?variant=B2`); it is a reference, never merged. Drew's calls from the prototype rounds:
 rail + list + main + Sources inspector; shadcn zinc with Geist, dark and light; chats filed under the Group or Channel
@@ -15,7 +15,7 @@ Read in this order:
 1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Group"; "Mentor" is the product name only).
 2. `docs/specs/0002-sidebar-chat-ui.md` — the current spec; `docs/specs/0001-mentor-v1.md` for what it doesn't cover (its "Review amendments" section wins over its earlier text).
 3. `docs/adr/` — three accepted decisions.
-4. `.scratch/mentor-v2/issues/` — six tickets (01 to 05 done on 2026-09-14; 06 remains, with deferred review findings appended). `.scratch/mentor-v1/issues/` is history: 21 tickets, with "From ticket NN review" notes carrying deferred findings.
+4. `.scratch/mentor-v2/issues/` — seven tickets (01 to 05 done on 2026-09-14; 06 remains, with deferred review findings appended; 07, ingest feedback and Active/Paused wording, was written on 2026-09-14 after the first real ingest). `.scratch/mentor-v1/issues/` is history: 21 tickets, with "From ticket NN review" notes carrying deferred findings.
 
 ## Codebase conventions so far
 - `create_app(config, transcripts, embedder, reranker, chat_engine, static_dir, sync_poll_seconds, events_keepalive_seconds, model_progress_seconds, sql_time_limit_seconds)`: each port is its own argument, added when its first consumer lands. Lifespan loads the models in the background and starts the `SyncWorker` task (`sync_worker.py`), which is woken on enqueue and on model state changes, and polls; it runs Syncs only while holding the `sync_lease` row, and only once the embedding model is ready (or has failed). `mentor serve` wires `YouTubeTranscriptSource` (yt-dlp, `youtube.py`, settings from `youtube_*` config), the real models from `models.py` sharing one `GpuRunner`, and `ClaudeChatEngine` with `claude_cli_path` or else the `claude` on PATH.
