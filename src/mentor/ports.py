@@ -73,6 +73,11 @@ class ModelUnavailable(Exception):
     """The embedding or reranking model cannot be used right now."""
 
 
+class GpuOutOfMemory(ModelUnavailable):
+    """One call didn't fit beside whatever else holds the GPU. The model itself is fine, so a Sync fails just the
+    Video it was embedding and carries on; a later retry embeds it once memory is free."""
+
+
 class VideoUnavailable(Exception):
     """One Video cannot be ingested: members-only, age-restricted, live or upcoming, no captions, not in English.
 

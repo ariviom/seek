@@ -12,6 +12,7 @@ from mentor.events import Events
 from mentor.ports import (
     ChannelNotFound,
     Embedder,
+    GpuOutOfMemory,
     ModelUnavailable,
     PlaylistNotFound,
     SourceUnavailable,
@@ -261,6 +262,11 @@ class SyncWorker:
                 advanced = await self._embed(video)
             else:
                 advanced = await self._database.run(lambda conn: videos.record_done(conn, video.id))
+        except GpuOutOfMemory as e:
+            # Another program holds the GPU for now. Fetching needs none of it, so the Sync goes on and this
+            # Video, transcript kept, waits for Retry failed videos.
+            log.warning("Stage %s failed for Video %s: %s", stage, video.youtube_video_id, e)
+            return await self._record_failure(rules, video, stage, VideoUnavailable(str(e), permanent=False))
         except ModelUnavailable:
             # Not about this Video: the Sync stops, and the Video resumes from its last stage next time.
             raise

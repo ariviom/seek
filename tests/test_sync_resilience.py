@@ -21,7 +21,7 @@ from harness import (
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import ModelUnavailable, VideoUnavailable
+from mentor.ports import GpuOutOfMemory, ModelUnavailable, VideoUnavailable
 
 
 @dataclass
@@ -83,6 +83,42 @@ async def test_an_interrupted_sync_resumes_only_the_unfinished_videos_when_rerun
     assert fetched(transcripts).count("v-second") == (2 if interrupted_by == "transcript source" else 1)
     assert fetched(transcripts).count("v-third") == 1
     assert [embeds_of(embedder, title) for title in ("First", "Second", "Third")] == [1, 1, 1]
+
+
+async def test_a_video_that_does_not_fit_on_the_gpu_fails_alone_and_retry_failed_embeds_it_without_refetching(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    embedder = FailsOn(word="Second", error=GpuOutOfMemory("The GPU ran out of memory running the embedding model"))
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-first", "First"),
+        fake_video("v-second", "Second"),
+        fake_video("v-third", "Third"),
+    ]
+
+    async with running(create_app(config, transcripts, embedder, FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        channel_id = channel["id"]
+        await start_sync(client, channel_id)
+        [crowded] = await wait_for_syncs(client)
+        after = await list_videos(client, channel_id)
+        embedder.error = None
+        response = await client.post(f"/api/channels/{channel_id}/retry-failed")
+        assert response.status_code == 202, response.text
+        retried, _ = await wait_for_syncs(client)
+        after_retry = await list_videos(client, channel_id)
+
+    # The other Videos were fetched and embedded; only the one that didn't fit waits, transcript kept.
+    assert crowded["status"] == "done"
+    assert {t: (v["stage"], v["failure_stage"]) for t, v in after.items()} == {
+        "First": ("done", None),
+        "Second": ("failed", "embedded"),
+        "Third": ("done", None),
+    }
+    assert after["Second"]["reason"] == "The GPU ran out of memory running the embedding model"
+    assert retried["status"] == "done"
+    assert {t: v["stage"] for t, v in after_retry.items()} == {"First": "done", "Second": "done", "Third": "done"}
+    assert fetched(transcripts).count("v-second") == 1
+    assert embeds_of(embedder, "Second") == 1
 
 
 async def test_a_normal_sync_skips_permanent_failures_and_retry_failed_recovers_every_failure(

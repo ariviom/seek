@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from tqdm.auto import tqdm
 
-from mentor.ports import ModelStatus, ModelUnavailable
+from mentor.ports import GpuOutOfMemory, ModelStatus, ModelUnavailable
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -143,7 +143,7 @@ class _HubModel[M]:
                 return work(model)
             except torch.OutOfMemoryError:
                 torch.cuda.empty_cache()
-                raise ModelUnavailable(
+                raise GpuOutOfMemory(
                     f"The GPU ran out of memory running the {self._role} model {self._name}; free GPU memory used by "
                     "other programs and try again"
                 ) from None
