@@ -81,6 +81,11 @@ async def test_sync_progress_and_video_stages_stream_live_while_the_sync_runs(
     assert stages_of(after_release, "Second") == ["transcript_fetched", "segmented", "embedded", "done"]
     assert syncs_in(after_release)[-1] == listed
     assert listed["stage_counts"] == NO_COUNTS | {"done": 2}
+    # A Video is counted once, as it reaches done: no count until the first one finishes, then one each.
+    assert [s["completed_videos"] for s in progress] == sorted(s["completed_videos"] for s in progress)
+    assert progress[0]["completed_videos"] == 0
+    assert progress[-1]["completed_videos"] == 1
+    assert listed["completed_videos"] == 2
 
 
 async def test_failures_and_retry_failed_stream_over_events(
@@ -102,6 +107,8 @@ async def test_failures_and_retry_failed_stream_over_events(
     [failed] = [e["video"] for e in first_sync if e["type"] == "video"]
     assert (failed["stage"], failed["reason"], failed["permanent_failure"]) == ("failed", "Premieres in 3 days", False)
     assert syncs_in(first_sync)[-1]["stage_counts"] == NO_COUNTS | {"failed": 1}
+    # A failed Video is finished with as far as this Sync goes, so it counts too.
+    assert syncs_in(first_sync)[-1]["completed_videos"] == 1
     assert retry.status_code == 202
     assert retried[0] == {"type": "videos", "channel_id": channel_id}
     assert syncs_in(retried)[0] == retry.json()

@@ -12,6 +12,7 @@ export function LibraryMain({
   reloadChannels,
   reloadGroups,
   onNewChat,
+  onOpenSync,
 }: {
   channels: Channel[] | null;
   groups: Group[] | null;
@@ -21,6 +22,7 @@ export function LibraryMain({
   reloadChannels: () => Promise<void>;
   reloadGroups: () => Promise<void>;
   onNewChat: (scope: Scope) => void;
+  onOpenSync: (syncId: number) => void;
 }) {
   // Both lists are reloaded after any change: membership, renames, and deletions cross between them.
   const refresh = async () => {
@@ -39,6 +41,7 @@ export function LibraryMain({
         syncs={syncs}
         refresh={refresh}
         onNewChat={onNewChat}
+        onOpenSync={onOpenSync}
         onRemoved={() => select({ channel: undefined })}
       />
     );

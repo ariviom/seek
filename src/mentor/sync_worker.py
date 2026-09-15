@@ -221,13 +221,16 @@ class SyncWorker:
         fetching: str | None = None,
     ) -> bool:
         """Refreshes and publishes the Sync's counts (naming the Video being fetched, if any), and the Video's stage
-        if given; False if the Sync is gone."""
+        if given; False if the Sync is gone.
+
+        A Video that has just reached done or failed counts towards completed_videos; _advance runs a Video no
+        further once it does, so each is counted once.
+        """
 
         def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None]:
-            return (
-                syncs.update_progress(conn, sync.id, new_videos),
-                None if video is None else videos.get_video(conn, video.id),
-            )
+            changed = None if video is None else videos.get_video(conn, video.id)
+            completed = changed is not None and changed.stage in ("done", "failed")
+            return syncs.update_progress(conn, sync.id, new_videos, completed), changed
 
         updated, changed = await self._database.run(refresh)
         if changed is not None:

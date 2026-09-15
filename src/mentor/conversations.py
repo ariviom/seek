@@ -186,7 +186,7 @@ def get_conversation(conn: sqlite3.Connection, conversation_id: int) -> Conversa
 
 
 def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
-    """The scope's name, or Conflict if it cannot answer yet: a Channel not indexed, or a Group with no Channels."""
+    """The scope's name, or Conflict if it cannot answer yet: a paused Channel, or a Group with no Channels."""
     if scope.kind == "group":
         group = conn.execute("SELECT name FROM groups WHERE id = ?", (scope.id,)).fetchone()
         if group is None:
@@ -198,7 +198,7 @@ def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
     if channel is None:
         raise NotFound(f"Channel {scope.id} not found")
     if not channel["indexed"]:
-        raise Conflict(f"The Channel {channel['name']!r} is not indexed, so it can't answer")
+        raise Conflict(f"The Channel {channel['name']!r} is paused, so it can't answer")
     return str(channel["name"])
 
 

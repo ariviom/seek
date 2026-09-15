@@ -110,7 +110,7 @@ async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_w
     }
     assert (not_indexed.status_code, not_indexed.json()) == (
         409,
-        {"detail": "The Channel 'Wright Vlogs' is not indexed, so it can't answer"},
+        {"detail": "The Channel 'Wright Vlogs' is paused, so it can't answer"},
     )
     assert (empty_group.status_code, empty_group.json()) == (
         409,

@@ -34,6 +34,7 @@ export function Composer({
   onAsk,
   onStop,
   notices,
+  syncingNotice,
   error,
 }: {
   name: string;
@@ -50,6 +51,8 @@ export function Composer({
   onAsk: (event: FormEvent) => void;
   onStop: () => void;
   notices: ReactNode;
+  // What a Channel still syncing means for the answers, when one is.
+  syncingNotice: string | null;
   error: string | null;
 }) {
   return (
@@ -114,6 +117,9 @@ export function Composer({
             )}
           </div>
         </form>
+        {syncingNotice !== null && (
+          <p className="text-center text-[11px] text-muted-foreground">{syncingNotice}</p>
+        )}
         <p className="text-center text-[11px] text-muted-foreground">
           Answers come only from what was said on these channels, with links to the moments it was said.
         </p>

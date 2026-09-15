@@ -28,6 +28,8 @@ class Sync:
     started_at: str | None
     finished_at: str | None
     new_videos: int
+    # Videos that reached done or failed during this Sync; with started_at it gives the rate.
+    completed_videos: int
     stage_counts: dict[str, int]
     # The title of the Video being fetched, on the event published as a running Sync starts fetching it.
     fetching: str | None = None
@@ -65,6 +67,7 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
             started_at=row["started_at"],
             finished_at=row["finished_at"],
             new_videos=row["new_videos"],
+            completed_videos=row["completed_videos"],
             stage_counts=json.loads(row["stage_counts"]),
         )
         for row in rows
@@ -233,15 +236,24 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         )
 
 
-def update_progress(conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None) -> Sync | None:
-    """Refreshes the Sync's stage counts from its Channel's Videos; None if the Sync is gone."""
+def update_progress(
+    conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None, completed: bool = False
+) -> Sync | None:
+    """Refreshes the Sync's stage counts from its Channel's Videos; None if the Sync is gone.
+
+    `completed` counts one more Video as finished with, so it is passed once per Video that reached done or failed.
+    """
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
         if row is None:
             return None
         conn.execute(
-            "UPDATE syncs SET stage_counts = ?, new_videos = coalesce(?, new_videos) WHERE id = ?",
-            (json.dumps(videos.stage_counts(conn, row["channel_id"])), new_videos, sync_id),
+            """
+            UPDATE syncs SET stage_counts = ?, new_videos = coalesce(?, new_videos),
+                             completed_videos = completed_videos + ?
+            WHERE id = ?
+            """,
+            (json.dumps(videos.stage_counts(conn, row["channel_id"])), new_videos, int(completed), sync_id),
         )
         [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
         return sync

@@ -8,16 +8,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useChanges } from "@/lib/changes";
 import { formatWhen } from "@/lib/format";
+import { channelSync, syncProgress, useNow } from "@/lib/sync-status";
 import { StageRule } from "@/syncs/StageRule";
 import { ChannelFiltersDialog, filtersSummary } from "./ChannelFiltersDialog";
 import { RenameForm } from "./RenameForm";
 import { VideosTable } from "./VideosTable";
 
 // The Channel record carries only these three counts; the rest of the pipeline is a Sync's business, so a Channel
-// mid-sync is shown its newest Sync's counts instead.
+// mid-sync is shown its running Sync's counts, else its newest Sync's.
 function channelCounts(channel: Channel, syncs: Sync[] | null): Record<Stage, number> {
-  const latest = syncs?.find((sync) => sync.channel_id === channel.id);
-  if (latest !== undefined) return latest.stage_counts;
+  const latest = channelSync(syncs, channel.id) ?? syncs?.find((sync) => sync.channel_id === channel.id) ?? null;
+  if (latest !== null) return latest.stage_counts;
   return {
     discovered: 0,
     transcript_fetched: 0,
@@ -35,6 +36,7 @@ export function ChannelPage({
   syncs,
   refresh,
   onNewChat,
+  onOpenSync,
   onRemoved,
 }: {
   channel: Channel;
@@ -42,6 +44,7 @@ export function ChannelPage({
   syncs: Sync[] | null;
   refresh: () => Promise<void>;
   onNewChat: (scope: Scope) => void;
+  onOpenSync: (syncId: number) => void;
   onRemoved: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +55,8 @@ export function ChannelPage({
 
   const memberOf = groups.filter((group) => group.channels.some((c) => c.id === channel.id));
   const filters = filtersSummary(channel.filters);
+  const running = channelSync(syncs, channel.id);
+  const now = useNow(running === null ? 0 : 10);
 
   return (
     <div className="space-y-5">
@@ -87,7 +92,7 @@ export function ChannelPage({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {!channel.indexed && <span className="text-xs text-muted-foreground">Not indexed, so it can’t answer</span>}
+          {!channel.indexed && <Badge variant="outline">Paused</Badge>}
           <Button size="sm" disabled={!channel.indexed} onClick={() => onNewChat({ kind: "channel", id: channel.id })}>
             New chat
           </Button>
@@ -96,13 +101,26 @@ export function ChannelPage({
 
       <fieldset disabled={busy} className="min-w-0 space-y-5">
         <section className="rounded-lg border bg-card p-4">
-          <h2 className="text-sm font-medium">Indexing</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {filters === "" ? "All videos" : filters} · last synced {formatWhen(channel.last_synced_at)}
-          </p>
+          <h2 className="text-sm font-medium">Videos</h2>
+          {running === null ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {filters === "" ? "All videos" : filters} · last synced {formatWhen(channel.last_synced_at)}
+            </p>
+          ) : (
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              <button type="button" className="underline-offset-2 hover:underline" onClick={() => onOpenSync(running.id)}>
+                {syncProgress(running, now).label}
+              </button>
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => void act(() => api.startSync(channel.id))}>
-              Sync now
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={running !== null}
+              onClick={() => void act(() => api.startSync(channel.id))}
+            >
+              {running === null ? "Sync now" : "Syncing…"}
             </Button>
             <Button size="sm" variant="outline" onClick={() => void act(() => api.retryFailed(channel.id))}>
               Retry failed videos
@@ -125,22 +143,27 @@ export function ChannelPage({
           </section>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <RenameForm
-            label="Channel name"
-            name={channel.name}
-            onRename={(name) => act(() => api.renameChannel(channel.id, name))}
-          />
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => void act(() => api.setChannelIndexed(channel.id, !channel.indexed))}
-          >
-            {channel.indexed ? "Stop indexing" : "Resume indexing"}
-          </Button>
-          <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setRemoveOpen(true)}>
-            Remove channel
-          </Button>
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <RenameForm
+              label="Channel name"
+              name={channel.name}
+              onRename={(name) => act(() => api.renameChannel(channel.id, name))}
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void act(() => api.setChannelIndexed(channel.id, !channel.indexed))}
+            >
+              {channel.indexed ? "Pause channel" : "Resume channel"}
+            </Button>
+            <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setRemoveOpen(true)}>
+              Remove channel
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A paused channel isn’t synced and doesn’t answer; what’s ingested stays.
+          </p>
         </div>
       </fieldset>
 

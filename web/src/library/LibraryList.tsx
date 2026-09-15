@@ -1,4 +1,4 @@
-import type { Channel, Group } from "@/lib/api";
+import type { Channel, Group, Sync } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Selection } from "@/lib/url-state";
@@ -8,6 +8,7 @@ import { GroupList } from "./GroupList";
 export function LibraryList({
   channels,
   groups,
+  syncs,
   selection,
   select,
   onAddChannel,
@@ -15,6 +16,7 @@ export function LibraryList({
 }: {
   channels: Channel[] | null;
   groups: Group[] | null;
+  syncs: Sync[] | null;
   selection: Selection;
   select: (selection: Selection) => void;
   onAddChannel: () => void;
@@ -34,6 +36,7 @@ export function LibraryList({
         </Button>
         <ChannelList
           channels={channels ?? []}
+          syncs={syncs}
           selectedId={selection.channel ?? null}
           onSelect={(channel) => select({ channel: channel.id, group: undefined, tab: "channels" })}
         />

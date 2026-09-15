@@ -12,6 +12,7 @@ import {
 import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
 import { useMediaQuery } from "@/lib/media";
 import { usePlayback } from "@/lib/playback";
+import { channelSync } from "@/lib/sync-status";
 import { useUrlState, type View } from "@/lib/url-state";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -182,6 +183,9 @@ export function App() {
   const liveUpdatesStopped = useLiveUpdatesStopped();
   const { items: syncs, error: syncsError } = useSyncs();
   const syncAll = useSyncAll();
+  // Sync all is a no-op once every active Channel already has a Sync queued or running.
+  const active = channels?.filter((channel) => channel.indexed) ?? [];
+  const syncing = active.length > 0 && active.every((channel) => channelSync(syncs, channel.id) !== null);
   const library = useLibraryDialogs({ select, reloadChannels, reloadGroups });
 
   const search = useSearch(channels, groups);
@@ -261,6 +265,7 @@ export function App() {
           draft={chat.draft}
           groups={groups}
           channels={channels}
+          syncs={syncs}
           playback={playback}
           notices={
             health !== null && (
@@ -320,6 +325,7 @@ export function App() {
         <LibraryList
           channels={channels}
           groups={groups}
+          syncs={syncs}
           selection={selection}
           select={select}
           onAddChannel={library.addChannel}
@@ -337,6 +343,10 @@ export function App() {
             reloadChannels={reloadChannels}
             reloadGroups={reloadGroups}
             onNewChat={newChat}
+            onOpenSync={(syncId) => {
+              changeView("syncs");
+              select({ sync: syncId });
+            }}
           />
           {library.dialogs}
         </>
@@ -345,8 +355,13 @@ export function App() {
     syncs: {
       title: "Syncs",
       actions: (
-        <Button variant="ghost" size="sm" disabled={syncAll.starting} onClick={() => void syncAll.run()}>
-          Sync all
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={syncAll.starting || syncing}
+          onClick={() => void syncAll.run()}
+        >
+          {syncing ? "Syncing…" : "Sync all"}
         </Button>
       ),
       list: (

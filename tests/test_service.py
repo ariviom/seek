@@ -91,7 +91,7 @@ def test_a_timer_runs_a_sync_of_all_channels_on_the_schedule_with_the_same_envir
     assert installed.timer_path == tmp_path / "units" / "mentor-sync.timer"
     assert (tmp_path / "units" / "mentor-sync.service").read_text() == f"""\
 [Unit]
-Description=mentor scheduled Sync of every indexed Channel
+Description=mentor scheduled Sync of every active Channel
 After=mentor.service
 
 [Service]
@@ -105,7 +105,7 @@ UnsetEnvironment=ANTHROPIC_API_KEY
 """
     assert installed.timer_path.read_text() == """\
 [Unit]
-Description=mentor scheduled Sync of every indexed Channel
+Description=mentor scheduled Sync of every active Channel
 
 [Timer]
 OnCalendar=Mon *-*-* 04:00

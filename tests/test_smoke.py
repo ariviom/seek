@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from harness import fake_channel, fake_video, said, serving
+from harness import Gate, fake_channel, fake_video, said, serving
 from playwright.async_api import ConsoleMessage, Locator, async_playwright, expect
 
 from mentor.app import create_app
@@ -38,10 +38,13 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
         cwd=WEB,
         check=True,
     )
+    # The first fetch is held, so the live status is on screen long enough to read.
+    gate = Gate()
     fake_channel(transcripts, "UC-wright").videos.append(
         fake_video(
             "bench-flat1",
             "Flattening a Workbench",
+            before_fetch=gate,
             cues=said(
                 "Welcome back to the shop",
                 "Today we flatten the bench",
@@ -93,12 +96,24 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             # The added Channel is selected, so its page opens.
             await expect(main.get_by_role("heading", name="Wright")).to_be_visible()
 
-            # Started from the Syncs view, so the list proves it updates live: the row arrives and finishes in place.
+            # The Videos card and the Library row follow the Sync live, then settle on what was synced.
+            channel_row = library.get_by_role("button").filter(has_text="Wright")
+            videos_card = main.locator("section").filter(has=page.get_by_role("heading", name="Videos"))
+            await main.get_by_role("button", name="Sync now").click()
+            await expect(channel_row).to_contain_text("Syncing", timeout=15_000)
+            await expect(videos_card).to_contain_text("Syncing", timeout=15_000)
+            gate.released.set()
+            await expect(channel_row).to_contain_text(re.compile(r"1 video · synced "), timeout=15_000)
+            await expect(videos_card).to_contain_text("last synced", timeout=15_000)
+
+            # A second Sync started from the Syncs view, so the list proves it updates live: its row arrives above
+            # the first and finishes in place.
             await rail.get_by_role("button", name="Syncs").click()
             syncs = page.get_by_role("complementary", name="Syncs")
             await syncs.get_by_role("button", name="Sync all").click()
-            sync_row = syncs.get_by_role("button").filter(has_text="Wright")
-            await expect(sync_row).to_be_visible(timeout=15_000)
+            wright_rows = syncs.get_by_role("button").filter(has_text="Wright")
+            await expect(wright_rows).to_have_count(2, timeout=15_000)
+            sync_row = wright_rows.first
             await expect(sync_row).to_contain_text("Done", timeout=15_000)
             await sync_row.click()
             # The rule's legend counts the one Video the Channel published.

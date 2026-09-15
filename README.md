@@ -58,7 +58,7 @@ Status: `systemctl --user status mentor`. Logs: `journalctl --user -u mentor`.
 ## Sync from the command line or on a schedule
 
 ```sh
-mentor sync --all                        # every indexed Channel
+mentor sync --all                        # every active Channel
 mentor sync --channel "Wood By Wright"   # one Channel, by its YouTube name or channel id
 ```
 
@@ -78,7 +78,7 @@ Videos wait for the next one; no Sync runs for `youtube_backoff_seconds`, doubli
 from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a mentor that indexes
 passages differently; until each Video is done again it is out of search.
 
-To Sync every indexed Channel on a schedule, install the service with a timer:
+To Sync every active Channel on a schedule, install the service with a timer:
 
 ```sh
 mentor install-service --timer                    # daily at midnight
@@ -95,7 +95,7 @@ run: `systemctl --user list-timers mentor-sync.timer`. Logs: `journalctl --user 
 
 ```sh
 mentor status   # the server, its models, the Claude CLI, and running and queued Syncs
-mentor list     # Channels with indexed, failed, and excluded Videos and when each last synced, then Groups with their Channels
+mentor list     # Channels, active or paused, with ready, failed, and excluded Videos and when each last synced, then Groups with their Channels
 ```
 
 Both ask the running server. When none answers, they read the knowledge base instead: `mentor status` then says the

@@ -136,10 +136,10 @@ def format_list(report: ListReport) -> str:
         return "No Channels yet."
     lines = ["Channels:" if report.channels else "Channels: none"]
     for c in report.channels:
-        indexed = "" if c.indexed else ", not indexed"
+        paused = "" if c.indexed else ", paused"
         synced = f"last synced {c.last_synced_at}" if c.last_synced_at else "never synced"
         lines.append(
-            f"  {c.name} ({c.youtube_channel_id}{indexed}): {c.indexed_videos} indexed, {c.failed_videos} failed, "
+            f"  {c.name} ({c.youtube_channel_id}{paused}): {c.indexed_videos} ready, {c.failed_videos} failed, "
             f"{c.excluded_videos} excluded; {synced}"
         )
     if report.groups:

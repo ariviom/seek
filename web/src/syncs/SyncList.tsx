@@ -1,6 +1,7 @@
 import { errorText, type Sync } from "@/lib/api";
 import type { Selection } from "@/lib/url-state";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { isRunning, syncProgress, useNow } from "@/lib/sync-status";
 import { ListRow } from "@/shell/ListRow";
 import { syncStatus, when } from "./useSyncs";
 
@@ -17,6 +18,8 @@ export function SyncList({
   select: (selection: Selection) => void;
   syncAllError: string | null;
 }) {
+  const now = useNow(syncs?.some(isRunning) === true ? 10 : 0);
+
   return (
     <div className="space-y-2">
       {syncAllError !== null && (
@@ -41,7 +44,9 @@ export function SyncList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{sync.channel_name}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {syncStatus[sync.status].label} · {when(sync)}
+                    {isRunning(sync)
+                      ? syncProgress(sync, now).label
+                      : `${syncStatus[sync.status].label} · ${when(sync)}`}
                   </span>
                 </span>
               </ListRow>

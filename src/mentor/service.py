@@ -103,7 +103,7 @@ def install_service(
     if sync_schedule is not None or sync_unit_path.exists():
         sync_lines = [
             "[Unit]",
-            "Description=mentor scheduled Sync of every indexed Channel",
+            "Description=mentor scheduled Sync of every active Channel",
             f"After={UNIT_NAME}",
             "",
             "[Service]",
@@ -116,7 +116,7 @@ def install_service(
     if sync_schedule is not None:
         timer_lines = [
             "[Unit]",
-            "Description=mentor scheduled Sync of every indexed Channel",
+            "Description=mentor scheduled Sync of every active Channel",
             "",
             "[Timer]",
             f"OnCalendar={sync_schedule}",

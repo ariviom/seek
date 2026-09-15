@@ -3,6 +3,7 @@ import { api, errorText, type Sync } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { plural } from "@/lib/format";
+import { isRunning, syncProgress, timeLeft, useNow } from "@/lib/sync-status";
 import { StageRule } from "./StageRule";
 import { syncStatus, when } from "./useSyncs";
 
@@ -10,6 +11,7 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const sync = syncs?.find((s) => s.id === syncId) ?? null;
+  const now = useNow(sync !== null && isRunning(sync) ? 10 : 0);
 
   // Only the 50 newest Syncs are listed, so a linked older one has nothing left to show.
   if (sync === null) {
@@ -17,6 +19,7 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
   }
 
   const finished = sync.status === "done" || sync.status === "failed";
+  const progress = sync.status === "running" ? syncProgress(sync, now) : null;
 
   // The retry queues a new Sync; it arrives as an event.
   async function retryFailed(channelId: number) {
@@ -38,6 +41,8 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
         <p className="mt-0.5 text-xs text-muted-foreground">
           {syncStatus[sync.status].label} · {when(sync)}
           {sync.new_videos > 0 && ` · ${plural(sync.new_videos, "new video")}`}
+          {progress !== null && ` · ${progress.completed} of ${progress.total} ready`}
+          {progress !== null && progress.secondsLeft !== null && ` · about ${timeLeft(progress.secondsLeft)} left`}
         </p>
         {sync.status === "running" && sync.fetching !== null && (
           <p className="mt-1 truncate text-xs text-muted-foreground" title={sync.fetching}>

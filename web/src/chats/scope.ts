@@ -35,6 +35,6 @@ export function liveScope(scope: Scope, groups: Group[] | null, channels: Channe
     ...scope,
     name: channel.name,
     members: [{ id: channel.id, name: channel.name, videos: channel.indexed_videos }],
-    unavailable: channel.indexed ? null : "This channel isn’t indexed, so it can’t answer. Resume indexing on its page.",
+    unavailable: channel.indexed ? null : "This channel is paused, so it can’t answer. Resume it on its page.",
   };
 }

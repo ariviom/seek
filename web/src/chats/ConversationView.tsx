@@ -8,9 +8,11 @@ import {
   type ConversationDetail,
   type Group,
   type Scope,
+  type Sync,
 } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { PlaybackControls } from "@/lib/playback";
+import { channelSync, syncingNote } from "@/lib/sync-status";
 import { Composer } from "./Composer";
 import { NewChat } from "./NewChat";
 import { ScopeChip } from "./ScopeChip";
@@ -26,6 +28,7 @@ export function ConversationView({
   draft: initialDraft,
   groups,
   channels,
+  syncs,
   playback,
   notices,
   onChanged,
@@ -37,6 +40,7 @@ export function ConversationView({
   draft: string;
   groups: Group[] | null;
   channels: Channel[] | null;
+  syncs: Sync[] | null;
   playback: PlaybackControls;
   notices: ReactNode;
   // After each turn, also a failed one: the Conversation exists and holds the question.
@@ -218,6 +222,11 @@ export function ConversationView({
   }
 
   const canAsk = !deleted && !loading && !loadFailed && live !== null && (!isNew || live.unavailable === null);
+  const members = live?.members ?? [];
+  const syncingNotice = syncingNote(
+    members.filter((member) => channelSync(syncs, member.id) !== null).map((member) => member.name),
+    members.reduce((ready, member) => ready + member.videos, 0),
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -233,7 +242,7 @@ export function ConversationView({
             </Alert>
           )}
           {isNew && entries.length === 0 && live !== null ? (
-            <NewChat scope={live} onEditGroup={onEditGroup} />
+            <NewChat scope={live} syncs={syncs} onEditGroup={onEditGroup} />
           ) : (
             entries.length > 0 && <Transcript entries={entries} playingKey={playback.playingKey} onPlay={playback.play} />
           )}
@@ -263,6 +272,7 @@ export function ConversationView({
           onAsk={(e) => void ask(e)}
           onStop={() => void stop()}
           notices={notices}
+          syncingNotice={syncingNotice}
           error={error}
         />
       )}

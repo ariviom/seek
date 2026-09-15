@@ -11,6 +11,7 @@ from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 
 SCHEMA_8 = 8
+SCHEMA_9 = 9
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -151,6 +152,25 @@ def test_migration_9_frees_channel_ids_from_reuse(tmp_path: Path, monkeypatch: p
     ).fetchone()
 
     assert new_id > 5
+    conn.close()
+
+
+def test_migration_10_counts_no_completed_videos_for_the_syncs_already_recorded(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "mentor.db")
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_9])
+        db.migrate(conn)
+    conn.executescript(
+        """
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO syncs (id, channel_id, status, queued_at, stage_counts) VALUES (4, 3, 'done', '2025-01-01', '{}');
+        """
+    )
+
+    db.migrate(conn)
+
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert [tuple(row) for row in conn.execute("SELECT id, completed_videos FROM syncs")] == [(4, 0)]
     conn.close()
 
 

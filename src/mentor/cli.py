@@ -79,7 +79,7 @@ def sync(channel: str | None, reindex: bool = False) -> None:
     except (SyncCommandError, NotFound) as e:
         sys.exit(f"mentor: {e}")
     if not report.syncs:
-        print("No indexed Channels to Sync.")
+        print("No active Channels to Sync.")
         return
     if report.server_url is not None:
         print(f"Queued on the server at {report.server_url}, where their progress shows:")
@@ -146,7 +146,7 @@ def install(sync_schedule: str | None) -> None:
     print(f"mentor is running at {url} and starts whenever you log in.")
     print(f"Status: systemctl --user status {UNIT_NAME}    Logs: {logs}")
     if installed.timer_path is not None:
-        print(f"Every indexed Channel Syncs on the schedule {sync_schedule!r}.")
+        print(f"Every active Channel Syncs on the schedule {sync_schedule!r}.")
         print(f"Next run: systemctl --user list-timers {TIMER_NAME}    Logs: journalctl --user -u mentor-sync")
 
 
@@ -158,13 +158,13 @@ def main() -> None:
         "sync", help="Sync Channels through the running server, or in this process when none is running"
     )
     target = sync_parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--all", action="store_true", help="every indexed Channel")
+    target.add_argument("--all", action="store_true", help="every active Channel")
     target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
     reindex_parser = commands.add_parser(
         "reindex", help="Sync Channels as `sync` does, re-segmenting and re-embedding the Videos already indexed"
     )
     reindex_target = reindex_parser.add_mutually_exclusive_group(required=True)
-    reindex_target.add_argument("--all", action="store_true", help="every indexed Channel")
+    reindex_target.add_argument("--all", action="store_true", help="every active Channel")
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
     commands.add_parser("status", help="the server, models, Claude CLI, and running and queued Syncs")
     commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups")
@@ -176,7 +176,7 @@ def main() -> None:
         nargs="?",
         const="daily",
         metavar="SCHEDULE",
-        help="also Sync every indexed Channel on a schedule, a systemd calendar expression (default: daily)",
+        help="also Sync every active Channel on a schedule, a systemd calendar expression (default: daily)",
     )
     args = parser.parse_args()
     if args.command == "serve":

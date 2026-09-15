@@ -122,8 +122,8 @@ async def test_mentor_list_shows_channels_with_their_counts_and_groups_from_the_
     assert (served.channels, served.groups) == (stored.channels, stored.groups)
     assert format_list(stored).splitlines() == [
         "Channels:",
-        f"  Paul Wright (UC-wright): 1 indexed, 1 failed, 1 excluded; last synced {finished['finished_at']}",
-        "  Wright Vlogs (UC-wright-vlog, not indexed): 0 indexed, 0 failed, 0 excluded; never synced",
+        f"  Paul Wright (UC-wright): 1 ready, 1 failed, 1 excluded; last synced {finished['finished_at']}",
+        "  Wright Vlogs (UC-wright-vlog, paused): 0 ready, 0 failed, 0 excluded; never synced",
         "Groups:",
         "  Empty: no Channels",
         "  Woodworking: Paul Wright",

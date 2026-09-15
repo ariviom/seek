@@ -75,6 +75,8 @@ export type Sync = {
   started_at: string | null;
   finished_at: string | null;
   new_videos: number;
+  // Videos that reached done or failed during this Sync; with started_at it gives the rate.
+  completed_videos: number;
   stage_counts: Record<Stage, number>;
   // The title of the Video being fetched, on the event a running Sync publishes as it starts fetching it.
   fetching: string | null;
@@ -222,7 +224,7 @@ export const api = {
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   retryVideo: (videoId: number) => request<Sync>(`videos/${videoId}/retry`, { method: "POST" }),
-  // Queues a Sync for every indexed Channel.
+  // Queues a Sync for every active Channel.
   syncAll: () => request<Sync[]>("syncs", { method: "POST" }),
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),

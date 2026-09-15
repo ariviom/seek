@@ -43,7 +43,7 @@ A saved chat thread scoped to exactly one Group or one Channel; a Channel alone 
 
 ## Decisions reflected in the language
 
-- A Group is a set of Channels. Excluding a Channel from search is done on the Channel (mark it not indexed), not per Group.
+- A Group is a set of Channels. Excluding a Channel from syncs, search, and chats is done on the Channel (pause it), not per Group.
 - A deleted Group or Channel leaves its Conversations readable but not continuable.
 - "Mentor" is the product's name and nothing else.
 - Shorts and very short Videos are excluded from ingestion by default.

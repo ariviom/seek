@@ -270,6 +270,10 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     ALTER TABLE conversations ADD COLUMN title TEXT;
     """,
     _channels_not_mentors,
+    """
+    -- Videos that reached done or failed during the Sync, so its rate and time remaining can be read off it.
+    ALTER TABLE syncs ADD COLUMN completed_videos INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 
