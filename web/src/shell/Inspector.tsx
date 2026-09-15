@@ -41,7 +41,7 @@ export function Inspector({
   return (
     <aside aria-label={title} className="flex h-full w-[300px] shrink-0 flex-col border-l">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-        <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
+        <h2 className="truncate text-sm font-medium">{title}</h2>
         {count !== undefined && <Badge variant="secondary">{count}</Badge>}
         <Button variant="ghost" size="icon" aria-label="Hide panel" className="ml-auto" onClick={onHide}>
           <X />

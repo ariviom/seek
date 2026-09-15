@@ -1,35 +1,54 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { PanelRight } from "lucide-react";
 import {
   api,
   errorText,
   type Channel,
   type Group,
   type Health,
-  type Models,
   type Scope,
 } from "@/lib/api";
 import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
-import { useUrlState } from "@/lib/url-state";
+import { useUrlState, type View } from "@/lib/url-state";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Inspector, useInspector } from "@/shell/Inspector";
 import { ListColumn } from "@/shell/ListColumn";
 import { MainHeader } from "@/shell/MainHeader";
-import { ClaudeNotice, describeModel, ModelNotice, ServerNotice } from "@/shell/Notices";
+import {
+  ClaudeNotice,
+  describeModel,
+  modelLabels,
+  modelRoles,
+  ModelNotice,
+  ServerNotice,
+} from "@/shell/Notices";
 import { Rail } from "@/shell/Rail";
 import { Chat, type ChatScope } from "./Chat";
 import { Conversations } from "./Conversations";
+import { useLibraryDialogs } from "./library/Library";
 import { LibraryList } from "./library/LibraryList";
 import { LibraryMain } from "./library/LibraryMain";
 import { Search } from "./Search";
 import { SyncList } from "./syncs/SyncList";
-import { SyncsMain } from "./syncs/SyncsMain";
-import { useSyncAll } from "./syncs/useSyncs";
+import { SyncPage, SyncsEmpty } from "./syncs/SyncPage";
+import { useSyncAll, useSyncs } from "./syncs/useSyncs";
 import { Button } from "@/components/ui/button";
-import { hintClass } from "./ui";
 
 type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
 
-const modelRoles = ["embedding", "reranker"] as const;
-const modelLabels: Record<keyof Models, string> = { embedding: "embedding model", reranker: "reranking model" };
+// The views with a right column; the other two have nothing to inspect.
+const inspected: Partial<Record<View, string>> = {
+  chats: "Sources of the open chat appear here from ticket 04.",
+  search: "Playing appears here from ticket 05.",
+};
+
+// ⌘K belongs to the app only when the user isn't typing into something or working inside a dialog.
+function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return true;
+  return target.closest('[role="dialog"]') !== null;
+}
 
 // The scope with its latest name and the Channels that answer; null once it is gone or the lists haven't loaded.
 function resolveScope(scope: Scope | null, groups: Group[] | null, channels: Channel[] | null): ChatScope | null {
@@ -48,6 +67,7 @@ export function App() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [healthOpen, setHealthOpen] = useState(false);
   const { view, selection, setView, select } = useUrlState();
+  const inspector = useInspector();
   // The open chat: a Group's or Channel's new Conversation, or a saved one (whose scope may be gone), with any
   // prefilled question. `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
   const [chat, setChat] = useState<{
@@ -70,17 +90,21 @@ export function App() {
   const [restoring] = useState(() => selection.conversation);
   useEffect(() => {
     if (restoring === undefined) return;
+    const before = openings.current;
     void api.getConversation(restoring).then(
-      (detail) =>
+      (detail) => {
+        // The user may have opened another chat while this was in flight; that one wins.
+        if (openings.current !== before) return;
         setChat({
           scope: detail.scope.id === null ? null : { kind: detail.scope.kind, id: detail.scope.id },
           conversationId: restoring,
           draft: "",
           opening: ++openings.current,
-        }),
-      () => undefined,
+        });
+      },
+      () => select({ conversation: undefined }),
     );
-  }, [restoring]);
+  }, [restoring, select]);
 
   const groupsLoaded = useCallback((loaded: Group[]) => {
     setGroups(loaded);
@@ -89,7 +113,7 @@ export function App() {
   }, []);
   // The newest model statuses from the event stream, and how many have arrived, so a Health response that was
   // already in flight can't undo them.
-  const latestModels = useRef<Models | null>(null);
+  const latestModels = useRef<Health["models"] | null>(null);
   const modelEvents = useRef(0);
 
   const loadHealth = useCallback(async () => {
@@ -106,6 +130,12 @@ export function App() {
   useEffect(() => {
     void loadHealth();
   }, [loadHealth]);
+
+  // The server being unreachable is the notice, so it opens the Dialog that carries it.
+  const serverError = state.kind === "error" ? state.message : null;
+  useEffect(() => {
+    if (serverError !== null) setHealthOpen(true);
+  }, [serverError]);
 
   // Search's scopes, the Conversations filter, and a chat's scope name all need the lists, so they are loaded up
   // front instead of waiting for the Library view to mount its sections, which report their own load errors.
@@ -146,7 +176,9 @@ export function App() {
   });
 
   const liveUpdatesStopped = useLiveUpdatesStopped();
+  const { items: syncs, error: syncsError } = useSyncs();
   const syncAll = useSyncAll();
+  const library = useLibraryDialogs({ select, reloadChannels, reloadGroups });
 
   // ⌘K/Ctrl+K goes to Search and puts the cursor in the question. Search owns its own input, so it is found by the
   // label it already carries; ticket 05 replaces this with a ref.
@@ -154,6 +186,7 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
+      if (typingIn(event.target)) return;
       event.preventDefault();
       setView("search");
       setFocusSearch((n) => n + 1);
@@ -174,7 +207,6 @@ export function App() {
         key={chat.opening}
         scope={chatScope}
         conversationId={chat.conversationId}
-        claude={state.kind === "ok" ? state.health.claude_cli : null}
         draft={chat.draft}
         onClose={() => {
           setChat(null);
@@ -190,16 +222,16 @@ export function App() {
       />
     );
 
-  // Each section's list column and main pane. Library and Syncs get their real lists in tickets 04 and 05; for now
-  // the old sections stay whole in the main pane and the column says where they are going.
-  const placeholder = (text: string) => <p className={`mt-2 ${hintClass}`}>{text}</p>;
+  // Each section's list column and main pane. Library and Syncs have their real lists; Chats and Search keep the v1
+  // sections in the main pane until tickets 04 and 05 move them.
+  const placeholder = (text: string) => <p className="mt-2 text-sm text-muted-foreground">{text}</p>;
   const sections: Record<typeof view, { title: string; actions?: ReactNode; list: ReactNode; main: ReactNode }> = {
     chats: {
       title: "Chats",
       list: placeholder("Chats are filed here from ticket 04."),
       main: (
         <>
-          {state.kind === "ok" && <ModelNotice models={state.health.models} />}
+          {state.kind === "ok" && !liveUpdatesStopped && <ModelNotice models={state.health.models} />}
           {state.kind === "ok" && <ClaudeNotice claude={state.health.claude_cli} />}
           {openedChat}
           <Conversations
@@ -235,20 +267,24 @@ export function App() {
           groups={groups}
           selection={selection}
           select={select}
-          reloadChannels={reloadChannels}
-          reloadGroups={reloadGroups}
+          onAddChannel={library.addChannel}
+          onNewGroup={library.newGroup}
         />
       ),
       main: (
-        <LibraryMain
-          channels={channels}
-          groups={groups}
-          selection={selection}
-          select={select}
-          reloadChannels={reloadChannels}
-          reloadGroups={reloadGroups}
-          onNewChat={(scope) => openChat(scope, null)}
-        />
+        <>
+          <LibraryMain
+            channels={channels}
+            groups={groups}
+            syncs={syncs}
+            selection={selection}
+            select={select}
+            reloadChannels={reloadChannels}
+            reloadGroups={reloadGroups}
+            onNewChat={(scope) => openChat(scope, null)}
+          />
+          {library.dialogs}
+        </>
       ),
     },
     syncs: {
@@ -258,8 +294,17 @@ export function App() {
           Sync all
         </Button>
       ),
-      list: <SyncList selection={selection} select={select} syncAllError={syncAll.error} />,
-      main: <SyncsMain selection={selection} />,
+      list: (
+        <SyncList
+          syncs={syncs}
+          error={syncsError}
+          selection={selection}
+          select={select}
+          syncAllError={syncAll.error}
+        />
+      ),
+      main:
+        selection.sync === undefined ? <SyncsEmpty /> : <SyncPage syncId={selection.sync} syncs={syncs} />,
     },
   };
   const section = sections[view];
@@ -268,19 +313,38 @@ export function App() {
       {section.list}
     </ListColumn>
   );
+  const inspectorBody = inspected[view];
 
   return (
     <div className="flex h-screen">
       <Rail
         view={view}
         onView={setView}
+        syncs={syncs}
         models={state.kind === "ok" ? state.health.models : null}
         claude={state.kind === "ok" ? state.health.claude_cli : null}
+        serverError={serverError}
         onShowHealth={() => setHealthOpen(true)}
       />
       <div className="hidden h-full lg:flex">{listColumn}</div>
       <main className="flex min-w-0 flex-1 flex-col">
-        <MainHeader title={section.title} list={{ title: section.title, content: listColumn }} />
+        <MainHeader
+          title={section.title}
+          list={{ key: `${view}:${JSON.stringify(selection)}`, title: section.title, content: listColumn }}
+          right={
+            inspectorBody !== undefined && (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={inspector.open ? "Hide sources" : "Show sources"}
+                aria-pressed={inspector.open}
+                onClick={inspector.toggle}
+              >
+                <PanelRight />
+              </Button>
+            )
+          }
+        />
         <div className="min-h-0 flex-1 overflow-y-auto pb-14 md:pb-0">
           <div className="mx-auto max-w-3xl space-y-8 px-6 py-5">
             <ServerNotice state={state} liveUpdatesStopped={liveUpdatesStopped} />
@@ -288,7 +352,11 @@ export function App() {
           </div>
         </div>
       </main>
-      {/* Tickets 04 and 05 mount the Sources Inspector here. */}
+      {inspectorBody !== undefined && inspector.open && (
+        <Inspector title="Sources" onHide={inspector.hide}>
+          <p className="text-sm text-muted-foreground">{inspectorBody}</p>
+        </Inspector>
+      )}
       <Dialog open={healthOpen} onOpenChange={setHealthOpen}>
         <DialogContent>
           <DialogHeader>
@@ -299,14 +367,23 @@ export function App() {
               <Fact term="Server" value={state.health.status} />
               <Fact term="sqlite-vec" value={state.health.database.sqlite_vec} />
               <Fact term="FTS5" value={state.health.database.fts5 ? "available" : "missing"} />
-              {modelRoles.map((role) => (
-                <Fact
-                  key={role}
-                  term={modelLabels[role]}
-                  value={`${state.health.models[role].name} (${describeModel(state.health.models[role])})`}
-                />
-              ))}
-              <Fact term="Claude CLI" value={state.health.claude_cli.state.replace("_", " ")} />
+              {modelRoles.map((role) => {
+                const status = state.health.models[role];
+                // The failure is what the user needs; the model's name only says which one failed.
+                const value =
+                  status.state === "failed" && status.error !== null
+                    ? `${status.name} — ${status.error}`
+                    : `${status.name} (${describeModel(status)})`;
+                return <Fact key={role} term={modelLabels[role]} value={value} />;
+              })}
+              <Fact
+                term="Claude CLI"
+                value={
+                  state.health.claude_cli.state === "ready"
+                    ? "ready"
+                    : (state.health.claude_cli.message ?? state.health.claude_cli.state.replace("_", " "))
+                }
+              />
               <Fact term="Knowledge base" value={state.health.database.path} />
             </dl>
           )}

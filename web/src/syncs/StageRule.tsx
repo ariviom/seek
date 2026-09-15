@@ -23,7 +23,7 @@ export function StageRule({ counts, detailed }: { counts: Record<Stage, number>;
     <div>
       <div
         role="img"
-        aria-label={total === 0 ? "No Videos yet" : summary}
+        aria-label={total === 0 ? "No videos yet" : summary}
         className={`flex overflow-hidden rounded-full bg-muted ${detailed ? "h-2" : "h-1.5"}`}
       >
         {shown.map((stage) => (

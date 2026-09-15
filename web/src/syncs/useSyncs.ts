@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { api, errorText, type Sync } from "@/lib/api";
 import { useLiveList, type Reaction, type ServerEvent } from "@/lib/events";
+import { formatWhen } from "@/lib/format";
 
 // As many as the API lists.
 const SHOWN = 50;
@@ -20,14 +21,12 @@ function react(event: ServerEvent): Reaction<Sync> {
 }
 
 export function when(sync: Sync): string {
-  const time = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  if (sync.finished_at) return `Finished ${time(sync.finished_at)}`;
-  if (sync.started_at) return `Started ${time(sync.started_at)}`;
-  return `Queued ${time(sync.queued_at)}`;
+  if (sync.finished_at) return `Finished ${formatWhen(sync.finished_at)}`;
+  if (sync.started_at) return `Started ${formatWhen(sync.started_at)}`;
+  return `Queued ${formatWhen(sync.queued_at)}`;
 }
 
-// The list column and the page read the same live list, so both see an event at once.
+// Loaded once in App and handed to the rail, the list column, and the page, so all three see an event at once.
 export function useSyncs() {
   const load = useCallback(() => api.listSyncs(), []);
   return useLiveList(load, react);

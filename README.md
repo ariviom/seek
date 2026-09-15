@@ -37,7 +37,8 @@ there (for a standard install, the `~/.local/bin/claude` link, which survives Cl
 It warns if `claude` or `deno` can't be found.
 
 On first start, the models download into the Hugging Face cache (`~/.cache/huggingface`, or `HF_HOME`). They are about
-2.2 GB. The page footer shows their progress. Syncs wait until the models are ready, and until then Search answers
+2.2 GB. The health dot at the foot of the rail shows their progress: hover it for the reason, click it for the
+details. Syncs wait until the models are ready, and until then Search answers
 that they are still loading.
 
 To upgrade, pull and reinstall, then rerun `mentor install-service`, which restarts the service:
@@ -246,8 +247,9 @@ The tools are `list_groups`, `list_channels`, `search` (scoped to a `group` or a
 
 ## Web chat
 
-A chat in a Group or a Channel answers through your own Claude CLI. Whether it can run shows in the
-footer's "Claude CLI" entry, and in the `claude_cli` part of `/api/health` with a message saying what to do:
+A chat in a Group or a Channel answers through your own Claude CLI. Whether it can run shows in the rail's health dot
+(hover it for the reason, click it for the details), and in the `claude_cli` part of `/api/health` with a message
+saying what to do:
 
 | State | What to do |
 |---|---|
@@ -274,7 +276,7 @@ footer's "Claude CLI" entry, and in the `claude_cli` part of `/api/health` with 
 4. After changing settings, restart the service, then restart the agent session (or `/mcp` in Claude Code to
    reconnect).
 
-**Models fail to load.** The footer shows the error. Usually the GPU is out of memory, because another process holds
+**Models fail to load.** The rail's health dot turns red; hover it for the reason, click it for the details. Usually the GPU is out of memory, because another process holds
 it. Free some memory, then `systemctl --user restart mentor`.
 
 **Syncs fail with "Sign in to confirm you're not a bot" or rate limits.** Wait before syncing again, raise

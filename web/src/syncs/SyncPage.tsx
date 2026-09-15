@@ -1,17 +1,20 @@
 import { useState } from "react";
-import { api, errorText } from "@/lib/api";
+import { api, errorText, type Sync } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { plural } from "@/lib/format";
 import { StageRule } from "./StageRule";
-import { syncStatus, useSyncs, when } from "./useSyncs";
+import { syncStatus, when } from "./useSyncs";
 
-export function SyncPage({ syncId }: { syncId: number }) {
-  const { items: syncs } = useSyncs();
+export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | null }) {
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const sync = syncs?.find((s) => s.id === syncId) ?? null;
 
-  if (sync === null) return syncs === null ? null : <SyncsEmpty />;
+  // Only the 50 newest Syncs are listed, so a linked older one has nothing left to show.
+  if (sync === null) {
+    return syncs === null ? null : <p className="text-sm text-muted-foreground">This sync is no longer listed.</p>;
+  }
 
   const finished = sync.status === "done" || sync.status === "failed";
 
@@ -31,10 +34,10 @@ export function SyncPage({ syncId }: { syncId: number }) {
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold tracking-tight">{sync.channel_name}</h2>
+        <h1 className="text-lg font-semibold tracking-tight">{sync.channel_name}</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {syncStatus[sync.status].label} · {when(sync)}
-          {sync.new_videos > 0 && ` · ${sync.new_videos} new ${sync.new_videos === 1 ? "video" : "videos"}`}
+          {sync.new_videos > 0 && ` · ${plural(sync.new_videos, "new video")}`}
         </p>
         {sync.status === "running" && sync.fetching !== null && (
           <p className="mt-1 truncate text-xs text-muted-foreground" title={sync.fetching}>

@@ -13,7 +13,7 @@ const tints = [
   "bg-violet-200 text-violet-900 dark:bg-violet-900 dark:text-violet-100",
 ] as const;
 
-export type AvatarSize = "xs" | "sm" | "md" | "lg";
+type AvatarSize = "xs" | "sm" | "md" | "lg";
 
 const sizes: Record<AvatarSize, string> = {
   xs: "size-5 text-[9px]",

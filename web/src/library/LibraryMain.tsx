@@ -1,15 +1,12 @@
-import { useState } from "react";
-import type { Channel, Group, Scope } from "@/lib/api";
-import { Button } from "@/components/ui/button";
+import type { Channel, Group, Scope, Sync } from "@/lib/api";
 import type { Selection } from "@/lib/url-state";
-import { AddChannelDialog } from "./AddChannelDialog";
-import { NewGroupDialog } from "./NewGroupDialog";
 import { ChannelPage } from "./ChannelPage";
 import { GroupPage } from "./GroupPage";
 
 export function LibraryMain({
   channels,
   groups,
+  syncs,
   selection,
   select,
   reloadChannels,
@@ -18,15 +15,13 @@ export function LibraryMain({
 }: {
   channels: Channel[] | null;
   groups: Group[] | null;
+  syncs: Sync[] | null;
   selection: Selection;
   select: (selection: Selection) => void;
   reloadChannels: () => Promise<void>;
   reloadGroups: () => Promise<void>;
   onNewChat: (scope: Scope) => void;
 }) {
-  const [adding, setAdding] = useState(false);
-  const [creating, setCreating] = useState(false);
-
   // Both lists are reloaded after any change: membership, renames, and deletions cross between them.
   const refresh = async () => {
     await Promise.all([reloadChannels(), reloadGroups()]);
@@ -41,6 +36,7 @@ export function LibraryMain({
         key={channel.id}
         channel={channel}
         groups={groups}
+        syncs={syncs}
         refresh={refresh}
         onNewChat={onNewChat}
         onRemoved={() => select({ channel: undefined })}
@@ -60,33 +56,5 @@ export function LibraryMain({
     );
   }
 
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">Pick a channel or group, or add one.</p>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-          Add channel
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
-          New group
-        </Button>
-      </div>
-      <AddChannelDialog
-        open={adding}
-        onOpenChange={setAdding}
-        onAdded={(added) => {
-          void reloadChannels();
-          select({ channel: added.id, group: undefined, tab: "channels" });
-        }}
-      />
-      <NewGroupDialog
-        open={creating}
-        onOpenChange={setCreating}
-        onCreated={(created) => {
-          void reloadGroups();
-          select({ group: created.id, channel: undefined, tab: "groups" });
-        }}
-      />
-    </div>
-  );
+  return <p className="text-sm text-muted-foreground">Pick a channel or group, or add one from the list.</p>;
 }

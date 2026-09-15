@@ -8,6 +8,21 @@ export function formatDuration(seconds: number | null): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
+// The one date format the lists and pages share; "never" when nothing has happened yet.
+export function formatWhen(at: string | null): string {
+  if (at === null) return "never";
+  return new Date(at).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function plural(n: number, noun: string): string {
+  return `${n} ${n === 1 ? noun : `${noun}s`}`;
+}
+
 export const stageLabels: Record<Stage, string> = {
   discovered: "Discovered",
   transcript_fetched: "Transcript fetched",

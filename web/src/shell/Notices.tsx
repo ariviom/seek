@@ -3,8 +3,8 @@ import type { ClaudeCli, Models, ModelStatus } from "@/lib/api";
 
 type ServerState = { kind: "loading" } | { kind: "ok" } | { kind: "error"; message: string };
 
-const modelRoles = ["embedding", "reranker"] as const;
-const modelLabels: Record<keyof Models, string> = { embedding: "embedding model", reranker: "reranking model" };
+export const modelRoles = ["embedding", "reranker"] as const;
+export const modelLabels: Record<keyof Models, string> = { embedding: "embedding model", reranker: "reranking model" };
 // What can't run until each model is ready.
 const modelWaiters: Record<keyof Models, string> = { embedding: "Search and Syncs wait", reranker: "Search waits" };
 

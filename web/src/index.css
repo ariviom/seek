@@ -6,16 +6,15 @@
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
-  /* The spec's base size: every rem-sized shadcn token scales from here. */
   html {
-    font-size: 14px;
     -webkit-font-smoothing: antialiased;
   }
   * {
     @apply border-border outline-ring/50;
   }
+  /* The spec's base size, set on the body so rem-sized tokens and `text-xs` metadata keep their 16px-root scale. */
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground text-sm;
   }
 }
 

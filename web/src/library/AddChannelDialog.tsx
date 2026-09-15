@@ -70,11 +70,14 @@ export function AddChannelDialog({
         <form onSubmit={proposal === null ? lookUp : add} className="grid gap-3">
           <label className="grid gap-1.5 text-sm">
             YouTube channel URL or handle
+            {/* Editing the URL drops the proposal, so a refused Add (already added) can be tried on another URL. */}
             <Input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              disabled={proposal !== null}
-              aria-label="YouTube channel URL or handle"
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setProposal(null);
+                setError(null);
+              }}
             />
           </label>
           {proposal !== null && (
@@ -82,7 +85,7 @@ export function AddChannelDialog({
               <p className="text-sm">Found {proposal.name}</p>
               <label className="grid gap-1.5 text-sm">
                 Channel name
-                <Input value={name} onChange={(e) => setName(e.target.value)} aria-label="Channel name" />
+                <Input value={name} onChange={(e) => setName(e.target.value)} />
               </label>
             </>
           )}

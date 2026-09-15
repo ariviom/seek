@@ -1,21 +1,23 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { ExternalLink } from "lucide-react";
-import { api, type Channel, type Group, type Scope, type Stage } from "@/lib/api";
+import { api, type Channel, type Group, type Scope, type Stage, type Sync } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChanges } from "@/lib/changes";
+import { formatWhen } from "@/lib/format";
 import { StageRule } from "@/syncs/StageRule";
 import { ChannelFiltersDialog, filtersSummary } from "./ChannelFiltersDialog";
+import { RenameForm } from "./RenameForm";
 import { VideosTable } from "./VideosTable";
-import { whenLabel } from "./ChannelList";
 
-// The Channel record carries only these three counts; the rest of the pipeline is a Sync's business.
-function channelCounts(channel: Channel): Record<Stage, number> {
+// The Channel record carries only these three counts; the rest of the pipeline is a Sync's business, so a Channel
+// mid-sync is shown its newest Sync's counts instead.
+function channelCounts(channel: Channel, syncs: Sync[] | null): Record<Stage, number> {
+  const latest = syncs?.find((sync) => sync.channel_id === channel.id);
+  if (latest !== undefined) return latest.stage_counts;
   return {
     discovered: 0,
     transcript_fetched: 0,
@@ -30,12 +32,14 @@ function channelCounts(channel: Channel): Record<Stage, number> {
 export function ChannelPage({
   channel,
   groups,
+  syncs,
   refresh,
   onNewChat,
   onRemoved,
 }: {
   channel: Channel;
   groups: Group[];
+  syncs: Sync[] | null;
   refresh: () => Promise<void>;
   onNewChat: (scope: Scope) => void;
   onRemoved: () => void;
@@ -45,21 +49,9 @@ export function ChannelPage({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [videosOpen, setVideosOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
 
   const memberOf = groups.filter((group) => group.channels.some((c) => c.id === channel.id));
   const filters = filtersSummary(channel.filters);
-
-  async function rename(event: FormEvent) {
-    event.preventDefault();
-    if (renaming !== null && (await act(() => api.renameChannel(channel.id, renaming)))) setRenaming(null);
-  }
-
-  const newChat = (
-    <Button size="sm" disabled={!channel.indexed} onClick={() => onNewChat({ kind: "channel", id: channel.id })}>
-      New chat
-    </Button>
-  );
 
   return (
     <div className="space-y-5">
@@ -94,23 +86,19 @@ export function ChannelPage({
             )}
           </div>
         </div>
-        {channel.indexed ? (
-          newChat
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0}>{newChat}</span>
-            </TooltipTrigger>
-            <TooltipContent>Not indexed, so it can't answer</TooltipContent>
-          </Tooltip>
-        )}
+        <div className="flex items-center gap-2">
+          {!channel.indexed && <span className="text-xs text-muted-foreground">Not indexed, so it can’t answer</span>}
+          <Button size="sm" disabled={!channel.indexed} onClick={() => onNewChat({ kind: "channel", id: channel.id })}>
+            New chat
+          </Button>
+        </div>
       </div>
 
       <fieldset disabled={busy} className="min-w-0 space-y-5">
         <section className="rounded-lg border bg-card p-4">
           <h2 className="text-sm font-medium">Indexing</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {filters === "" ? "All videos" : filters} · last synced {whenLabel(channel.last_synced_at)}
+            {filters === "" ? "All videos" : filters} · last synced {formatWhen(channel.last_synced_at)}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => void act(() => api.startSync(channel.id))}>
@@ -127,7 +115,7 @@ export function ChannelPage({
             </Button>
           </div>
           <div className="mt-4">
-            <StageRule counts={channelCounts(channel)} detailed />
+            <StageRule counts={channelCounts(channel, syncs)} detailed />
           </div>
         </section>
 
@@ -138,26 +126,11 @@ export function ChannelPage({
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          {renaming === null ? (
-            <Button size="sm" variant="ghost" onClick={() => setRenaming(channel.name)}>
-              Rename
-            </Button>
-          ) : (
-            <form onSubmit={rename} className="flex flex-wrap items-center gap-2">
-              <Input
-                className="w-56"
-                value={renaming}
-                onChange={(e) => setRenaming(e.target.value)}
-                aria-label="Channel name"
-              />
-              <Button size="sm" type="submit" disabled={renaming.trim() === ""}>
-                Save
-              </Button>
-              <Button size="sm" variant="ghost" type="button" onClick={() => setRenaming(null)}>
-                Cancel
-              </Button>
-            </form>
-          )}
+          <RenameForm
+            label="Channel name"
+            name={channel.name}
+            onRename={(name) => act(() => api.renameChannel(channel.id, name))}
+          />
           <Button
             size="sm"
             variant="ghost"
@@ -171,41 +144,22 @@ export function ChannelPage({
         </div>
       </fieldset>
 
-      {/* Keyed on the saved filters so reopening the dialog shows what is stored, not what was typed before. */}
-      <ChannelFiltersDialog
-        key={JSON.stringify(channel.filters)}
-        channel={channel}
-        act={act}
-        open={filtersOpen}
-        onOpenChange={setFiltersOpen}
-      />
+      <ChannelFiltersDialog channel={channel} act={act} open={filtersOpen} onOpenChange={setFiltersOpen} />
 
-      <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove channel</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm">
-            Remove {channel.name}, everything ingested from it, and its group memberships? Its chats stay readable.
-          </p>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoveOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (await act(() => api.deleteChannel(channel.id))) {
-                  setRemoveOpen(false);
-                  onRemoved();
-                }
-              }}
-            >
-              Remove channel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        title="Remove channel"
+        actionLabel="Remove channel"
+        open={removeOpen}
+        onOpenChange={setRemoveOpen}
+        onConfirm={async () => {
+          if (await act(() => api.deleteChannel(channel.id))) {
+            setRemoveOpen(false);
+            onRemoved();
+          }
+        }}
+      >
+        Remove {channel.name}, everything ingested from it, and its group memberships? Its chats stay readable.
+      </ConfirmDialog>
     </div>
   );
 }

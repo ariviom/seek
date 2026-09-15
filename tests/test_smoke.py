@@ -81,23 +81,28 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             await expect(rail.get_by_role("button", name="Chats")).to_have_attribute("aria-current", "page")
 
             await rail.get_by_role("button", name="Library").click()
-            await main.get_by_role("button", name="Add channel").click()
+            # The add buttons live under the list column's tabs, not in the main pane.
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("button", name="Add channel").click()
             add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
             await add.get_by_label("YouTube channel URL or handle").fill("@woodbywright")
             await add.get_by_role("button", name="Look up").click()
             await add.get_by_label("Channel name").fill("Wright")
             await add.get_by_role("button", name="Add", exact=True).click()
 
-            # The added Channel is selected, so its page opens and can be synced.
+            # The added Channel is selected, so its page opens.
             await expect(main.get_by_role("heading", name="Wright")).to_be_visible()
-            await main.get_by_role("button", name="Sync now").click()
 
+            # Started from the Syncs view, so the list proves it updates live: the row arrives and finishes in place.
             await rail.get_by_role("button", name="Syncs").click()
-            sync_row = page.get_by_role("button").filter(has_text="Wright").filter(has_text="Done")
+            syncs = page.get_by_role("complementary", name="Syncs")
+            await syncs.get_by_role("button", name="Sync all").click()
+            sync_row = syncs.get_by_role("button").filter(has_text="Wright")
             await expect(sync_row).to_be_visible(timeout=15_000)
+            await expect(sync_row).to_contain_text("Done", timeout=15_000)
             await sync_row.click()
             # The rule's legend counts the one Video the Channel published.
-            await expect(main.get_by_role("img", name="1 done")).to_be_visible()
+            await expect(main.get_by_role("img", name="1 done", exact=True)).to_be_visible()
 
             await rail.get_by_role("button", name="Search").click()
             search = page.get_by_role("region", name="Search")
@@ -113,8 +118,8 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             assert await embedded_at(result.locator("iframe")) == (*embed, ["15"])
 
             await rail.get_by_role("button", name="Library").click()
-            await page.get_by_role("tab", name="Groups").click()
-            await page.get_by_role("button", name="New group").click()
+            await library.get_by_role("tab", name="Groups").click()
+            await library.get_by_role("button", name="New group").click()
             new_group = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="New group"))
             await new_group.get_by_label("Group name").fill("Benches")
             await new_group.get_by_role("button", name="Create").click()
@@ -143,9 +148,13 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
 
             # The query string holds the view and the open Conversation, so a reload comes back to the same chat.
             opened = parse_qs(urlsplit(page.url).query)
-            assert opened["view"] == ["chats"] and "conversation" in opened
+            assert opened["view"] == ["chats"]
+            conversation_id = opened["conversation"]
+            assert conversation_id == [conversation_id[0]] and conversation_id[0].isdigit()
             await page.reload()
-            assert parse_qs(urlsplit(page.url).query) == opened
+            reloaded = parse_qs(urlsplit(page.url).query)
+            assert reloaded["view"] == ["chats"] and reloaded["conversation"] == conversation_id
             await expect(page.get_by_role("region", name="Ask Benches")).to_be_visible()
+            await expect(rail.get_by_role("button", name="Chats")).to_have_attribute("aria-current", "page")
 
     assert errors == []

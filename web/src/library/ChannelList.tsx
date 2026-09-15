@@ -1,22 +1,13 @@
 import type { Channel } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
-import { cn } from "@/lib/utils";
-
-export function whenLabel(at: string | null): string {
-  if (at === null) return "never";
-  return new Date(at).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+import { formatWhen, plural } from "@/lib/format";
+import { ListRow } from "@/shell/ListRow";
 
 function channelMeta(channel: Channel): string {
-  const videos = `${channel.indexed_videos} ${channel.indexed_videos === 1 ? "video" : "videos"}`;
+  const videos = plural(channel.indexed_videos, "video");
   return channel.last_synced_at === null
     ? `${videos} · never synced`
-    : `${videos} · synced ${whenLabel(channel.last_synced_at)}`;
+    : `${videos} · synced ${formatWhen(channel.last_synced_at)}`;
 }
 
 export function ChannelList({
@@ -35,21 +26,13 @@ export function ChannelList({
     <ul className="space-y-0.5">
       {channels.map((channel) => (
         <li key={channel.id}>
-          <button
-            type="button"
-            aria-current={channel.id === selectedId ? "true" : undefined}
-            onClick={() => onSelect(channel)}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent",
-              channel.id === selectedId && "bg-sidebar-accent",
-            )}
-          >
+          <ListRow selected={channel.id === selectedId} onClick={() => onSelect(channel)}>
             <Avatar name={channel.name} size="md" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{channel.name}</span>
               <span className="block truncate text-xs text-muted-foreground">{channelMeta(channel)}</span>
             </span>
-          </button>
+          </ListRow>
         </li>
       ))}
     </ul>

@@ -29,7 +29,9 @@ function readSelection(params: URLSearchParams): Selection {
   return selection;
 }
 
-function write(view: View, selection: Selection) {
+const keys = ["conversation", "channel", "group", "sync", "tab"] as const;
+
+function query(view: View, selection: Selection): string {
   const params = new URLSearchParams();
   params.set("view", view);
   for (const key of ids) {
@@ -37,7 +39,7 @@ function write(view: View, selection: Selection) {
     if (value !== undefined) params.set(key, String(value));
   }
   if (selection.tab !== undefined) params.set("tab", selection.tab);
-  history.replaceState(null, "", `?${params.toString()}${window.location.hash}`);
+  return params.toString();
 }
 
 // The view and selection live in the query string, so reload and links restore what was open.
@@ -56,22 +58,22 @@ export function useUrlState() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // Written from an effect, not from the updater: StrictMode double-invokes updaters.
+  useEffect(() => {
+    history.replaceState(null, "", `?${query(state.view, state.selection)}${window.location.hash}`);
+  }, [state]);
+
   const setView = useCallback((view: View) => {
-    setState((current) => {
-      write(view, current.selection);
-      return { ...current, view };
-    });
+    setState((current) => ({ ...current, view }));
   }, []);
 
   // Only the keys given change; an explicit `undefined` clears one.
   const select = useCallback((selection: Selection) => {
     setState((current) => {
-      const next = { ...current.selection };
-      for (const [key, value] of Object.entries(selection)) {
-        if (value === undefined) delete next[key as keyof Selection];
-        else Object.assign(next, { [key]: value });
+      const next: Selection = { ...current.selection, ...selection };
+      for (const key of keys) {
+        if (next[key] === undefined) delete next[key];
       }
-      write(current.view, next);
       return { ...current, selection: next };
     });
   }, []);

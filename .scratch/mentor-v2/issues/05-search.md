@@ -11,3 +11,8 @@
 - [ ] "Ask … about this" → new chat in the searched Group, else in the result's Channel, with the v1 drafted question.
 - [ ] Inspector titled "Playing" in this section.
 - [ ] Delete `Search.tsx` and whatever of `ui.ts` only it used. Verify: typecheck and build; `test_smoke.py` covers a search and a play; throwaway script: search in a Group, play a result in the panel and large, read around it, ask about it and see the drafted chat.
+
+From ticket 03 review (deferred to here)
+- `ui.ts` should go entirely with `Search.tsx`; check nothing under `shell/` or `library/` still imports a class constant from it.
+- `Avatar.tsx`'s `AvatarStack` ring is hard-coded to `ring-sidebar`; the first stack drawn on `bg-card` (a result row or a Sources group) needs a `ring` colour prop or `ring-background`.
+- The Sync page's "Retry failed videos" is shown only for a finished Sync with failures; the spec sentence is unconditional. Decide when the Syncs detail gets its final pass alongside the inspector work.

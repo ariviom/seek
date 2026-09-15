@@ -1,5 +1,4 @@
-import { useCallback, useState } from "react";
-import { Library, MessageSquare, Moon, RefreshCw, Search, Sun } from "lucide-react";
+import { Library, MessageSquare, Monitor, Moon, RefreshCw, Search, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -8,10 +7,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { api, type ClaudeCli, type Models, type Sync } from "@/lib/api";
-import { useLiveList, type Reaction, type ServerEvent } from "@/lib/events";
+import type { ClaudeCli, Models, Sync } from "@/lib/api";
 import { useTheme, type Theme } from "@/lib/theme";
 import type { View } from "@/lib/url-state";
+import { describeModel, modelLabels, modelRoles } from "./Notices";
 
 const sections: { view: View; label: string; Icon: typeof MessageSquare }[] = [
   { view: "chats", label: "Chats", Icon: MessageSquare },
@@ -20,32 +19,32 @@ const sections: { view: View; label: string; Icon: typeof MessageSquare }[] = [
   { view: "syncs", label: "Syncs", Icon: RefreshCw },
 ];
 
-const themes: { value: Theme; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
+const themes: { value: Theme; label: string; Icon: typeof Sun }[] = [
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
+  { value: "system", label: "System", Icon: Monitor },
 ];
 
-function reactToSync(event: ServerEvent): Reaction<Sync> {
-  if (event.type === "syncs") return "reload";
-  if (event.type !== "sync") return null;
-  return (syncs) => [event.sync, ...syncs.filter((s) => s.id !== event.sync.id)];
-}
-
-// Green when everything can answer; amber while a model is still arriving; red when one failed or the CLI can't run.
-function health(models: Models | null, claude: ClaudeCli | null): { tone: string; text: string } {
+// Green when everything can answer; amber while a model is still arriving; red when the server, a model, or the
+// CLI can't. The wording is the one the notices use, so the dot and the notice never disagree.
+function health(
+  models: Models | null,
+  claude: ClaudeCli | null,
+  serverError: string | null,
+): { tone: string; text: string } {
+  if (serverError !== null) return { tone: "bg-red-500", text: `Server unavailable: ${serverError}` };
   if (models === null || claude === null) return { tone: "bg-muted-foreground", text: "Checking the server…" };
-  const failed = ([...Object.entries(models)] as [keyof Models, Models[keyof Models]][]).find(
-    ([, status]) => status.state === "failed",
-  );
-  if (failed) return { tone: "bg-red-500", text: failed[1].error ?? `The ${failed[0]} model failed to load` };
+  const failed = modelRoles.find((role) => models[role].state === "failed");
+  if (failed !== undefined) {
+    return { tone: "bg-red-500", text: models[failed].error ?? `The ${modelLabels[failed]} failed to load` };
+  }
   if (claude.state !== "ready") {
     return { tone: "bg-red-500", text: claude.message ?? "The Claude CLI can't answer right now." };
   }
-  const waiting = ([...Object.entries(models)] as [keyof Models, Models[keyof Models]][]).find(
-    ([, status]) => status.state !== "ready",
-  );
-  if (waiting) return { tone: "bg-amber-400", text: `The ${waiting[0]} model is ${waiting[1].state}.` };
+  const waiting = modelRoles.find((role) => models[role].state !== "ready");
+  if (waiting !== undefined) {
+    return { tone: "bg-amber-400", text: `The ${modelLabels[waiting]} is ${describeModel(models[waiting])}` };
+  }
   return { tone: "bg-emerald-500", text: "Models and the Claude CLI are ready" };
 }
 
@@ -53,22 +52,24 @@ function health(models: Models | null, claude: ClaudeCli | null): { tone: string
 export function Rail({
   view,
   onView,
+  syncs,
   models,
   claude,
+  serverError,
   onShowHealth,
 }: {
   view: View;
   onView: (view: View) => void;
+  syncs: Sync[] | null;
   models: Models | null;
   claude: ClaudeCli | null;
+  serverError: string | null;
   onShowHealth: () => void;
 }) {
-  const load = useCallback(() => api.listSyncs(), []);
-  const { items: syncs } = useLiveList(load, reactToSync);
   const running = (syncs ?? []).some((sync) => sync.status === "queued" || sync.status === "running");
   const { theme, setTheme } = useTheme();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const dot = health(models, claude);
+  const dot = health(models, claude, serverError);
+  const ThemeIcon = themes.find((t) => t.value === theme)?.Icon ?? Monitor;
 
   return (
     <nav
@@ -86,7 +87,7 @@ export function Rail({
           key={section}
           variant="ghost"
           size="icon"
-          aria-label={label}
+          aria-label={section === "syncs" && running ? "Syncs, running" : label}
           aria-current={view === section ? "page" : undefined}
           className={`relative md:mt-1 ${view === section ? "bg-accent text-accent-foreground" : ""}`}
           onClick={() => onView(section)}
@@ -98,10 +99,10 @@ export function Rail({
         </Button>
       ))}
       <div className="flex flex-row items-center gap-1 md:mt-auto md:flex-col">
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Theme">
-              {theme === "dark" ? <Moon /> : <Sun />}
+              <ThemeIcon />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="right">
@@ -114,18 +115,16 @@ export function Rail({
         </DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              role="status"
-              aria-label={`Health: ${dot.text}`}
-              className="flex size-9 items-center justify-center rounded-md hover:bg-accent"
-              onClick={onShowHealth}
-            >
+            <Button variant="ghost" size="icon" aria-label={`Health: ${dot.text}`} onClick={onShowHealth}>
               <span aria-hidden className={`size-2.5 rounded-full ${dot.tone}`} />
-            </button>
+            </Button>
           </TooltipTrigger>
           <TooltipContent side="right">{dot.text}</TooltipContent>
         </Tooltip>
+        {/* The dot's reason, announced without waiting for a hover. */}
+        <span role="status" className="sr-only">
+          {dot.text}
+        </span>
       </div>
     </nav>
   );

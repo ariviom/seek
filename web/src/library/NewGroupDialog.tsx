@@ -50,7 +50,7 @@ export function NewGroupDialog({
         <form onSubmit={create} className="grid gap-3">
           <label className="grid gap-1.5 text-sm">
             Group name
-            <Input value={name} onChange={(e) => setName(e.target.value)} aria-label="Group name" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           {error !== null && (
             <Alert variant="destructive">

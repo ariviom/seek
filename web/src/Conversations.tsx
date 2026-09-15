@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, errorText, type Channel, type ConversationSummary, type Group, type Scope } from "@/lib/api";
-import { alertClass, buttonClass, dangerButtonClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import {
+  alertClass,
+  buttonClass,
+  dangerButtonClass,
+  hintClass,
+  inputClass,
+  outlineButtonClass,
+  quietButtonClass,
+  sectionHeadingClass,
+} from "./ui";
 import { useChanges } from "@/lib/changes";
 
 function parseFilter(value: string): Scope | null {
@@ -116,7 +125,7 @@ export function Conversations({
         error === null && <p className={`mt-5 ${hintClass}`}>Loading…</p>
       ) : conversations.length === 0 ? (
         <p className={`mt-5 ${hintClass}`}>
-          No Conversations yet. Choose Ask on a Group, or Ask about a search result.
+          No Conversations yet. Choose New chat on a channel or group, or Ask about a search result.
         </p>
       ) : (
         <ul className="mt-5 divide-y divide-border rounded-md bg-card px-4 sm:px-5">

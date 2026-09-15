@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api, type Channel, type ChannelFilters } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -38,6 +38,18 @@ export function ChannelFiltersDialog({
   const [before, setBefore] = useState(channel.filters.published_before ?? "");
   const [playlist, setPlaylist] = useState(channel.filters.playlist_id ?? "");
   const [mostRecent, setMostRecent] = useState(channel.filters.most_recent?.toString() ?? "");
+
+  // Each opening starts from what is stored, so Cancel discards whatever was typed the time before. Keyed on the
+  // filters' contents, not the Channel object, which is replaced whenever the counts are reloaded.
+  const stored = JSON.stringify(channel.filters);
+  useEffect(() => {
+    if (!open) return;
+    const filters: ChannelFilters = JSON.parse(stored);
+    setAfter(filters.published_after ?? "");
+    setBefore(filters.published_before ?? "");
+    setPlaylist(filters.playlist_id ?? "");
+    setMostRecent(filters.most_recent?.toString() ?? "");
+  }, [open, stored]);
 
   async function save(filters: ChannelFilters) {
     if (await act(() => api.setChannelFilters(channel.id, filters))) onOpenChange(false);

@@ -22,3 +22,9 @@ Sources and player
 
 Verify
 - [ ] Typecheck and build; `test_smoke.py` covers a chat turn with the `FakeChatEngine`; throwaway Playwright script: start a chat from a folder and from a Channel page, ask, see tool chips and Sources appear, play a source in the panel, Show large, Esc, hide the panel and play again (lightbox), rename and delete a chat, delete the Group and read the chat under Removed.
+
+From ticket 03 review (deferred to here)
+- `useChanges.act` is not re-entrant: buttons inside Radix portals (Dialog Save/Remove/Delete) sit outside the `<fieldset disabled>` lock, so a double-click sends the request twice. When the composer and dialogs are rebuilt, give `act` its own in-flight guard (or disable the confirm button while busy).
+- Below 1024px the hidden list column (`hidden lg:flex`) stays mounted while the Sheet mounts a second copy, doubling live subscriptions and dialog instances; gate on `matchMedia` rather than CSS when Folders lands.
+- `Conversations.tsx` encodes its filter scope as `"group:<id>"` strings; Folders replaces it, so give the scope a real type there.
+- URL restore of an open chat (`App.tsx`) was added in ticket 03 to satisfy "reload restores the view"; fold it into the Folders/selection model rather than keeping a separate fetch.

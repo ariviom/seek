@@ -1,6 +1,6 @@
 import type { Group } from "@/lib/api";
 import { AvatarStack } from "@/components/Avatar";
-import { cn } from "@/lib/utils";
+import { ListRow } from "@/shell/ListRow";
 
 export function GroupList({
   groups,
@@ -18,15 +18,7 @@ export function GroupList({
     <ul className="space-y-0.5">
       {groups.map((group) => (
         <li key={group.id}>
-          <button
-            type="button"
-            aria-current={group.id === selectedId ? "true" : undefined}
-            onClick={() => onSelect(group)}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent",
-              group.id === selectedId && "bg-sidebar-accent",
-            )}
-          >
+          <ListRow selected={group.id === selectedId} onClick={() => onSelect(group)}>
             <AvatarStack names={group.channels.map((c) => c.name)} shape="square" size="sm" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{group.name}</span>
@@ -34,7 +26,7 @@ export function GroupList({
                 {group.channels.length === 0 ? "No channels yet" : group.channels.map((c) => c.name).join(", ")}
               </span>
             </span>
-          </button>
+          </ListRow>
         </li>
       ))}
     </ul>

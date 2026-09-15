@@ -5,12 +5,19 @@ import {
   type ChatMessage,
   type ChatStreamEvent,
   type Citation,
-  type ClaudeCli,
   type ConversationDetail,
   type Scope,
 } from "@/lib/api";
 import { CitationPlayer, playOnPlainClick, usePlayer, type PlayerCitation } from "./Player";
-import { alertClass, buttonClass, hintClass, inputClass, outlineButtonClass, quietButtonClass, sectionHeadingClass } from "./ui";
+import {
+  alertClass,
+  buttonClass,
+  hintClass,
+  inputClass,
+  outlineButtonClass,
+  quietButtonClass,
+  sectionHeadingClass,
+} from "./ui";
 import { formatDuration } from "@/lib/format";
 
 type ToolActivity = {
@@ -86,14 +93,12 @@ export type ChatScope = Scope & { name: string; members: string[] };
 export function Chat({
   scope,
   conversationId: openedId,
-  claude,
   draft: initialDraft,
   onClose,
   onChanged,
 }: {
   scope: ChatScope | null;
   conversationId: number | null;
-  claude: ClaudeCli | null;
   draft: string;
   onClose: () => void;
   onChanged: (conversationId: number) => void;
@@ -282,11 +287,6 @@ export function Chat({
         <p className={`mt-2 ${hintClass}`}>
           Answers come only from what {scope.members.join(", ") || "its Channels"} said, with links to the moments they
           said it.
-        </p>
-      )}
-      {!deleted && !loadFailed && claude !== null && claude.state !== "ready" && (
-        <p role="alert" className={alertClass}>
-          {claude.message ?? "The Claude CLI can't answer right now."}
         </p>
       )}
       {loading && <p className={`mt-4 ${hintClass}`}>Loading the Conversation…</p>}

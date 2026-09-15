@@ -230,7 +230,7 @@ function Result({
         </p>
         <p className="tabular-nums">Published {result.published_on}</p>
       </div>
-      <h3 className="mt-1 font-semibold tracking-tight text-[1.375rem] leading-tight font-semibold">{result.video_title}</h3>
+      <h3 className="mt-1 font-semibold tracking-tight text-[1.375rem] leading-tight">{result.video_title}</h3>
       {result.chapter_title && <p className="text-[13px] text-muted-foreground">Chapter: {result.chapter_title}</p>}
       {open && context !== null ? (
         <TranscriptContext context={context} onPlay={onPlay} />

@@ -12,14 +12,14 @@ export function ListColumn({
   children: ReactNode;
 }) {
   return (
-    <div className="flex h-full w-[260px] shrink-0 flex-col border-r bg-sidebar">
+    <aside aria-label={title} className="flex h-full w-[260px] shrink-0 flex-col border-r bg-sidebar">
       <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
-        <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
+        <h2 className="truncate text-sm font-medium">{title}</h2>
         {actions}
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-3 pb-4">{children}</div>
       </ScrollArea>
-    </div>
+    </aside>
   );
 }
