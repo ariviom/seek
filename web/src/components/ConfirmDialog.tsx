@@ -9,6 +9,7 @@ export function ConfirmDialog({
   open,
   onOpenChange,
   onConfirm,
+  busy = false,
   children,
 }: {
   title: string;
@@ -16,6 +17,8 @@ export function ConfirmDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
+  // The dialog sits in a portal, outside any fieldset that locks the page while a change runs.
+  busy?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -29,7 +32,7 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={onConfirm}>
+          <Button variant="destructive" disabled={busy} onClick={onConfirm}>
             {actionLabel}
           </Button>
         </DialogFooter>

@@ -69,11 +69,14 @@ export function AvatarStack({
   shape = "round",
   size = "sm",
   className,
+  ringClassName = "ring-sidebar",
 }: {
   names: string[];
   shape?: "round" | "square";
   size?: AvatarSize;
   className?: string;
+  // The surface the stack sits on, so the overlap reads as a gap.
+  ringClassName?: string;
 }) {
   const shown = names.slice(0, 3);
   if (shown.length === 0) {
@@ -97,7 +100,7 @@ export function AvatarStack({
           name={name}
           shape={shape}
           size={size}
-          className={cn("ring-2 ring-sidebar", index > 0 && "-ml-2")}
+          className={cn("ring-2", ringClassName, index > 0 && "-ml-2")}
         />
       ))}
     </span>

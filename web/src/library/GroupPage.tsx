@@ -98,6 +98,7 @@ export function GroupPage({
         title="Delete group"
         actionLabel="Delete group"
         open={deleteOpen}
+        busy={busy}
         onOpenChange={setDeleteOpen}
         onConfirm={async () => {
           if (await act(() => api.deleteGroup(group.id))) {

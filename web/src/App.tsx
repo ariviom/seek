@@ -4,12 +4,16 @@ import {
   api,
   errorText,
   type Channel,
+  type Citation,
   type Group,
   type Health,
   type Scope,
 } from "@/lib/api";
 import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
+import { useMediaQuery } from "@/lib/media";
+import { usePlayback } from "@/lib/playback";
 import { useUrlState, type View } from "@/lib/url-state";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Inspector, useInspector } from "@/shell/Inspector";
 import { ListColumn } from "@/shell/ListColumn";
@@ -23,12 +27,19 @@ import {
   ServerNotice,
 } from "@/shell/Notices";
 import { Rail } from "@/shell/Rail";
-import { Chat, type ChatScope } from "./Chat";
-import { Conversations } from "./Conversations";
+import { modelLabel } from "./chats/Composer";
+import { ConversationView } from "./chats/ConversationView";
+import { Folders, NewChatMenu, useConversations } from "./chats/Folders";
+import { Lightbox } from "./chats/Lightbox";
+import { PlayerCard } from "./chats/PlayerCard";
+import { liveScope } from "./chats/scope";
+import { Sources, sourcesOf } from "./chats/Sources";
 import { useLibraryDialogs } from "./library/Library";
 import { LibraryList } from "./library/LibraryList";
 import { LibraryMain } from "./library/LibraryMain";
-import { Search } from "./Search";
+import { SearchForm } from "./search/SearchForm";
+import { SearchResults } from "./search/SearchResults";
+import { useSearch } from "./search/useSearch";
 import { SyncList } from "./syncs/SyncList";
 import { SyncPage, SyncsEmpty } from "./syncs/SyncPage";
 import { useSyncAll, useSyncs } from "./syncs/useSyncs";
@@ -36,11 +47,8 @@ import { Button } from "@/components/ui/button";
 
 type HealthState = { kind: "loading" } | { kind: "ok"; health: Health } | { kind: "error"; message: string };
 
-// The views with a right column; the other two have nothing to inspect.
-const inspected: Partial<Record<View, string>> = {
-  chats: "Sources of the open chat appear here from ticket 04.",
-  search: "Playing appears here from ticket 05.",
-};
+// The views with a right column, by its title; the other two have nothing to inspect.
+const inspected: Partial<Record<View, string>> = { chats: "Sources", search: "Playing" };
 
 // ⌘K belongs to the app only when the user isn't typing into something or working inside a dialog.
 function typingIn(target: EventTarget | null): boolean {
@@ -50,17 +58,6 @@ function typingIn(target: EventTarget | null): boolean {
   return target.closest('[role="dialog"]') !== null;
 }
 
-// The scope with its latest name and the Channels that answer; null once it is gone or the lists haven't loaded.
-function resolveScope(scope: Scope | null, groups: Group[] | null, channels: Channel[] | null): ChatScope | null {
-  if (scope === null) return null;
-  if (scope.kind === "group") {
-    const group = groups?.find((g) => g.id === scope.id);
-    return group === undefined ? null : { ...scope, name: group.name, members: group.channels.map((c) => c.name) };
-  }
-  const channel = channels?.find((c) => c.id === scope.id);
-  return channel === undefined ? null : { ...scope, name: channel.name, members: [channel.name] };
-}
-
 export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [channels, setChannels] = useState<Channel[] | null>(null);
@@ -68,49 +65,56 @@ export function App() {
   const [healthOpen, setHealthOpen] = useState(false);
   const { view, selection, setView, select } = useUrlState();
   const inspector = useInspector();
-  // The open chat: a Group's or Channel's new Conversation, or a saved one (whose scope may be gone), with any
-  // prefilled question. `opening` remounts the chat for each Ask or Open, but not when a new Conversation gets its id.
-  const [chat, setChat] = useState<{
-    scope: Scope | null;
-    conversationId: number | null;
-    draft: string;
-    opening: number;
-  } | null>(null);
+  const playback = usePlayback(inspector.open);
+  // Below 1024px the list column lives only in the header's Sheet, so it is never mounted twice.
+  const wide = useMediaQuery("(min-width: 1024px)");
+  // The open chat is the Conversation the URL names, or else a new one in `scope` with any prefilled question.
+  // `opening` remounts the chat for each one opened, but not when a new Conversation gets its id.
+  const [chat, setChat] = useState<{ scope: Scope | null; draft: string; opening: number }>({
+    scope: null,
+    draft: "",
+    opening: 0,
+  });
+  const [chatCitations, setChatCitations] = useState<Citation[]>([]);
   const [conversationsVersion, setConversationsVersion] = useState(0);
-  // Shown with the scope's latest name and Channels; read-only once the Group or Channel is deleted.
-  const chatScope = resolveScope(chat?.scope ?? null, groups, channels);
+  const conversations = useConversations(conversationsVersion);
 
   const openings = useRef(0);
-  const openChat = (scope: Scope | null, conversationId: number | null, draft = "") => {
-    setChat({ scope, conversationId, draft, opening: ++openings.current });
-    setView("chats");
-    select({ conversation: conversationId ?? undefined });
+  // Counts choices made in the list column, so the Sheet that holds it below 1024px closes even when nothing changed.
+  const [listChoices, setListChoices] = useState(0);
+  const openConversation = (conversationId: number) => {
+    setListChoices((n) => n + 1);
+    if (conversationId === selection.conversation) return;
+    setChat({ scope: null, draft: "", opening: ++openings.current });
+    playback.close();
+    select({ conversation: conversationId });
   };
-  // A reload reopens the Conversation the URL names, in the scope it was held in; only what the URL carried at load.
-  const [restoring] = useState(() => selection.conversation);
-  useEffect(() => {
-    if (restoring === undefined) return;
-    const before = openings.current;
-    void api.getConversation(restoring).then(
-      (detail) => {
-        // The user may have opened another chat while this was in flight; that one wins.
-        if (openings.current !== before) return;
-        setChat({
-          scope: detail.scope.id === null ? null : { kind: detail.scope.kind, id: detail.scope.id },
-          conversationId: restoring,
-          draft: "",
-          opening: ++openings.current,
-        });
-      },
-      () => select({ conversation: undefined }),
-    );
-  }, [restoring, select]);
+  const newChat = (scope: Scope, draft = "") => {
+    setChat({ scope, draft, opening: ++openings.current });
+    playback.close();
+    setView("chats");
+    select({ conversation: undefined });
+  };
+  const closeChat = () => {
+    playback.close();
+    setChat({ scope: null, draft: "", opening: ++openings.current });
+    select({ conversation: undefined });
+  };
 
   const groupsLoaded = useCallback((loaded: Group[]) => {
     setGroups(loaded);
     // A deleted or renamed Group changes how its Conversations are listed.
     setConversationsVersion((v) => v + 1);
   }, []);
+  // Likewise a renamed or removed Channel; the list reloads with every Sync's counts, so only its names are watched.
+  const channelNames = channels?.map((c) => `${c.id}:${c.name}`).join("\n");
+  const seenChannelNames = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (seenChannelNames.current !== undefined && channelNames !== seenChannelNames.current) {
+      setConversationsVersion((v) => v + 1);
+    }
+    seenChannelNames.current = channelNames;
+  }, [channelNames]);
   // The newest model statuses from the event stream, and how many have arrived, so a Health response that was
   // already in flight can't undo them.
   const latestModels = useRef<Health["models"] | null>(null);
@@ -180,84 +184,135 @@ export function App() {
   const syncAll = useSyncAll();
   const library = useLibraryDialogs({ select, reloadChannels, reloadGroups });
 
-  // ⌘K/Ctrl+K goes to Search and puts the cursor in the question. Search owns its own input, so it is found by the
-  // label it already carries; ticket 05 replaces this with a ref.
+  const search = useSearch(channels, groups);
+
+  const closePlayback = playback.close;
+  // Leaving a section stops what it was playing.
+  const changeView = useCallback(
+    (next: View) => {
+      if (next !== view) closePlayback();
+      setView(next);
+    },
+    [view, closePlayback, setView],
+  );
+
+  // ⌘K/Ctrl+K goes to Search and puts the cursor in the question.
   const [focusSearch, setFocusSearch] = useState(0);
+  const clearFocusSearch = useCallback(() => setFocusSearch(0), []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
       if (typingIn(event.target)) return;
       event.preventDefault();
-      setView("search");
+      changeView("search");
       setFocusSearch((n) => n + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setView]);
-  useEffect(() => {
-    if (focusSearch === 0) return;
-    document.querySelector<HTMLInputElement>('input[aria-label="Question"]')?.focus();
-  }, [focusSearch, view]);
+  }, [changeView]);
 
-  const openedChat = chat !== null &&
-    groups !== null &&
-    channels !== null &&
-    (chatScope !== null || chat.conversationId !== null) && (
-      <Chat
-        key={chat.opening}
-        scope={chatScope}
-        conversationId={chat.conversationId}
-        draft={chat.draft}
-        onClose={() => {
-          setChat(null);
-          select({ conversation: undefined });
-        }}
-        onChanged={(conversationId) => {
-          // A chat replaced mid-answer still finishes its turn; it mustn't retarget the chat now open.
-          const opening = chat.opening;
-          setChat((current) => (current?.opening === opening ? { ...current, conversationId } : current));
-          select({ conversation: conversationId });
-          setConversationsVersion((v) => v + 1);
-        }}
-      />
-    );
+  const health = state.kind === "ok" ? state.health : null;
+  const chatOpen = selection.conversation !== undefined || chat.scope !== null;
+  const summary = conversations.items?.find((c) => c.id === selection.conversation);
+  const chatScopeName =
+    chat.scope !== null ? (liveScope(chat.scope, groups, channels)?.name ?? "") : (summary?.scope.name ?? "");
+  const sources = sourcesOf(chatCitations);
 
-  // Each section's list column and main pane. Library and Syncs have their real lists; Chats and Search keep the v1
-  // sections in the main pane until tickets 04 and 05 move them.
-  const placeholder = (text: string) => <p className="mt-2 text-sm text-muted-foreground">{text}</p>;
-  const sections: Record<typeof view, { title: string; actions?: ReactNode; list: ReactNode; main: ReactNode }> = {
+  // Each section's list column and main pane.
+  const sections: Record<
+    typeof view,
+    { title: string; header?: ReactNode; actions?: ReactNode; list: ReactNode; main: ReactNode }
+  > = {
     chats: {
       title: "Chats",
-      list: placeholder("Chats are filed here from ticket 04."),
-      main: (
-        <>
-          {state.kind === "ok" && !liveUpdatesStopped && <ModelNotice models={state.health.models} />}
-          {state.kind === "ok" && <ClaudeNotice claude={state.health.claude_cli} />}
-          {openedChat}
-          <Conversations
-            groups={groups}
-            channels={channels}
-            version={conversationsVersion}
-            openId={selection.conversation ?? null}
-            onOpen={(conversation) =>
-              // A deleted scope has no id left, so the Conversation opens read-only.
-              openChat(
-                conversation.scope.id === null ? null : { kind: conversation.scope.kind, id: conversation.scope.id },
-                conversation.id,
-              )
-            }
-            onDeleted={(conversationId) => {
-              setChat((current) => (current?.conversationId === conversationId ? null : current));
-              if (selection.conversation === conversationId) select({ conversation: undefined });
-            }}
-          />
-        </>
+      header: chatOpen && (
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-normal text-muted-foreground">{chatScopeName}</span>
+          <span className="text-muted-foreground/60">/</span>
+          <span className="truncate">{chat.scope !== null ? "New chat" : summary?.title}</span>
+          {summary !== undefined && (
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              {modelLabel(summary.model)}
+            </Badge>
+          )}
+        </span>
+      ),
+      actions: <NewChatMenu groups={groups} channels={channels} onNewChat={newChat} />,
+      list: (
+        <Folders
+          conversations={conversations.items}
+          error={conversations.error}
+          groups={groups}
+          channels={channels}
+          selectedId={selection.conversation ?? null}
+          reload={conversations.reload}
+          onOpen={openConversation}
+          onNewChat={newChat}
+          onDeleted={(conversationId) => {
+            if (selection.conversation === conversationId) closeChat();
+          }}
+        />
+      ),
+      main: chatOpen ? (
+        <ConversationView
+          key={chat.opening}
+          conversationId={selection.conversation ?? null}
+          scope={chat.scope}
+          draft={chat.draft}
+          groups={groups}
+          channels={channels}
+          playback={playback}
+          notices={
+            health !== null && (
+              <>
+                {!liveUpdatesStopped && <ModelNotice models={health.models} />}
+                <ClaudeNotice claude={health.claude_cli} />
+              </>
+            )
+          }
+          onChanged={(conversationId) => {
+            // A chat replaced mid-answer still finishes its turn; it mustn't retarget the chat now open.
+            if (chat.opening === openings.current) select({ conversation: conversationId });
+            void conversations.reload();
+          }}
+          onCitations={setChatCitations}
+          onEditGroup={(groupId) => {
+            changeView("library");
+            select({ group: groupId, channel: undefined, tab: "groups" });
+          }}
+        />
+      ) : (
+        <div className="mx-auto max-w-3xl px-6 py-6">
+          <p className="text-sm text-muted-foreground">
+            {conversations.items?.length === 0
+              ? "No chats yet. Start one with + on a group or channel, or from its page in the Library."
+              : "Pick a chat, or start a new one with + on a group or channel."}
+          </p>
+        </div>
       ),
     },
     search: {
       title: "Search",
-      list: placeholder("The search form moves here in ticket 05."),
-      main: <Search channels={channels} groups={groups} onAsk={(scope, draft) => openChat(scope, null, draft)} />,
+      list: (
+        <SearchForm
+          search={search}
+          channels={channels}
+          groups={groups}
+          focusRequest={focusSearch}
+          onFocused={clearFocusSearch}
+          onSearch={() => {
+            // A new search replaces the results the player was opened from.
+            playback.close();
+            setListChoices((n) => n + 1);
+          }}
+        />
+      ),
+      main: (
+        <>
+          {health !== null && !liveUpdatesStopped && <ModelNotice models={health.models} />}
+          <SearchResults search={search} groups={groups} playback={playback} onAsk={newChat} />
+        </>
+      ),
     },
     library: {
       title: "Library",
@@ -281,7 +336,7 @@ export function App() {
             select={select}
             reloadChannels={reloadChannels}
             reloadGroups={reloadGroups}
-            onNewChat={(scope) => openChat(scope, null)}
+            onNewChat={newChat}
           />
           {library.dialogs}
         </>
@@ -313,50 +368,93 @@ export function App() {
       {section.list}
     </ListColumn>
   );
-  const inspectorBody = inspected[view];
+  const inspectorTitle = inspected[view];
 
   return (
     <div className="flex h-screen">
       <Rail
         view={view}
-        onView={setView}
+        onView={changeView}
         syncs={syncs}
         models={state.kind === "ok" ? state.health.models : null}
         claude={state.kind === "ok" ? state.health.claude_cli : null}
         serverError={serverError}
         onShowHealth={() => setHealthOpen(true)}
       />
-      <div className="hidden h-full lg:flex">{listColumn}</div>
+      {wide && <div className="flex h-full">{listColumn}</div>}
       <main className="flex min-w-0 flex-1 flex-col">
         <MainHeader
-          title={section.title}
-          list={{ key: `${view}:${JSON.stringify(selection)}`, title: section.title, content: listColumn }}
+          title={section.header || section.title}
+          list={
+            wide
+              ? undefined
+              : {
+                  key: `${view}:${JSON.stringify(selection)}:${chat.opening}:${listChoices}`,
+                  title: section.title,
+                  content: listColumn,
+                }
+          }
           right={
-            inspectorBody !== undefined && (
+            inspectorTitle !== undefined && (
               <Button
                 variant="ghost"
-                size="icon"
-                aria-label={inspector.open ? "Hide sources" : "Show sources"}
+                size="sm"
+                className="text-muted-foreground"
+                aria-label={inspector.open ? `Hide ${inspectorTitle.toLowerCase()}` : `Show ${inspectorTitle.toLowerCase()}`}
                 aria-pressed={inspector.open}
-                onClick={inspector.toggle}
+                onClick={() => {
+                  // With no panel the card is gone, so what it was playing stops unless it is playing large.
+                  if (inspector.open && !playback.large) playback.close();
+                  inspector.toggle();
+                }}
               >
-                <PanelRight />
+                <PanelRight /> {inspectorTitle}
               </Button>
             )
           }
         />
-        <div className="min-h-0 flex-1 overflow-y-auto pb-14 md:pb-0">
-          <div className="mx-auto max-w-3xl space-y-8 px-6 py-5">
-            <ServerNotice state={state} liveUpdatesStopped={liveUpdatesStopped} />
-            {section.main}
-          </div>
+        {/* Chats fills the pane itself, so its composer stays at the bottom. It stays mounted while another section
+            shows, so an answer keeps streaming into it and its draft survives. */}
+        <div className={`min-h-0 flex-1 flex-col pb-14 md:pb-0 ${view === "chats" ? "flex" : "hidden"}`}>
+          {(state.kind === "error" || liveUpdatesStopped) && (
+            <div className="mx-auto w-full max-w-3xl px-6 pt-5">
+              <ServerNotice state={state} liveUpdatesStopped={liveUpdatesStopped} />
+            </div>
+          )}
+          {sections.chats.main}
         </div>
+        {view !== "chats" && (
+          <div className="min-h-0 flex-1 overflow-y-auto pb-14 md:pb-0">
+            <div className="mx-auto max-w-3xl space-y-8 px-6 py-5">
+              <ServerNotice state={state} liveUpdatesStopped={liveUpdatesStopped} />
+              {section.main}
+            </div>
+          </div>
+        )}
       </main>
-      {inspectorBody !== undefined && inspector.open && (
-        <Inspector title="Sources" onHide={inspector.hide}>
-          <p className="text-sm text-muted-foreground">{inspectorBody}</p>
+      {inspectorTitle !== undefined && inspector.open && (
+        <Inspector
+          title={inspectorTitle}
+          count={view === "chats" && chatOpen ? sources.reduce((n, group) => n + group.citations.length, 0) : undefined}
+          onHide={() => {
+            if (!playback.large) playback.close();
+            inspector.hide();
+          }}
+        >
+          <PlayerCard
+            controls={playback}
+            empty={
+              view === "chats"
+                ? "Pick a source, or a link in an answer, and it plays here."
+                : "Play a result and it plays here."
+            }
+          />
+          {view === "chats" && chatOpen && (
+            <Sources citations={chatCitations} playingKey={playback.playingKey} onPlay={playback.play} />
+          )}
         </Inspector>
       )}
+      <Lightbox controls={playback} />
       <Dialog open={healthOpen} onOpenChange={setHealthOpen}>
         <DialogContent>
           <DialogHeader>

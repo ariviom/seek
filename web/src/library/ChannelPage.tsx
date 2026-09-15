@@ -150,6 +150,7 @@ export function ChannelPage({
         title="Remove channel"
         actionLabel="Remove channel"
         open={removeOpen}
+        busy={busy}
         onOpenChange={setRemoveOpen}
         onConfirm={async () => {
           if (await act(() => api.deleteChannel(channel.id))) {

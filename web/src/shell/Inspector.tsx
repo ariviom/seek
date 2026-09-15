@@ -47,7 +47,8 @@ export function Inspector({
           <X />
         </Button>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      {/* Radix wraps the content in a `display: table` box that grows with long rows; block keeps `truncate` working. */}
+      <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
         <div className="p-3">{children}</div>
       </ScrollArea>
     </aside>

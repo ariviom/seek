@@ -17,7 +17,8 @@ export function ListColumn({
         <h2 className="truncate text-sm font-medium">{title}</h2>
         {actions}
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      {/* Radix wraps the content in a `display: table` box that grows with long rows; block keeps `truncate` working. */}
+      <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!">
         <div className="px-3 pb-4">{children}</div>
       </ScrollArea>
     </aside>

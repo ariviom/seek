@@ -104,18 +104,32 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             # The rule's legend counts the one Video the Channel published.
             await expect(main.get_by_role("img", name="1 done", exact=True)).to_be_visible()
 
-            await rail.get_by_role("button", name="Search").click()
-            search = page.get_by_role("region", name="Search")
-            await search.get_by_label("Question", exact=True).fill("plane across the grain")
+            # ⌘K goes to Search with the cursor in the question; the form lives in the list column.
+            await page.keyboard.press("ControlOrMeta+k")
+            await expect(rail.get_by_role("button", name="Search")).to_have_attribute("aria-current", "page")
+            search = page.get_by_role("complementary", name="Search")
+            question = search.get_by_label("Question", exact=True)
+            await expect(question).to_be_focused()
+            await question.fill("plane across the grain")
             await search.get_by_role("button", name="Search", exact=True).click()
             result = (
-                page.get_by_role("list", name="Results for plane across the grain")
+                main.get_by_role("list", name="Results for plane across the grain")
                 .get_by_role("listitem")
                 .filter(has_text="Flattening a Workbench")
             )
-            await result.get_by_role("link", name="Watch at 0:15").click()
+            await result.get_by_role("button", name="Play at 0:15").click()
             embed = ("www.youtube-nocookie.com", "/embed/bench-flat1")
-            assert await embedded_at(result.locator("iframe")) == (*embed, ["15"])
+            # A result plays in the inspector, titled for what it does in this section.
+            playing = page.get_by_role("complementary", name="Playing")
+            assert await embedded_at(playing.locator("iframe")) == (*embed, ["15"])
+            await playing.get_by_role("button", name="Show large").click()
+            lightbox = page.get_by_role("dialog", name="Flattening a Workbench")
+            assert await embedded_at(lightbox.locator("iframe")) == (*embed, ["15"])
+            # Two players never run: the card gives its video to the lightbox until Esc brings it back.
+            await expect(playing.locator("iframe")).to_have_count(0)
+            await page.keyboard.press("Escape")
+            await expect(lightbox).to_be_hidden()
+            await expect(playing.locator("iframe")).to_have_count(1)
 
             await rail.get_by_role("button", name="Library").click()
             await library.get_by_role("tab", name="Groups").click()
@@ -130,12 +144,19 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             await expect(member).to_be_checked()
             await main.get_by_role("button", name="New chat").click()
 
-            chat = page.get_by_role("region", name="Ask Benches")
-            await chat.get_by_label("Question for the chat").fill("How do I flatten a bench?")
-            await chat.get_by_role("button", name="Ask", exact=True).click()
-            conversation = chat.get_by_role("list", name="Conversation")
+            await expect(main.get_by_role("heading", name="New chat in Benches")).to_be_visible()
+            composer = main.get_by_role("form", name="Ask Benches")
+            await composer.get_by_label("Question for Benches").fill("How do I flatten a bench?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            conversation = main.get_by_role("list", name="Conversation")
             await conversation.get_by_role("link", name="Wright, 1:05").click()
-            assert await embedded_at(conversation.locator("iframe")) == (*embed, ["65"])
+            sources = page.get_by_role("complementary", name="Sources")
+            assert await embedded_at(sources.locator("iframe")) == (*embed, ["65"])
+            # The saved Citation is listed once in the panel, and the chat is filed under its Group.
+            await expect(sources.get_by_role("button").filter(has_text="Flattening a Workbench")).to_have_count(1)
+            chats = page.get_by_role("complementary", name="Chats")
+            await expect(chats.get_by_role("button", name=re.compile(r"^Benches"))).to_be_visible()
+            await expect(chats.get_by_role("button").filter(has_text="How do I flatten a bench?")).to_be_visible()
 
             html = page.locator("html")
             await rail.get_by_role("button", name="Theme").click()
@@ -154,7 +175,8 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             await page.reload()
             reloaded = parse_qs(urlsplit(page.url).query)
             assert reloaded["view"] == ["chats"] and reloaded["conversation"] == conversation_id
-            await expect(page.get_by_role("region", name="Ask Benches")).to_be_visible()
+            await expect(main.get_by_role("list", name="Conversation")).to_contain_text("Plane across the grain first")
+            await expect(main.get_by_role("form", name="Ask Benches")).to_be_visible()
             await expect(rail.get_by_role("button", name="Chats")).to_have_attribute("aria-current", "page")
 
     assert errors == []
