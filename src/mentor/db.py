@@ -274,6 +274,12 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     -- Videos that reached done or failed during the Sync, so its rate and time remaining can be read off it.
     ALTER TABLE syncs ADD COLUMN completed_videos INTEGER NOT NULL DEFAULT 0;
     """,
+    """
+    -- Optional read-only resources a web chat may consult alongside its Channel Transcripts. They are fixed when
+    -- the Conversation starts so a resumed Claude session keeps the same capabilities and working directory.
+    ALTER TABLE conversations ADD COLUMN workspace_path TEXT;
+    ALTER TABLE conversations ADD COLUMN web_access INTEGER NOT NULL DEFAULT 0 CHECK (web_access IN (0, 1));
+    """,
 ]
 
 

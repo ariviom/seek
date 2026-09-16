@@ -16,13 +16,17 @@ from claude_agent_sdk import (
     Message,
     ResultMessage,
     StreamEvent,
+    HookContext,
+    HookInput,
+    HookJSONOutput,
+    HookMatcher,
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
     get_session_info,
     query,
 )
-from claude_agent_sdk.types import McpSdkServerConfig
+from claude_agent_sdk.types import HookEvent, McpSdkServerConfig
 
 from mentor.ports import (
     ChatDone,
@@ -49,12 +53,47 @@ STATUS_TIMEOUT_SECONDS = 10
 STATUS_CACHE_SECONDS = 30
 
 
-def chat_options(request: ChatRequest, working_directory: Path, cli_path: Path | None) -> ClaudeAgentOptions:
-    """Options that leave the model nothing but the request's tools.
+def _project_guard(root: Path) -> HookMatcher:
+    """Deny file tools whose explicit path leaves the selected project, including through a symlink."""
+    root = root.resolve()
 
-    allowed_tools alone only skips permission prompts, so every other way in is closed too: no built-in tools, no MCP
-    servers but ours, no settings files (and with them no hooks, plugins, or CLAUDE.md), no skills or agents, anything
-    not pre-approved denied, and an empty working directory.
+    async def guard(tool: HookInput, _tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
+        if tool["hook_event_name"] != "PreToolUse":
+            return {}
+        name = tool["tool_name"]
+        arguments = tool["tool_input"]
+        candidates: list[Path] = []
+        for key in ("file_path", "path"):
+            value = arguments.get(key)
+            if isinstance(value, str) and value:
+                candidate = Path(value)
+                candidates.append(candidate if candidate.is_absolute() else root / candidate)
+        pattern = arguments.get("pattern")
+        if name == "Glob" and isinstance(pattern, str):
+            pattern_path = Path(pattern)
+            if pattern_path.is_absolute():
+                candidates.append(pattern_path)
+            elif ".." in pattern_path.parts:
+                candidates.append(root.parent)
+        outside = next((path for path in candidates if not path.resolve().is_relative_to(root)), None)
+        if outside is None:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": f"This chat may read only the selected project directory: {root}",
+            }
+        }
+
+    return HookMatcher(matcher="Read|Glob|Grep", hooks=[guard])
+
+
+def chat_options(request: ChatRequest, working_directory: Path, cli_path: Path | None) -> ClaudeAgentOptions:
+    """Options that expose Mentor plus only the read-only resources selected for this Conversation.
+
+    Settings, skills, plugins, agents, and unselected MCP servers stay off. A project becomes the working directory,
+    but a hook also guards every file-tool call so absolute paths and symlinks cannot leave it.
     """
     server: McpSdkServerConfig = {
         "type": "sdk",
@@ -62,19 +101,28 @@ def chat_options(request: ChatRequest, working_directory: Path, cli_path: Path |
         # The low-level server behind MCPServer; mcp's own in-memory client reaches it the same way.
         "instance": request.tools._lowlevel_server,  # noqa: SLF001
     }
+    builtins: list[str] = []
+    hooks: dict[HookEvent, list[HookMatcher]] | None = None
+    cwd = working_directory
+    if request.workspace is not None:
+        cwd = request.workspace.resolve()
+        builtins.extend(("Read", "Glob", "Grep"))
+        hooks = {"PreToolUse": [_project_guard(cwd)]}
+    if request.web_access:
+        builtins.extend(("WebFetch", "WebSearch"))
     return ClaudeAgentOptions(
-        tools=[],
+        tools=builtins,
         mcp_servers={TOOL_SERVER_NAME: server},
         strict_mcp_config=True,
-        allowed_tools=[f"mcp__{TOOL_SERVER_NAME}__{name}" for name in request.tool_names],
+        allowed_tools=[f"mcp__{TOOL_SERVER_NAME}__{name}" for name in request.tool_names] + builtins,
         disallowed_tools=list(MCP_RESOURCE_TOOLS),
         permission_mode="dontAsk",
         setting_sources=[],
         skills=[],
         plugins=[],
         agents=None,
-        hooks=None,
-        cwd=working_directory,
+        hooks=hooks,
+        cwd=cwd,
         cli_path=cli_path,
         system_prompt=request.system_prompt,
         model=request.model,
@@ -165,8 +213,9 @@ class ClaudeChatEngine:
             yield ChatFailed(self._missing())
             return
         self._working_directory.mkdir(parents=True, exist_ok=True)
+        session_directory = request.workspace.resolve() if request.workspace is not None else self._working_directory
         if request.resume_session_id is not None and not await asyncio.to_thread(
-            get_session_info, request.resume_session_id, str(self._working_directory)
+            get_session_info, request.resume_session_id, str(session_directory)
         ):
             # Checked up front: the CLI's own refusal is an error message whose wording may change.
             yield ChatFailed(f"Claude session {request.resume_session_id} no longer exists", session_lost=True)

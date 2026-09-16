@@ -24,10 +24,19 @@ class ConversationScope:
 
 
 @dataclass(frozen=True)
+class ConversationContext:
+    """Read-only resources Claude may consult alongside the Conversation's Channel Transcripts."""
+
+    workspace: str | None
+    web_access: bool
+
+
+@dataclass(frozen=True)
 class Conversation:
     id: int
     scope: ConversationScope
     model: str | None
+    context: ConversationContext
     created_at: str
 
 
@@ -86,13 +95,16 @@ class Turn:
     scope_name: str
     channel_names: list[str]
     model: str | None
+    context: ConversationContext
     claude_session_id: str | None
     history: list[PastMessage]
 
 
 TITLE_LENGTH = 80
 
-_CONVERSATION_COLUMNS = "id, group_id, channel_id, scope_kind, scope_name, model, created_at"
+_CONVERSATION_COLUMNS = (
+    "id, group_id, channel_id, scope_kind, scope_name, model, workspace_path, web_access, created_at"
+)
 
 
 def _message(row: sqlite3.Row) -> Message:
@@ -113,7 +125,13 @@ def _scope(row: sqlite3.Row) -> ConversationScope:
 
 
 def _conversation(row: sqlite3.Row) -> Conversation:
-    return Conversation(id=row["id"], scope=_scope(row), model=row["model"], created_at=row["created_at"])
+    return Conversation(
+        id=row["id"],
+        scope=_scope(row),
+        model=row["model"],
+        context=ConversationContext(workspace=row["workspace_path"], web_access=bool(row["web_access"])),
+        created_at=row["created_at"],
+    )
 
 
 def _title(question: str | None) -> str:
@@ -144,6 +162,7 @@ def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...])
             id=row["id"],
             scope=_scope(row),
             model=row["model"],
+            context=ConversationContext(workspace=row["workspace_path"], web_access=bool(row["web_access"])),
             created_at=row["created_at"],
             title=row["title"] or _title(row["first_question"]),
             message_count=row["message_count"],
@@ -202,13 +221,17 @@ def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
     return str(channel["name"])
 
 
-def create_conversation(conn: sqlite3.Connection, scope: Scope, model: str | None) -> Conversation:
+def create_conversation(
+    conn: sqlite3.Connection, scope: Scope, model: str | None, context: ConversationContext | None = None
+) -> Conversation:
+    context = context or ConversationContext(workspace=None, web_access=False)
     with transaction(conn):
         name = _answerable_scope_name(conn, scope)
         row = conn.execute(
             f"""
-            INSERT INTO conversations (group_id, channel_id, scope_kind, scope_name, model, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO conversations
+                (group_id, channel_id, scope_kind, scope_name, model, workspace_path, web_access, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING {_CONVERSATION_COLUMNS}
             """,
             (
@@ -217,6 +240,8 @@ def create_conversation(conn: sqlite3.Connection, scope: Scope, model: str | Non
                 scope.kind,
                 name,
                 model,
+                context.workspace,
+                context.web_access,
                 now_iso(),
             ),
         ).fetchone()
@@ -254,6 +279,7 @@ def begin_turn(conn: sqlite3.Connection, conversation_id: int, message: str) -> 
             scope_name=scope.name,
             channel_names=[channel["name"] for channel in channels],
             model=row["model"],
+            context=ConversationContext(workspace=row["workspace_path"], web_access=bool(row["web_access"])),
             claude_session_id=row["claude_session_id"],
             history=history,
         )

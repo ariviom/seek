@@ -161,6 +161,10 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
 
             await expect(main.get_by_role("heading", name="New chat in Benches")).to_be_visible()
             composer = main.get_by_role("form", name="Ask Benches")
+            await composer.get_by_role("button", name="Add chat context").click()
+            await page.get_by_label("Project directory").fill(str(tmp_path))
+            await page.get_by_role("switch", name="Browse the web").click()
+            await page.keyboard.press("Escape")
             await composer.get_by_label("Question for Benches").fill("How do I flatten a bench?")
             await composer.get_by_role("button", name="Ask", exact=True).click()
             conversation = main.get_by_role("list", name="Conversation")
@@ -172,6 +176,7 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             chats = page.get_by_role("complementary", name="Chats")
             await expect(chats.get_by_role("button", name=re.compile(r"^Benches"))).to_be_visible()
             await expect(chats.get_by_role("button").filter(has_text="How do I flatten a bench?")).to_be_visible()
+            await expect(composer.get_by_role("button", name=re.compile(r"^Chat context:"))).to_be_visible()
 
             html = page.locator("html")
             await rail.get_by_role("button", name="Theme").click()
@@ -195,3 +200,5 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             await expect(rail.get_by_role("button", name="Chats")).to_have_attribute("aria-current", "page")
 
     assert errors == []
+    [chat_request] = engine.requests
+    assert (chat_request.workspace, chat_request.web_access) == (tmp_path.resolve(), True)

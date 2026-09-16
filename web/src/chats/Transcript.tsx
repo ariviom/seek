@@ -1,4 +1,4 @@
-import { AlertCircle, Loader2, Search } from "lucide-react";
+import { AlertCircle, FileSearch, Globe2, Loader2, Search } from "lucide-react";
 import type { ChatMessage, Citation } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -65,10 +65,21 @@ const toolLabels: Record<string, (args: Record<string, unknown>) => string> = {
   get_video: (args) => `Looked up Video ${String(args.video_id ?? "")}`,
   list_groups: () => "Listed the Groups",
   list_channels: () => "Listed the Channels",
+  Read: (args) => `Read ${String(args.file_path ?? "a project file")}`,
+  Glob: () => "Listed project files",
+  Grep: (args) => `Searched project for “${String(args.pattern ?? "")}”`,
+  WebFetch: (args) => `Opened ${String(args.url ?? "a web page")}`,
+  WebSearch: (args) => `Searched the web for “${String(args.query ?? "")}”`,
 };
 
 function toolLabel(tool: ToolActivity): string {
   return toolLabels[tool.name]?.(tool.arguments) ?? tool.name;
+}
+
+function ToolIcon({ name }: { name: string }) {
+  if (name === "Read" || name === "Glob" || name === "Grep") return <FileSearch aria-hidden />;
+  if (name === "WebFetch" || name === "WebSearch") return <Globe2 aria-hidden />;
+  return <Search aria-hidden />;
 }
 
 export function Transcript({
@@ -122,7 +133,7 @@ function AnswerView({
                 ) : tool.state === "error" ? (
                   <AlertCircle aria-hidden />
                 ) : (
-                  <Search aria-hidden />
+                  <ToolIcon name={tool.name} />
                 )}
                 {toolLabel(tool)}
                 {tool.state === "error" && " (failed)"}

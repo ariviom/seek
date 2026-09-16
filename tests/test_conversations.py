@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 from harness import (
@@ -70,6 +71,7 @@ async def test_conversations_are_listed_newest_first_by_scope_and_reopen_with_th
         "id": older["id"],
         "scope": {"kind": "group", "id": woodworking["id"], "name": "Woodworking"},
         "model": "opus",
+        "context": {"workspace": None, "web_access": False},
         "created_at": "",
         "title": "How do I flatten a workbench top that has cupped badly over the winter in my da…",
         "message_count": 4,
@@ -106,6 +108,7 @@ async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_w
         "id": started["id"],
         "scope": {"kind": "channel", "id": wright["id"], "name": "Wood By Wright"},
         "model": "haiku",
+        "context": {"workspace": None, "web_access": False},
         "created_at": "",
     }
     assert (not_indexed.status_code, not_indexed.json()) == (
@@ -117,6 +120,43 @@ async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_w
         {"detail": "The Group 'Empty' has no Channels yet, so nothing can answer"},
     )
     assert unknown.status_code == 404
+
+
+async def test_a_conversation_keeps_its_read_only_project_and_web_context(
+    client: httpx.AsyncClient, engine: FakeChatEngine, tmp_path: Path
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    group = await add_group(client, "Woodworking", await add_channel(client, "@woodbywright"))
+
+    conversation = await start_conversation(
+        client, group["id"], workspace=str(project / ".." / "project"), web_access=True
+    )
+    await send(client, conversation["id"], "Apply their advice here.")
+    reopened = await get_conversation(client, conversation["id"])
+
+    assert conversation["context"] == reopened["context"] == {
+        "workspace": str(project.resolve()),
+        "web_access": True,
+    }
+    [request] = engine.requests
+    assert (request.workspace, request.web_access) == (project.resolve(), True)
+    assert str(project.resolve()) in request.system_prompt
+    assert "public web pages" in request.system_prompt
+
+
+async def test_a_project_context_must_be_an_existing_absolute_directory(client: httpx.AsyncClient) -> None:
+    group = await add_group(client, "Woodworking", await add_channel(client, "@woodbywright"))
+
+    relative = await client.post(
+        f"/api/groups/{group['id']}/conversations", json={"workspace": "project", "web_access": False}
+    )
+    missing = await client.post(
+        f"/api/groups/{group['id']}/conversations", json={"workspace": "/no/such/mentor-project"}
+    )
+
+    assert relative.status_code == 422 and "absolute" in relative.json()["detail"]
+    assert missing.status_code == 422 and "cannot be opened" in missing.json()["detail"]
 
 
 async def test_conversations_and_their_citations_outlive_their_channel_and_group_as_read_only(

@@ -29,7 +29,8 @@ A run of the ingestion pipeline for one Channel. Discovers new Videos and advanc
 Where a Video sits in ingestion: discovered, transcript fetched, segmented, embedded, done, or failed with a reason. Failed Videos can be retried. A Video can also be excluded with a reason (too short, or outside the Channel's filters); excluded Videos are not processed and are not failures.
 
 **Conversation**
-A saved chat thread scoped to exactly one Group or one Channel; a Channel alone works like a group of one. Resumable.
+A saved chat thread scoped to exactly one Group or one Channel; a Channel alone works like a group of one. It may
+also keep read-only access to a selected local project, the public web, or both. Resumable.
 
 ## Relationships
 

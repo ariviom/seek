@@ -128,10 +128,12 @@ export type Expansion = {
 export type ScopeKind = "group" | "channel";
 export type Scope = { kind: ScopeKind; id: number };
 export type ConversationScope = { kind: ScopeKind; id: number | null; name: string };
+export type ChatContext = { workspace: string | null; web_access: boolean };
 export type Conversation = {
   id: number;
   scope: ConversationScope;
   model: string | null;
+  context: ChatContext;
   created_at: string;
 };
 export type Citation = {
@@ -230,8 +232,11 @@ export const api = {
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
-  createConversation: (scope: Scope, model: string | null) =>
-    request<Conversation>(`${scope.kind}s/${scope.id}/conversations`, { method: "POST", body: { model } }),
+  createConversation: (scope: Scope, model: string | null, context: ChatContext) =>
+    request<Conversation>(`${scope.kind}s/${scope.id}/conversations`, {
+      method: "POST",
+      body: { model, ...context },
+    }),
   // Every Conversation, or one Group's or Channel's.
   listConversations: (scope: Scope | null) =>
     request<ConversationSummary[]>(

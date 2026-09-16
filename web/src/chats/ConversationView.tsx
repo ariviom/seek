@@ -53,6 +53,8 @@ export function ConversationView({
   const [conversationId, setConversationId] = useState(openedId);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [model, setModel] = useState<string | null>(null);
+  const [workspace, setWorkspace] = useState("");
+  const [webAccess, setWebAccess] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [draft, setDraft] = useState(initialDraft);
   const [answering, setAnswering] = useState(false);
@@ -71,6 +73,8 @@ export function ConversationView({
         if (!current) return;
         setDetail(opened);
         setModel(opened.model);
+        setWorkspace(opened.context.workspace ?? "");
+        setWebAccess(opened.context.web_access);
         setEntries(opened.messages.map(entryOf));
       })
       .catch((e: unknown) => current && setError(errorText(e)));
@@ -172,7 +176,14 @@ export function ConversationView({
     let id = conversationId;
     try {
       if (id === null) {
-        id = (await api.createConversation({ kind: live.kind, id: live.id }, model)).id;
+        const created = await api.createConversation(
+          { kind: live.kind, id: live.id },
+          model,
+          { workspace: workspace.trim() || null, web_access: webAccess },
+        );
+        id = created.id;
+        setWorkspace(created.context.workspace ?? "");
+        setWebAccess(created.context.web_access);
         setConversationId(id);
       }
       setEntries((current) => [
@@ -266,6 +277,11 @@ export function ConversationView({
           model={model}
           onModel={setModel}
           modelLocked={!isNew}
+          workspace={workspace}
+          onWorkspace={setWorkspace}
+          webAccess={webAccess}
+          onWebAccess={setWebAccess}
+          contextLocked={!isNew}
           answering={answering}
           stopping={stopping}
           canStop={conversationId !== null}

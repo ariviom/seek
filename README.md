@@ -107,7 +107,7 @@ Your data lives in `~/.local/share/mentor/` (or `$XDG_DATA_HOME/mentor`, or the 
 
 - `mentor.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Transcripts, Segments, vectors,
   and Conversations.
-- `chat/` is the empty working directory the web chat runs the Claude CLI in.
+- `chat/` is the empty working directory the web chat runs the Claude CLI in when no project directory is attached.
 
 Backup is a copy of `mentor.db`. The database uses WAL mode, so recent changes can sit in `mentor.db-wal` beside it.
 Either stop the service and copy both files, or take a consistent single-file copy while it runs:
@@ -258,6 +258,13 @@ saying what to do:
 | `logged_out` | Run `claude auth login` |
 | `api_key` | Claude Code would bill an API key instead of your subscription. The message names where the key comes from, for example an `apiKeyHelper` in Claude Code's settings; remove it there |
 | `unknown` | `claude auth status` failed, hung, or answered unexpectedly; the message says which |
+
+The **Add context** control beside the chat box can give a new Conversation read-only access to one local project
+directory, the public web, or both. Context is fixed after the first question so a resumed Claude session keeps the
+same working directory and capabilities. Project access exposes only file reading, listing, and search within the
+selected directory; web access exposes Claude Code's web search and fetch tools. User settings, plugins, skills, other
+MCP servers, file editing, and shell commands stay disabled. Channel-derived advice still needs Mentor's timestamped
+citations, while observations from a project or web page are identified separately.
 
 ## Troubleshooting
 

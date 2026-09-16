@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status
@@ -10,7 +11,7 @@ from pydantic import BaseModel, StringConstraints
 
 from mentor import conversations
 from mentor.chat import Chat
-from mentor.conversations import Conversation, ConversationDetail, ConversationSummary
+from mentor.conversations import Conversation, ConversationContext, ConversationDetail, ConversationSummary
 from mentor.db import Database
 from mentor.errors import Conflict
 from mentor.events_api import SSE_HEADERS
@@ -21,6 +22,23 @@ class NewConversation(BaseModel):
     # A Claude model name or alias, e.g. claude-sonnet-5 or opus. Starting with a letter or digit keeps it from
     # reading as a CLI flag.
     model: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}$")] | None = None
+    workspace: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4096)] | None = None
+    web_access: bool = False
+
+
+def _context(body: NewConversation) -> ConversationContext:
+    if body.workspace is None:
+        return ConversationContext(workspace=None, web_access=body.web_access)
+    given = Path(body.workspace).expanduser()
+    if not given.is_absolute():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The project directory must be an absolute path")
+    try:
+        workspace = given.resolve(strict=True)
+    except (OSError, RuntimeError) as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"The project directory cannot be opened: {e}") from e
+    if not workspace.is_dir():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The project directory must name a directory")
+    return ConversationContext(workspace=str(workspace), web_access=body.web_access)
 
 
 class NewMessage(BaseModel):
@@ -37,12 +55,14 @@ def chat_router(database: Database, chat: Chat, keepalive_seconds: float) -> API
     @router.post("/groups/{group_id}/conversations", status_code=status.HTTP_201_CREATED)
     async def create_group_conversation(group_id: int, body: NewConversation) -> Conversation:
         scope = Scope("group", group_id)
-        return await database.run(lambda conn: conversations.create_conversation(conn, scope, body.model))
+        context = _context(body)
+        return await database.run(lambda conn: conversations.create_conversation(conn, scope, body.model, context))
 
     @router.post("/channels/{channel_id}/conversations", status_code=status.HTTP_201_CREATED)
     async def create_channel_conversation(channel_id: int, body: NewConversation) -> Conversation:
         scope = Scope("channel", channel_id)
-        return await database.run(lambda conn: conversations.create_conversation(conn, scope, body.model))
+        context = _context(body)
+        return await database.run(lambda conn: conversations.create_conversation(conn, scope, body.model, context))
 
     @router.get("/conversations")
     async def list_conversations(

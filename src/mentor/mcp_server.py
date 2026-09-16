@@ -31,26 +31,38 @@ GROUNDED_ADVISOR = (
     "gap."
 )
 
+# The public MCP server and resource-enabled web chats may sit beside files and web tools. Its contract is to keep
+# claims learned from Mentor attributable without pretending those are the agent's only possible observations.
+RESOURCE_ADVISOR = (
+    "Answer only from Segments when stating what these Channels teach; never attribute general knowledge or another "
+    "resource to them. Cite every Channel-derived claim with its Channel, Video title, and timestamp link. "
+    "Name the Channel behind each piece of advice. When Channels disagree, say so and give each view. When the only "
+    "support is old next to the Channels' newest Videos, say so. When a question is not covered by the Channels, say "
+    "so clearly. You may use other resources the client provides, but identify observations from them separately."
+)
+
 INSTRUCTIONS = f"""\
 This server searches the Transcripts of YouTube Channels the user trusts, which can be organised into Groups. Each \
 Video's Transcript is cut into timestamped Segments.
 
-{GROUNDED_ADVISOR}
+{RESOURCE_ADVISOR}
 
 Start with search (after list_groups or list_channels when one should scope it), use expand when a Segment needs \
 more context, get_video for a Video's chapters and description, and sql only for counting or listing questions."""
 
-_SCOPE_INSTRUCTIONS = f"""\
+_SCOPE_INSTRUCTIONS = """\
 This server searches the Transcripts of {{consulted}} the user trusts. Each Video's Transcript is cut into \
 timestamped Segments.
 
-{GROUNDED_ADVISOR}
+{advisor}
 
 Start with search, use expand when a Segment needs more context, and get_video for a Video's chapters and \
 description."""
 
-GROUP_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted="one Group of YouTube Channels")
-CHANNEL_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted="one YouTube Channel")
+GROUP_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(
+    consulted="one Group of YouTube Channels", advisor=GROUNDED_ADVISOR
+)
+CHANNEL_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted="one YouTube Channel", advisor=GROUNDED_ADVISOR)
 
 # sql reads every Channel's data, so a chat bound to a scope goes without it; list_groups only means something for
 # a Group.
@@ -70,8 +82,8 @@ _SEARCH_RESULTS = (
 type ExpandSeconds = Annotated[int, Field(ge=0, le=MAX_EXPAND_SECONDS)]
 
 
-def _describe(text: str) -> str:
-    return f"{text}\n\n{GROUNDED_ADVISOR}"
+def _describe(text: str, advisor: str) -> str:
+    return f"{text}\n\n{advisor}"
 
 
 def _validation_message(error: ValidationError) -> str:
@@ -98,18 +110,33 @@ def bound_tool_names(scope: Scope) -> tuple[str, ...]:
 
 def create_mcp_server(database: Database, search: Search, sql_time_limit_seconds: float) -> MCPServer:
     """Every tool, over every Channel."""
-    return _server(database, search, None, sql_time_limit_seconds)
+    return _server(database, search, None, sql_time_limit_seconds, RESOURCE_ADVISOR)
 
 
-def create_scope_server(database: Database, search: Search, scope: Scope) -> MCPServer:
+def create_scope_server(
+    database: Database, search: Search, scope: Scope, *, additional_resources: bool = False
+) -> MCPServer:
     """The tools a chat with one Group or Channel may use: search covers only the scope, Segments and Videos outside
     it aren't found, and there is no sql."""
-    return _server(database, search, scope, None)
+    advisor = RESOURCE_ADVISOR if additional_resources else GROUNDED_ADVISOR
+    return _server(database, search, scope, None, advisor)
 
 
 # Given a scope, sql_time_limit_seconds is None: sql would read every Channel.
-def _server(database: Database, search: Search, scope: Scope | None, sql_time_limit_seconds: float | None) -> MCPServer:
-    instructions = INSTRUCTIONS if scope is None else _BOUND[scope.kind][0]
+def _server(
+    database: Database,
+    search: Search,
+    scope: Scope | None,
+    sql_time_limit_seconds: float | None,
+    advisor: str,
+) -> MCPServer:
+    if scope is None:
+        instructions = INSTRUCTIONS
+    elif advisor == GROUNDED_ADVISOR:
+        instructions = _BOUND[scope.kind][0]
+    else:
+        consulted = "one Group of YouTube Channels" if scope.kind == "group" else "one YouTube Channel"
+        instructions = _SCOPE_INSTRUCTIONS.format(consulted=consulted, advisor=advisor)
     # The SDK configures root logging at this level; INFO would log every library's chatter.
     server = MCPServer("mentor", instructions=instructions, log_level="WARNING")
 
@@ -119,11 +146,14 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
         @server.tool(
             name="list_groups",
             description=_describe(
-                "The Groups, each with its Channels and how many searchable Videos each has. Scope search with a "
-                "Group's id or name, or with Channel ids."
-                if scope is None
-                else "The Group this Conversation consults, with its Channels and how many searchable Videos each "
-                "has."
+                (
+                    "The Groups, each with its Channels and how many searchable Videos each has. Scope search with a "
+                    "Group's id or name, or with Channel ids."
+                    if scope is None
+                    else "The Group this Conversation consults, with its Channels and how many searchable Videos "
+                    "each has."
+                ),
+                advisor,
             ),
         )
         async def list_groups() -> list[GroupSummary]:
@@ -132,9 +162,12 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
     @server.tool(
         name="list_channels",
         description=_describe(
-            "Every indexed Channel, with how many searchable Videos each has. Scope search with Channel ids."
-            if scope is None
-            else "The Channels this Conversation consults, with how many searchable Videos each has."
+            (
+                "Every indexed Channel, with how many searchable Videos each has. Scope search with Channel ids."
+                if scope is None
+                else "The Channels this Conversation consults, with how many searchable Videos each has."
+            ),
+            advisor,
         ),
     )
     async def list_channels() -> list[ChannelSummary]:
@@ -148,7 +181,8 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
                 "Find the Transcript Segments that best answer a question, matched by meaning and by exact words, "
                 "reranked, with newer Videos preferred on near-ties. Scope it with at most one of group (a number is "
                 "a Group id, a string is a Group name) or channels (Channel ids); give neither to search every "
-                "Channel. " + _SEARCH_RESULTS
+                "Channel. " + _SEARCH_RESULTS,
+                advisor,
             ),
         )
         async def search_segments(
@@ -178,7 +212,8 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
             description=_describe(
                 f"Find the Transcript Segments of this Conversation's {SCOPE_NOUN[bound.kind]} that best answer a "
                 "question, matched by meaning and by exact words, reranked, with newer Videos preferred on "
-                "near-ties. " + _SEARCH_RESULTS
+                "near-ties. " + _SEARCH_RESULTS,
+                advisor,
             ),
         )
         async def search_scope(
@@ -193,7 +228,8 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
             "The Transcript around a Segment from search, as timed lines: from before_seconds before the Segment "
             f"starts to after_seconds after it ends (each 0 to {MAX_EXPAND_SECONDS}, default "
             f"{DEFAULT_EXPAND_SECONDS}). url opens the Segment's start; to cite another line, set its t parameter to "
-            "that line's start_seconds in whole seconds."
+            "that line's start_seconds in whole seconds.",
+            advisor,
         ),
     )
     async def expand(
@@ -210,7 +246,8 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
         name="get_video",
         description=_describe(
             "A Video's title, Channel, publish date, duration, chapters (start and end in seconds), description, and "
-            "url, by the video_id a search result or expand gives."
+            "url, by the video_id a search result or expand gives.",
+            advisor,
         ),
     )
     async def get_video(video_id: int) -> VideoInfo:
@@ -229,7 +266,8 @@ def _server(database: Database, search: Search, scope: Scope | None, sql_time_li
                 "segments_fts (FTS5 over segments.context and segments.text); read sqlite_master for the full "
                 f"schema. Returns at most {ROW_LIMIT} rows within {time_limit:g} seconds; text over "
                 f"{TEXT_LIMIT} characters is cut short, blobs come back as placeholders, and rows stop early for a "
-                "very large result."
+                "very large result.",
+                advisor,
             ),
         )
         async def sql(query: str) -> QueryResult:

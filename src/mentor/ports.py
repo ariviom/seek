@@ -6,6 +6,7 @@ TranscriptSource, Embedder, and Reranker methods are blocking; ChatEngine stream
 from collections.abc import AsyncGenerator, Collection, Sequence
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Literal, Protocol
 
 from mcp.server.mcpserver import MCPServer
@@ -188,6 +189,9 @@ class ChatRequest:
     resume_session_id: str | None
     # The Conversation's earlier messages, oldest first. The engine replays them when there is no session to resume.
     history: Sequence[PastMessage]
+    # Optional read-only resources selected when the Conversation was created.
+    workspace: Path | None
+    web_access: bool
     # The only tools the model may use: served in-process under the name "mentor", already bound to one Group or Channel.
     tools: MCPServer
     tool_names: Sequence[str]

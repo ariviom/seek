@@ -328,15 +328,33 @@ async def woodworkers(client: httpx.AsyncClient, transcripts: FakeTranscriptSour
     return group, wright, rex
 
 
-async def start_conversation(client: httpx.AsyncClient, group_id: int, model: str | None = None) -> Json:
-    response = await client.post(f"/api/groups/{group_id}/conversations", json={"model": model})
+async def start_conversation(
+    client: httpx.AsyncClient,
+    group_id: int,
+    model: str | None = None,
+    workspace: str | None = None,
+    web_access: bool = False,
+) -> Json:
+    response = await client.post(
+        f"/api/groups/{group_id}/conversations",
+        json={"model": model, "workspace": workspace, "web_access": web_access},
+    )
     assert response.status_code == 201, response.text
     conversation: Json = response.json()
     return conversation
 
 
-async def start_channel_conversation(client: httpx.AsyncClient, channel_id: int, model: str | None = None) -> Json:
-    response = await client.post(f"/api/channels/{channel_id}/conversations", json={"model": model})
+async def start_channel_conversation(
+    client: httpx.AsyncClient,
+    channel_id: int,
+    model: str | None = None,
+    workspace: str | None = None,
+    web_access: bool = False,
+) -> Json:
+    response = await client.post(
+        f"/api/channels/{channel_id}/conversations",
+        json={"model": model, "workspace": workspace, "web_access": web_access},
+    )
     assert response.status_code == 201, response.text
     conversation: Json = response.json()
     return conversation

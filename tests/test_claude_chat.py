@@ -27,6 +27,8 @@ def request(**changes: object) -> ChatRequest:
         "model": None,
         "resume_session_id": None,
         "history": (),
+        "workspace": None,
+        "web_access": False,
         "tools": MCPServer("mentor"),
         "tool_names": ("list_groups", "search", "expand", "get_video"),
     }
@@ -58,6 +60,56 @@ def test_the_model_can_use_nothing_but_the_requests_mentor_tools(tmp_path: Path)
     assert (options.setting_sources, options.skills, options.plugins) == ([], [], [])
     assert (options.agents, options.hooks) == (None, None)
     assert options.cwd == tmp_path / "chat"
+
+
+async def test_selected_project_and_web_resources_are_read_only_and_explicit(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    options = chat_options(request(workspace=project, web_access=True), tmp_path / "chat", cli_path=None)
+
+    assert options.tools == ["Read", "Glob", "Grep", "WebFetch", "WebSearch"]
+    assert options.allowed_tools[-5:] == ["Read", "Glob", "Grep", "WebFetch", "WebSearch"]
+    assert options.cwd == project
+    assert options.setting_sources == []
+    assert options.hooks is not None
+    [matcher] = options.hooks["PreToolUse"]
+    assert matcher.matcher == "Read|Glob|Grep"
+    [guard] = matcher.hooks
+    inside = await guard(
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": "session",
+            "transcript_path": "transcript",
+            "cwd": str(project),
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(project / "README.md")},
+            "tool_use_id": "inside",
+        },
+        "inside",
+        {"signal": None},
+    )
+    outside = await guard(
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": "session",
+            "transcript_path": "transcript",
+            "cwd": str(project),
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(tmp_path / "secret.txt")},
+            "tool_use_id": "outside",
+        },
+        "outside",
+        {"signal": None},
+    )
+    assert inside == {}
+    assert outside == {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"This chat may read only the selected project directory: {project}",
+        }
+    }
 
 
 def test_a_new_session_is_given_the_conversation_so_far_and_a_resumed_one_is_not() -> None:

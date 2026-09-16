@@ -4,6 +4,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ChatContext } from "./ChatContext";
 
 const defaultModel = "default";
 // Claude CLI aliases; "default" keeps the CLI's own default and is sent as null.
@@ -28,6 +29,11 @@ export function Composer({
   model,
   onModel,
   modelLocked,
+  workspace,
+  onWorkspace,
+  webAccess,
+  onWebAccess,
+  contextLocked,
   answering,
   stopping,
   canStop,
@@ -45,6 +51,11 @@ export function Composer({
   model: string | null;
   onModel: (model: string | null) => void;
   modelLocked: boolean;
+  workspace: string;
+  onWorkspace: (workspace: string) => void;
+  webAccess: boolean;
+  onWebAccess: (enabled: boolean) => void;
+  contextLocked: boolean;
   answering: boolean;
   stopping: boolean;
   canStop: boolean;
@@ -86,6 +97,13 @@ export function Composer({
           />
           <div className="flex items-center gap-1.5 px-2 pb-2">
             {chip}
+            <ChatContext
+              workspace={workspace}
+              onWorkspace={onWorkspace}
+              webAccess={webAccess}
+              onWebAccess={onWebAccess}
+              locked={contextLocked}
+            />
             <span className="flex-1" />
             {modelLocked ? (
               <span className="px-1.5 text-xs text-muted-foreground">{modelLabel(model)}</span>
@@ -121,7 +139,9 @@ export function Composer({
           <p className="text-center text-[11px] text-muted-foreground">{syncingNotice}</p>
         )}
         <p className="text-center text-[11px] text-muted-foreground">
-          Answers come only from what was said on these channels, with links to the moments it was said.
+          {workspace.trim() !== "" || webAccess
+            ? "Channel advice stays cited. Project and web access are read-only."
+            : "Answers come only from what was said on these channels, with links to the moments it was said."}
         </p>
       </div>
     </div>
