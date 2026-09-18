@@ -22,7 +22,22 @@ signing, no telemetry in this release. Tickets are not written yet; the suggeste
 and the retrieval regression set comes first. v2 ticket 06 and ticket 18 below are still open and should be finished or
 explicitly parked before this starts.
 
-Read in this order:
+Update 2026-09-18: **build-0 ticket breakdown approved and published locally.** The ten tickets are in
+`.scratch/mentor-build-0/issues/`; `.scratch/mentor-build-0/README.md` records their dependencies, story coverage and
+shared prerequisites. The spec and ADRs were committed as `0db90a4`. No implementation has started. Independent
+reviewer critique of the ticket set remains pending. Before implementation, finish or explicitly park v2 ticket 06
+and v1 ticket 18 (Cloudflare Access), then land the planning branch on `main`. Start with build-0 ticket 01's frozen
+CUDA retrieval baseline; tickets 02, 03 and 10 require actual Mac verification. Keep ticket 06's engine-selection and
+health/client migration atomic. Work one ticket per session in a worktree off `main`, with `opus-worker` subagents
+and a reviewer pass over the whole branch at the end.
+
+Read in this order for build 0:
+1. `docs/specs/0003-build-0-friends-release.md` — scope of record.
+2. ADRs 0004 and 0005 — chat engines and inference devices.
+3. `CONTEXT.md` — domain glossary.
+4. `.scratch/mentor-build-0/README.md`, then the selected ticket in `issues/`.
+
+Earlier v2 reading order (historical):
 1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Group"; "Mentor" is the product name only).
 2. `docs/specs/0002-sidebar-chat-ui.md` — the current spec; `docs/specs/0001-mentor-v1.md` for what it doesn't cover (its "Review amendments" section wins over its earlier text).
 3. `docs/adr/` — three accepted decisions.
