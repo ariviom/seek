@@ -2,6 +2,10 @@
 
 Status: draft, 2026-09-17. Product rationale is in the evaluation thread; this is the engineering shape.
 
+Superseded in part on 2026-09-17 by `docs/specs/0003-build-0-friends-release.md`, which is the plan of record for what
+ships next. A grilling session cut the first release to what a friend needs to run Mentor at all and deferred the
+rest; ADR 0004 and ADR 0005 record the two decisions that changed. This brief stands as the longer-range roadmap.
+
 ## What we are building
 
 A local-first desktop app that turns the creators and sources you trust into a private, cited knowledge base, searchable from the app and from any agent over MCP. Every answer links to the moment in the video. Ingestion, embeddings, and the database stay on the user's machine. Answers come from a model the user already pays for: their own API key (Anthropic or Google) or their local Claude Code login.

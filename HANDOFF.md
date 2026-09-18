@@ -13,6 +13,15 @@ State as of 2026-09-14 (end of day): tickets 01–17 and 19–21 are done, revie
 
 Update 2026-09-15: read-only project and web context for chats landed as `cb1ec75`. Mentor was reinstalled from `main`, migrated to schema 11, and restarted with both models and the Claude CLI ready. The pre-migration backup is `~/.local/share/mentor/mentor.db.pre-cb1ec75.bak`; its integrity check passed at schema 10. The running App Masters Sync resumed from its recorded progress after the restart.
 
+Update 2026-09-17: **next up is build 0, the friends release.** Read `docs/specs/0003-build-0-friends-release.md`
+(ready-for-agent), then ADR 0004 (two chat engines behind one port, Anthropic API the default) and ADR 0005 (pick the
+inference device; ONNX deferred with a trigger). `docs/product/desktop-mvp.md` is the longer-range roadmap and the spec
+wins where they differ. The spec was shaped by a grilling session: the target is roughly five mostly-Mac friends
+installing Mentor as a uv tool from a public repo and running `mentor serve` in a terminal — no Tauri shell, no
+signing, no telemetry in this release. Tickets are not written yet; the suggested order is in the spec's Further Notes,
+and the retrieval regression set comes first. v2 ticket 06 and ticket 18 below are still open and should be finished or
+explicitly parked before this starts.
+
 Read in this order:
 1. `CONTEXT.md` — domain glossary. Use these terms everywhere, including UI copy ("Channel", "Group"; "Mentor" is the product name only).
 2. `docs/specs/0002-sidebar-chat-ui.md` — the current spec; `docs/specs/0001-mentor-v1.md` for what it doesn't cover (its "Review amendments" section wins over its earlier text).
