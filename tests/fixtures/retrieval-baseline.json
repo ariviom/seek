@@ -1,0 +1,203 @@
+{
+  "reference_date": "2026-09-18",
+  "retrieval": {
+    "temperature": 3,
+    "recency": {
+      "off": null,
+      "gentle": {
+        "half_life_days": 3650,
+        "max_penalty": 0.15
+      },
+      "strong": {
+        "half_life_days": 1095,
+        "max_penalty": 0.5
+      }
+    }
+  },
+  "scope_preparation": {
+    "reason": "Live database had no Groups. Drew approved adding these Groups only in the baseline preparation copy on 2026-09-18.",
+    "groups": {
+      "SaaS marketing": [
+        "MicroConf",
+        "App Masters",
+        "April Dunford - The Positioning Show"
+      ],
+      "business growth": [
+        "Alex Hormozi",
+        "Cabinetmakerprofitsystem"
+      ]
+    }
+  },
+  "questions": [
+    {
+      "id": "saas-pricing",
+      "query": "Which SaaS pricing mistakes weaken pricing power, especially framing product value too low and segmenting only by customer size?",
+      "group": "SaaS marketing",
+      "limit": 10,
+      "prefer_recent": "gentle",
+      "required_video_ids": [
+        "JUB5t1SuIMo"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "JUB5t1SuIMo",
+        "start_seconds": 144.52,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "The speaker identifies low value framing and basic small/medium/large customer segmentation as pricing-power mistakes."
+      }
+    },
+    {
+      "id": "linkedin-outreach",
+      "query": "How should a developer founder prepare a LinkedIn profile and build a prospect list before cold outreach?",
+      "group": "SaaS marketing",
+      "limit": 10,
+      "prefer_recent": "strong",
+      "required_video_ids": [
+        "OWvDbX5Fmps"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "OWvDbX5Fmps",
+        "start_seconds": 74.12,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "Colleen discusses banner, about section, headline and picture before outreach, then posting and building a Sales Navigator prospect list."
+      }
+    },
+    {
+      "id": "localized-app-pricing",
+      "query": "Why should I research competitor app prices by country instead of accepting Apple's automatic currency conversions?",
+      "group": "SaaS marketing",
+      "limit": 10,
+      "prefer_recent": "off",
+      "required_video_ids": [
+        "UcJnr_z20Cw"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "UcJnr_z20Cw",
+        "start_seconds": 73.64,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "The discussion compares UK, Euro and Canadian purchasing power with Apple's conversions and recommends a competitor-based local pricing index."
+      }
+    },
+    {
+      "id": "music-retention",
+      "query": "How can adding licensed music to an app improve user engagement and retention?",
+      "group": "SaaS marketing",
+      "limit": 10,
+      "prefer_recent": "gentle",
+      "required_video_ids": [
+        "osYXbQ41TmQ"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "osYXbQ41TmQ",
+        "start_seconds": 72.96,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "Lauren from Feed.fm explains music as an overlooked retention tool and the licensing and integration obstacles."
+      }
+    },
+    {
+      "id": "positioning-alternatives",
+      "query": "In a positioning exercise, why should competitive alternatives include manual processes and the customer's status quo?",
+      "group": "SaaS marketing",
+      "limit": 10,
+      "prefer_recent": "gentle",
+      "required_video_ids": [
+        "BDkpuQps4nk"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "BDkpuQps4nk",
+        "start_seconds": 206.879,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "April explains that competition includes pen and paper and what the customer does today, rather than only similar products."
+      }
+    },
+    {
+      "id": "test-positioning",
+      "query": "Why is A/B testing a homepage a poor way to validate B2B positioning, and how do bad-fit visitors confound the result?",
+      "group": "SaaS marketing",
+      "limit": 10,
+      "prefer_recent": "strong",
+      "required_video_ids": [
+        "D9pf_iEomjY"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "D9pf_iEomjY",
+        "start_seconds": 207.44,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "April explains that homepage tests mix positioning with messaging and design, cannot isolate best-fit visitors, and may lack sufficient B2B traffic."
+      }
+    },
+    {
+      "id": "raise-existing-prices",
+      "query": "What should I put in a price increase letter to existing customers to explain the value they already receive?",
+      "group": "business growth",
+      "limit": 10,
+      "prefer_recent": "off",
+      "required_video_ids": [
+        "Gy-RmpRif-I"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "Gy-RmpRif-I",
+        "start_seconds": 106.24,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "Alex outlines the price increase letter: why he is writing, current service value, and re-selling benefits customers may have forgotten."
+      }
+    },
+    {
+      "id": "retention-benchmarks",
+      "query": "What monthly retention benchmarks did Hormozi learn from Skool communities, and why does reducing churn from 20% to 10% double lifetime value?",
+      "group": "business growth",
+      "limit": 10,
+      "prefer_recent": "gentle",
+      "required_video_ids": [
+        "-j8_YCWZ05Q"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "-j8_YCWZ05Q",
+        "start_seconds": 74.64,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "The transcript gives 80% average monthly retention, over 90% for better groups, and explains doubled lifetime value when churn halves."
+      }
+    },
+    {
+      "id": "overtime-profit",
+      "query": "How does unplanned overtime leak profit from a cabinet shop, and why should I treat it as a system problem?",
+      "group": "business growth",
+      "limit": 10,
+      "prefer_recent": "strong",
+      "required_video_ids": [
+        "H-vDOxOIML8"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "H-vDOxOIML8",
+        "start_seconds": 211.959,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "Dominick illustrates unestimated overtime costs at time-and-a-half and describes a structured program to fix the underlying system."
+      }
+    },
+    {
+      "id": "estimating-assumptions",
+      "query": "How can reviewing a cabinet shop's estimating assumptions uncover unpaid installer travel time and recover lost profit?",
+      "group": "business growth",
+      "limit": 10,
+      "prefer_recent": "off",
+      "required_video_ids": [
+        "UR8O8TeI4ys"
+      ],
+      "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video.",
+      "evidence": {
+        "youtube_video_id": "UR8O8TeI4ys",
+        "start_seconds": 100.32,
+        "verification": "Read the stored real transcript before running retrieval; expected ID is not derived from search output.",
+        "summary": "Dominic describes a cabinetmaker's $20,000 estimating leak involving installers paid from arrival at the shop, then advises reviewing estimating assumptions."
+      }
+    }
+  ]
+}

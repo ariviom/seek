@@ -1,0 +1,46 @@
+{
+  "snapshot": {
+    "sha256": "5504c1b1e96d4a11a7e229be6d3c24d9201e598e8d8fcbe724792f56d524c7da",
+    "schema_version": 11,
+    "bytes": 599224320,
+    "filename": "retrieval.db",
+    "capture_method": "SQLite Connection.backup from the live database (mode=ro, including committed WAL) into a preparation copy; only approved Groups added; SQLite backup again into final standalone read-only snapshot.",
+    "scope_preparation": "Drew approved baseline-only Groups on 2026-09-18 because the live library had none. Live database unchanged; no Sync, re-embedding, or transcript/Video/Segment changes.",
+    "counts": {
+      "channels": 5,
+      "groups": 2,
+      "videos": 1840,
+      "done_videos": 1791,
+      "segments": 49403
+    }
+  },
+  "embedding": {
+    "model": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
+    "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+    "stored_passages": "Existing production CUDA vectors reused. Database stores model name/dimension, not historical per-passage revision; listed revision is the cached query-model revision pinned for this run."
+  },
+  "reranker": {
+    "model": "mixedbread-ai/mxbai-rerank-base-v2",
+    "revision": "3ea9d4dffa7d12a4f366be8e275c349de9fc9865"
+  },
+  "reference_date": "2026-09-18",
+  "retrieval": {
+    "temperature": 3,
+    "recency": {
+      "off": null,
+      "gentle": {
+        "half_life_days": 3650,
+        "max_penalty": 0.15
+      },
+      "strong": {
+        "half_life_days": 1095,
+        "max_penalty": 0.5
+      }
+    },
+    "candidates": 50,
+    "per_video": 3,
+    "rrf_k": 60
+  },
+  "boundary": "Query embedding and reranking against stored CUDA passage vectors; not passage-embedding equivalence or a chat-model evaluation."
+}
