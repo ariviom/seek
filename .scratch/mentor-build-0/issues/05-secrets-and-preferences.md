@@ -24,6 +24,8 @@ This is a complete API-verifiable setup slice for the selectable engine and sett
   Support replacing and deleting a stored key without a restart.
 - [ ] Preserve last-known validation state without health-time provider requests. Publish credential-state changes
   that ticket 06 can use for engine status, including invalidation after an authentication failure during a turn.
+  Tie validation results and state changes to the credential generation: late validation or turn results for a
+  replaced/deleted key cannot overwrite the current key's status or restore a deleted credential.
 - [ ] Add one additive migration for typed preference rows: engine, Anthropic provider and model choice. Validate
   supported values; persist across restart; publish a settings-change event after successful writes.
 - [ ] Keep preferences separate from operational configuration and credentials. Document the rule: configuration

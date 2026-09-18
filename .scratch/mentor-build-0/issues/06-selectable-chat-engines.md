@@ -33,13 +33,21 @@ every surface at the end of the ticket. (Stories 15–16, 19–26, 29, 41–45; 
   send a CLI alias verbatim as an API model ID or silently discard a pin.
 - [ ] API history is replayed from the store every turn, with a documented bounded truncation rule mirroring CLI
   replay. Handle interrupted/unanswered turns and long history while keeping a valid provider message sequence.
-- [ ] Make completion's session identifier optional. A completed API answer clears the old CLI session identifier;
-  CLI → API → CLI replays all saved turns rather than resuming a stale session. Session-lost retry remains CLI-only.
+- [ ] Make completion's session identifier optional. Clear the old CLI session identifier atomically when accepting
+  and persisting an API turn's user message, before starting provider work. CLI → API → CLI must replay every saved
+  turn even if the API turn fails or is canceled without an answer. Session-lost retry remains CLI-only.
 - [ ] Add the second additive migration for per-message engine, model and input/output/cache-read usage. Record the
   actual resolved engine/model, aggregate all provider requests within a turn without double-counting streamed
   usage, and expose Conversation totals. Preserve old messages with unknown provenance/usage honestly. Adapt CLI
   event mapping to retain usage when supplied by its SDK; unknown usage is not fabricated as measured zero.
-- [ ] Authentication failure during a turn invalidates the stored key state and publishes engine-status change.
+- [ ] Persist reported usage even when a later tool-loop request fails or the turn is canceled. Associate that
+  accounting with the originating user message so it survives without saving a partial assistant answer, and count
+  each provider request once on successful completion too. Mark incomplete/unreported usage explicitly; totals
+  include known usage from failed/stopped turns without claiming to be an exact provider bill. Include the needed
+  accounting/completeness fields in the same additive message migration.
+- [ ] Authentication failure during a turn invalidates only the credential generation used by that turn and
+  publishes engine-status change only if that generation is still current. A delayed failure from old key A must
+  not invalidate newly validated key B or undo key deletion. Coordinate this with the credential state from 05.
   Rate limits/overload say to retry without invalidating the key; other errors expose a safe provider message.
   Health reads last-known key state and never probes the provider, including offline startup.
 - [ ] Report both engines' availability and the active engine identity, with `no_key` and `invalid_key` states.
@@ -58,7 +66,9 @@ every surface at the end of the ticket. (Stories 15–16, 19–26, 29, 41–45; 
 **Verification:** Direct ChatEngine contract tests use the real Anthropic SDK with injected scripted HTTP transport
 and the real in-process scoped MCP server. Cover multi-step tool execution, streaming, usage, turn limit, cancellation
 and provider errors. HTTP tests cover both fake engines, selection/model precedence, readiness, context refusal,
-restart history and CLI → API → CLI. Test health without provider requests and the complete client rename. Run normal
+restart history and CLI → API → CLI after successful, failed and canceled API turns. Verify retained usage after a
+successful tool-loop request followed by failure/cancellation, and a delayed key-A rejection after replacing it with
+validated key B. Test health without provider requests and the complete client rename. Run normal
 checks, rebuild the web bundle and keep the served Playwright smoke test green.
 
 **Atomic delivery:** This is intentionally one larger integration ticket. Do not publish ApiEngine without selection

@@ -147,13 +147,16 @@ Success is five friends with a Channel of their own choosing, and a conversation
   and the API engine cannot serve them. In build 0 the API engine refuses a Conversation that asks for either, the
   composer's context option is hidden while the API engine is active, and the system prompt that promises those
   abilities is only used on the CLI path. Building them for the API engine is out of scope.
-- **Switching engines mid-Conversation must not resume a stale session.** An answer produced by the API engine clears
-  any stored CLI session id, so a later CLI turn replays history rather than resuming a thread that is missing every
-  API-era turn. The API engine needs its own history truncation rule, mirroring the CLI adapter's replay limit.
+- **Switching engines mid-Conversation must not resume a stale session.** Accepting and saving an API turn's user
+  message clears any stored CLI session id atomically, before provider work starts, so a later CLI turn replays all
+  saved history even if the API turn fails or is canceled without an answer. The API engine needs its own history
+  truncation rule, mirroring the CLI adapter's replay limit.
 - **Key validation happens at entry, and after a failure — never on a health check.** Storing a key makes one cheap
   authenticated call to confirm it works; an authentication failure during a turn marks the key invalid. Health never
   probes the provider, so an offline machine reports the last known state instead of flapping. A change of engine
   status publishes an event, so the composer comes alive without a reload.
+  Validation and failure results are tied to the credential generation used: a late result for an old key cannot
+  invalidate a replacement key, overwrite its validation state, or undo deletion.
 - **An unavailable stored preference is an error, not a silent switch.** A stored engine whose requirement is missing
   reports its own state and says what to add; Mentor does not quietly run the other engine.
 - **Health reports the availability of both engines**, not only the active one, because the settings screen has to
@@ -163,6 +166,9 @@ Success is five friends with a Channel of their own choosing, and a conversation
   port per argument, as the existing convention has it — and it is not a new port.
 - Per-turn token counts (input, output, and cache reads) are recorded with each message, along with the engine and
   model that produced it, and summed per Conversation for display.
+  Reported usage survives failed/canceled turns even when no assistant answer is saved, associated with the
+  initiating user message and counted once across the turn. Unknown final usage is marked incomplete rather than
+  invented as zero; the readout includes known usage but is not an exact billing statement.
 - `ChatEngineStatus` gains the engine's identity and the states `no_key` and `invalid_key`. The health field currently
   named for the Claude CLI is renamed to describe the active engine; the status command and web UI follow.
 - Engine selection lives in settings. With no stored preference, Mentor uses the API engine when a key is present,
@@ -228,6 +234,8 @@ Success is five friends with a Channel of their own choosing, and a conversation
   stay fully usable. It re-enables on the engine-status event, without a reload.
 - The context option in the composer is hidden while the API engine is active.
 - A per-Conversation token readout.
+- Sync rate and ETA retain compatible count/time baselines after process restart, or warm up a fresh observed
+  interval without resetting total progress. Pre-restart completion counts cannot be divided by post-restart time.
 - The health indicator reflects the active engine's state, including `no_key` and `invalid_key`.
 - Renaming the health field is a breaking API change for the web client and the status command. The rename, the two
   clients, their tests, and the rebuilt bundle land in one ticket; splitting them leaves `main` with a UI that throws
@@ -314,5 +322,6 @@ into implementation. Prefer the existing seams; this spec adds exactly one new o
   or months away; it does not block anything here.
 - The Apple Developer Program fee is only required to hand someone a built application. A friend who compiles locally
   hits no Gatekeeper prompt, which is another reason build 0 ships as source.
-- Two items from v2 are still open in `HANDOFF.md` — ticket 06 and ticket 18 (Cloudflare Access) — and should be
-  finished or explicitly parked before this work starts.
+- The older-ticket prerequisite was resolved on 2026-09-18: v2 ticket 06 (broad UI finish) and v1 ticket 18
+  (Cloudflare Access client verification) are explicitly parked, not completed. Their tickets and `HANDOFF.md`
+  record why and when to reopen them; build-0 acceptance criteria still require fixing any blocking friend workflow.

@@ -4,7 +4,23 @@
 
 **Blocked by:** 17 — Remote access hardening
 
-**Status:** needs-human — Drew configures the Access application and runs each client login
+**Status:** parked — remote-client verification deferred beyond build 0 on 2026-09-18; not completed
+
+## Build-0 disposition
+
+Recommendation adopted under Drew's instruction to assess these prerequisites and proceed: park this ticket.
+Build 0 supports local foreground use and loopback MCP clients; remote client authentication and Claude Desktop
+connector registration are explicitly outside that release. Configuring Access or deciding Managed OAuth now would
+add an unrelated dependency on dashboard access and interactive client logins.
+
+Preserve the existing remote-access protections and configuration. No Cloudflare changes or new live verification
+were made as part of this disposition; the dated checks below are historical evidence, not current verification.
+Build-0 tickets 08 and 10 must accurately document the supported local path without claiming remote-client parity.
+
+Reopen when Drew chooses remote MCP/Claude Desktop as a supported distribution surface or specifically wants to
+finish personal remote access. At that point, recheck current provider documentation, choose the Access/OAuth setup
+with Drew, and run the per-client sign-in, tool-list and search checks below. Dashboard configuration and client
+logins still require Drew's participation when this resumes.
 
 - [x] Agent researches the current Cloudflare Access options for MCP clients (Access-managed OAuth, MCP server portals, service tokens) from primary docs and writes a short setup checklist
 - [ ] Drew applies the setup; Claude Code, Codex, and Claude Desktop each list and call `search` over the public URL, or the blocker for each client is recorded

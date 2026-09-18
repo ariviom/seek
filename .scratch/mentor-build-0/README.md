@@ -1,6 +1,7 @@
 # Build 0 — approved tickets
 
-Status: breakdown approved by Drew on 2026-09-18; ten tickets published locally. No implementation has started.
+Status: breakdown approved by Drew on 2026-09-18; ten tickets published locally and independently reviewed.
+All four review findings are addressed. No implementation has started.
 
 Source: spec 0003 (ready-for-agent), ADRs 0004 and 0005. The spec takes precedence over the desktop roadmap.
 The source documents were committed as `0db90a4` before drafting this breakdown.
@@ -23,10 +24,10 @@ The shared prerequisites below still apply before implementation starts.
 
 ## Before implementation
 
-- Finish or explicitly park v2 ticket 06 and **v1** ticket 18 (Cloudflare Access), recording the decision in the
-  handoff. They remain open; approval of this breakdown does not decide their disposition. The build-0 planning work can proceed.
-- Land the approved spec and ticket set on `main` before opening implementation worktrees; this branch has not been
-  merged or pushed by this planning session.
+- Older-ticket prerequisite resolved on 2026-09-18: v2 ticket 06 and **v1** ticket 18 (Cloudflare Access) are explicitly
+  parked, not completed. Their tickets and the handoff record the reasons and reopening criteria. Friend-workflow
+  blockers remain owned by the relevant build-0 acceptance criteria; parking broad polish is not a waiver for them.
+- Use the reviewed spec and ticket set on `main` as the base for implementation worktrees.
 - Run ticket 01 first. The dependency graph shows actual technical prerequisites, not permission to change inference
   before recording the baseline. The numbered order is the recommended serial execution order.
 - Mac access is a closure precondition for 02, 03 and 10; Drew has it. Fake probes do not satisfy these checks.
@@ -61,7 +62,8 @@ web changes rebuild the served bundle and keep the Playwright smoke test green. 
 implementation checks or hardware runs have been claimed by this documentation-only planning session.
 
 The ticket set was checked against the current ports, chat orchestration, model wrappers, search, CLI, build hook,
-health consumers, Sync progress and prior ticket conventions. Independent reviewer-agent critique is still pending.
+health consumers, Sync progress and prior ticket conventions. Independent review and focused correction review are
+complete; [the review record](review.md) documents all four findings, their resolution and the older-ticket decisions.
 
 Drew approved the proposed granularity and blocking edges on 2026-09-18, satisfying the `to-tickets` approval
 checkpoint. Ticket 06 retains its approved atomic scope.

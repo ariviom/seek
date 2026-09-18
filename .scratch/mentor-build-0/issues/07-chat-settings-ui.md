@@ -23,6 +23,8 @@ understand the current Conversation's model and usage without editing a file. (S
   setup messages describe the active engine consistently.
 - [ ] Show running Conversation input, output and cache-read token totals from stored usage. Reopening/reloading a
   Conversation preserves totals; legacy unknown usage is labelled honestly. Do not invent a currency estimate.
+  Include reported usage from failed/stopped turns and visibly identify incomplete totals when a provider did not
+  report final usage; an unsuccessful answer must not make already-reported usage disappear.
 - [ ] Respect existing theme, responsive shell, keyboard navigation, focus and error/empty-state conventions. The
   screen clearly separates preferences from operational settings that belong in configuration.
 

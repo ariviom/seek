@@ -4,7 +4,25 @@
 
 **Blocked by:** 05
 
-**Status:** open
+**Status:** parked — deferred beyond build 0 on 2026-09-18; not completed
+
+## Build-0 disposition
+
+Recommendation adopted under Drew's instruction to assess these prerequisites and proceed: park the broad v2 finish
+pass. Build 0 is a small local friends release, and the remaining polish, screenshots and remote-host verification
+do not need to gate its retrieval baseline or device work. The prototype entry point is already absent from the
+current web entry point and source tree; the unchecked list below remains historical work, not a claim that every
+item still needs implementation.
+
+Known issues are retained, including narrow-screen search focus and failed-Conversation URL recovery. This is not a
+waiver for broken friend workflows: build-0 ticket 07 owns setup/composer accessibility and responsive verification;
+ticket 09 owns honest Sync progress and retry counts; ticket 10 owns the real install-to-Citation path. If an older
+defect blocks one of those acceptance criteria, fix that concrete defect in its owning build-0 ticket and cross-link
+the result here. The rest of this ticket remains deferred rather than expanding those tickets into a full v2 polish
+pass.
+
+Reopen for a dedicated UI finish pass after the build-0 friend check-in, or earlier if the supported friend workflow
+reveals a blocking defect. The original acceptance criteria and deferred findings below remain available for triage.
 
 - [ ] Delete `web/src/prototype/`, any remaining v1 section component, `ui.ts`, and the `?variant=` gate in `main.tsx`; the bundle has no Barlow and no prototype code.
 - [ ] Keyboard and focus: visible focus on every row and button; Esc closes lightbox, sheet, menus; `⌘K`; Tabs and DropdownMenu keyboard behaviour from shadcn.

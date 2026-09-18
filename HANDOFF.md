@@ -1,6 +1,19 @@
 # Handoff — Mentor
 
-**Next up (decided 2026-09-14, evening): v2, the sidebar chat UI on a Channel model.** Read ADR 0003, then
+**Current direction (2026-09-18): build 0, the friends release.** The approved queue is
+`.scratch/mentor-build-0/issues/`, with dependencies and coverage in `.scratch/mentor-build-0/README.md`.
+v2 ticket 06 and v1 ticket 18 are explicitly **parked, not completed**: the former awaits a dedicated UI finish pass
+after the friend check-in (or a blocking friend-workflow defect), and the latter resumes when remote MCP/Desktop
+access becomes a chosen supported surface. Their owning tickets retain the unfinished checks and reopening criteria.
+This resolves the older-ticket prerequisite for build 0. No build-0 implementation or live service change has occurred.
+Independent ticket review and a focused re-review are complete, with all four findings addressed in the tickets and
+spec: stale CLI sessions after failed/stopped API turns, retained partial token usage, credential-replacement races,
+and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: implement build-0 ticket 01's frozen CUDA
+retrieval baseline in a fresh worktree off `main`.** Keep the later device change behind the recorded baseline.
+
+## Historical progress (later entries supersede earlier next-step instructions)
+
+**Previous direction (decided 2026-09-14, evening): v2, the sidebar chat UI on a Channel model.** Read ADR 0003, then
 `docs/specs/0002-sidebar-chat-ui.md` (reviewed; its decisions win over spec 0001 where they differ), then the six tickets
 in `.scratch/mentor-v2/issues/`. Tickets 01 (backend) to 05 and 07 (ingest feedback) are done; continue with 06 in a worktree off `main`, one ticket per
 session as before. The prototype the spec cites is commit `8d51635` on branch `t3code/sidebar-chat-ui-prototype`
