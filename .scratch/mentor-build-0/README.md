@@ -1,12 +1,13 @@
 # Build 0 — approved tickets
 
 Status: breakdown approved by Drew on 2026-09-18; ten tickets published locally and independently reviewed.
-All four review findings are addressed. No implementation has started.
+All four planning review findings are addressed. Ticket 01 is complete: the real CUDA baseline
+passed all ten questions on 2026-09-18. Tickets 02–10 remain ready-for-agent.
 
 Source: spec 0003 (ready-for-agent), ADRs 0004 and 0005. The spec takes precedence over the desktop roadmap.
 The source documents were committed as `0db90a4` before drafting this breakdown.
 
-The approved tickets are in `issues/`, one file per ticket with `ready-for-agent` status.
+The approved tickets are in `issues/`, one file per ticket with its current execution status.
 The shared prerequisites below still apply before implementation starts.
 
 | Ticket | Delivers | Blocked by |

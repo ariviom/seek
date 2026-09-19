@@ -103,4 +103,33 @@ reranker revisions used for this baseline.
 
 ## Recorded execution
 
-Execution results and review evidence are recorded alongside this document after the real run.
+The real run on 2026-09-18, 23:02:32–23:02:55 UTC passed **10/10 questions** on clean
+source revision `673849dfe42b2dd0b197689914b6798c258991cd`. Full per-Segment rankings,
+scores, model revisions, dependencies and source hashes are in
+[`baselines/build-0-cuda.json`](baselines/build-0-cuda.json). Model-status cache paths alone
+were replaced with repository names in that committed artifact; the original report remains
+beside the private snapshot as `cuda-results.json`.
+
+The command above was run with `MENTOR_RETRIEVAL_RESULTS` set to
+`/home/drew/.local/share/mentor-baselines/build-0/cuda-results.json`. Mentor was active before
+the run, stopped and confirmed inactive before model loading, then restored by the EXIT trap.
+The RTX 3090 had **21,590 MiB free / 24,576 MiB total** after stopping Mentor; driver
+595.84, CUDA 13.0, precision bfloat16. No unrelated workload was evicted. After the run,
+Mentor was active and `/api/health` reported both models ready. The live Group count remains
+zero, confirming the approved scope preparation was confined to the copy.
+
+| Question | Required Video | First matching Segment rank | Result |
+| --- | --- | ---: | --- |
+| SaaS pricing | JUB5t1SuIMo | 1 | pass |
+| LinkedIn outreach | OWvDbX5Fmps | 1 | pass |
+| Localized app pricing | UcJnr_z20Cw | 1 | pass |
+| Music and retention | osYXbQ41TmQ | 1 | pass |
+| Positioning alternatives | BDkpuQps4nk | 1 | pass |
+| Testing positioning | D9pf_iEomjY | 1 | pass |
+| Raising existing prices | Gy-RmpRif-I | 1 | pass |
+| Retention benchmarks | -j8_YCWZ05Q | 2 | pass |
+| Overtime and profit | H-vDOxOIML8 | 1 | pass |
+| Estimating assumptions | UR8O8TeI4ys | 1 | pass |
+
+Snapshot SHA-256 after the run matches the manifest. The expected Videos, question text,
+limits and recency inputs were not changed after seeing rankings.

@@ -5,11 +5,23 @@
 v2 ticket 06 and v1 ticket 18 are explicitly **parked, not completed**: the former awaits a dedicated UI finish pass
 after the friend check-in (or a blocking friend-workflow defect), and the latter resumes when remote MCP/Desktop
 access becomes a chosen supported surface. Their owning tickets retain the unfinished checks and reopening criteria.
-This resolves the older-ticket prerequisite for build 0. No build-0 implementation or live service change has occurred.
+This resolves the older-ticket prerequisite for build 0. Ticket 01 is complete; its real CUDA baseline passed 10/10
+questions on 2026-09-18. Mentor was temporarily stopped for the run and restored active with both models ready.
 Independent ticket review and a focused re-review are complete, with all four findings addressed in the tickets and
 spec: stale CLI sessions after failed/stopped API turns, retained partial token usage, credential-replacement races,
-and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: implement build-0 ticket 01's frozen CUDA
-retrieval baseline in a fresh worktree off `main`.** Keep the later device change behind the recorded baseline.
+and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next session: build-0 ticket 02 in a fresh
+worktree off `main`.** No device work was started in ticket 01.
+
+Ticket 01 evidence: `docs/retrieval-baseline.md`, `docs/baselines/build-0-cuda.json`, fixtures and manifest under
+`tests/fixtures/`. Clean execution revision: `673849dfe42b2dd0b197689914b6798c258991cd`. The private read-only snapshot
+is `/home/drew/.local/share/mentor-baselines/build-0/retrieval.db`, SHA-256
+`5504c1b1e96d4a11a7e229be6d3c24d9201e598e8d8fcbe724792f56d524c7da`. Set `MENTOR_RETRIEVAL_SNAPSHOT` to that file;
+`MENTOR_RETRIEVAL_RESULTS` chooses the result artifact. Missing snapshot skips explicitly; invalid configured input
+fails. The live database had no Groups: Drew approved creating SaaS marketing and business growth in the preparation
+copy only. Live data was unchanged. Preserve this exact corpus, Groups, questions, model revisions and reference date
+for the MPS comparison; do not re-Sync or re-embed. Stored passage vectors remain CUDA-generated. The current runner
+requires CUDA; tickets 02/03 adapt device reporting while preserving retrieval inputs. Full tests: 344 passed,
+3 opt-in tests deselected; mypy and web typecheck passed. Independent branch reviews found no Standards or Spec issues.
 
 ## Historical progress (later entries supersede earlier next-step instructions)
 
