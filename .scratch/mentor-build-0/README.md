@@ -2,7 +2,8 @@
 
 Status: breakdown approved by Drew on 2026-09-18; ten tickets published locally and independently reviewed.
 All four planning review findings are addressed. Ticket 01 is complete: the real CUDA baseline
-passed all ten questions on 2026-09-18. Tickets 02–10 remain ready-for-agent.
+passed all ten questions on 2026-09-18. Ticket 02 is implemented on its own branch with passing
+Linux CUDA/CPU verification, awaiting required Mac execution before landing. Tickets 03–10 remain ready-for-agent.
 
 Source: spec 0003 (ready-for-agent), ADRs 0004 and 0005. The spec takes precedence over the desktop roadmap.
 The source documents were committed as `0db90a4` before drafting this breakdown.

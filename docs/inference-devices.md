@@ -58,5 +58,51 @@ neither expected Videos nor the frozen corpus may be regenerated.
 
 ## Execution record
 
-Actual hardware results and independent review are recorded here after verification.
-Mac execution is required before ticket 02 can be marked complete.
+**Mac verification is pending. Ticket 02 is not complete and has not landed on main.**
+No Mac SSH host/user or Mac output was supplied in this session. The implementation and
+Linux checks are committed on `build-0/ticket-02-inference-devices`; do not start ticket 03
+or claim MPS support verified until the real Mac commands above pass.
+
+Linux execution on clean `b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626`, 2026-09-19:
+
+- CUDA regression, 10:48:07–10:48:19 UTC: **10/10 questions pass** on RTX 3090, CUDA 13.0,
+  bfloat16. The fixture and snapshot checksums match ticket 01. Full rankings and source
+  hashes: [ticket-02-cuda.json](baselines/ticket-02-cuda.json).
+- Real CPU execution, 10:48:23–10:48:28 UTC: **pass** on AMD Ryzen 7 5800X, float32,
+  four torch threads. Two passage vectors and one query vector each have 1024 dimensions,
+  finite values and norm approximately one. Relevant/irrelevant logits were 9.87257 and
+  -5.34743. Both models are ready on CPU, with fully cached offline execution. Full report:
+  [ticket-02-cpu.json](baselines/ticket-02-cpu.json). The CPU name was recorded using `lscpu`
+  because Python's `platform.processor()` returned an empty string.
+- Mentor was stopped around these runs with an EXIT trap to restore its prior active state.
+  GPU memory was checked before CUDA loading; no unrelated workloads were evicted. After
+  restoration the installed service was active and both models ready. The service remains
+  on its prior installed code; this branch was not installed into the live service.
+- `uv run pytest -q`: **366 passed, 4 opt-in tests deselected**. `uv run mypy`: 77 files
+  pass. Web typecheck and build pass; the served bundle was rebuilt. Existing Playwright
+  smoke passed. Focused health display checks passed at desktop, mobile and 200% zoom.
+- Independent whole-branch Standards review: no hard violations, one optional duplication
+  observation in test setup retained for local readability. Spec review: no implementation
+  findings; real Mac execution remains the closure requirement.
+
+The CPU command used was:
+
+```sh
+MENTOR_VERIFY_DEVICE=cpu MENTOR_DEVICE_RESULTS=/tmp/mentor-ticket-02-cpu.json \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 \
+uv run pytest -q -s -m real_models tests/test_real_devices.py
+```
+
+For Mac verification without a published branch, transfer the prepared Git bundle
+`/tmp/mentor-ticket-02.bundle` to the Mac and clone it into a new directory:
+
+```sh
+git clone --branch build-0/ticket-02-inference-devices ~/Downloads/mentor-ticket-02.bundle ~/mentor-ticket-02
+cd ~/mentor-ticket-02
+uv sync --frozen
+```
+
+Then run the Mac commands above and return both JSON reports. No database snapshot or personal
+configuration is needed for this ticket's Mac device test. Resolve failures here, then update
+the ticket, review any fixes, commit and fast-forward main. The full-corpus MPS comparison
+belongs to ticket 03.

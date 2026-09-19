@@ -1,0 +1,74 @@
+{
+  "started_at": "2026-09-19T10:48:23.334989+00:00",
+  "source_revision": "b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626",
+  "source_dirty": false,
+  "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+  "machine": "x86_64",
+  "python": "3.13.14",
+  "probe": {
+    "cuda": true,
+    "mps": false,
+    "cuda_bfloat16": true
+  },
+  "selection": {
+    "device": "cpu",
+    "precision": "float32"
+  },
+  "requested": "cpu",
+  "dependencies": {
+    "torch": "2.14.0",
+    "sentence-transformers": "6.0.1",
+    "transformers": "5.17.0",
+    "huggingface-hub": "1.31.0",
+    "numpy": "2.5.3"
+  },
+  "passed": true,
+  "hardware": "",
+  "cuda": "13.0",
+  "torch_threads": 4,
+  "offline": {
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1"
+  },
+  "vector_dimension": 1024,
+  "vector_norms": [
+    0.9999999495638635,
+    1.0000000570717853,
+    1.0000000711398311
+  ],
+  "logits": [
+    9.87257194519043,
+    -5.347426891326904
+  ],
+  "model_revisions": {
+    "Qwen/Qwen3-Embedding-0.6B": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+    "mixedbread-ai/mxbai-rerank-base-v2": "3ea9d4dffa7d12a4f366be8e275c349de9fc9865"
+  },
+  "models": {
+    "embedding": {
+      "name": "Qwen/Qwen3-Embedding-0.6B",
+      "state": "ready",
+      "downloaded_bytes": null,
+      "total_bytes": null,
+      "error": null,
+      "device": "cpu",
+      "precision": "float32",
+      "fallback_reason": null
+    },
+    "reranker": {
+      "name": "mixedbread-ai/mxbai-rerank-base-v2",
+      "state": "ready",
+      "downloaded_bytes": null,
+      "total_bytes": null,
+      "error": null,
+      "device": "cpu",
+      "precision": "float32",
+      "fallback_reason": null
+    }
+  },
+  "finished_at": "2026-09-19T10:48:28.318241+00:00",
+  "hardware_supplement": {
+    "model": "AMD Ryzen 7 5800X 8-Core Processor",
+    "source": "lscpu on execution host; platform.processor() returned an empty string"
+  }
+}

@@ -9,8 +9,21 @@ This resolves the older-ticket prerequisite for build 0. Ticket 01 is complete; 
 questions on 2026-09-18. Mentor was temporarily stopped for the run and restored active with both models ready.
 Independent ticket review and a focused re-review are complete, with all four findings addressed in the tickets and
 spec: stale CLI sessions after failed/stopped API turns, retained partial token usage, credential-replacement races,
-and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next session: build-0 ticket 02 in a fresh
-worktree off `main`.** No device work was started in ticket 01.
+and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Resume ticket 02's required Mac verification
+in `/home/drew/mentor-ticket-02`, branch `build-0/ticket-02-inference-devices`.** It is implemented but incomplete:
+the actual Apple Silicon run is outstanding, so this branch has not landed on main. No ticket 03 work has started.
+
+Ticket 02 progress (2026-09-19): device selection, safe precision, reranker warm-up and one-time MPS-to-CPU fallback,
+fused search on reranker failure, continuing model events and additive device/precision/fallback status are implemented.
+Clean hardware execution source `b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626`: CUDA regression 10/10 and real Linux
+CPU embeddings/reranking pass offline. Ordinary tests: 366 passed, 4 opt-in deselected; mypy 77 files and web
+typecheck/build pass. Independent reviews found no hard Standards or implementation Spec issues. See
+`docs/inference-devices.md` and `.scratch/mentor-build-0/ticket-02-review.md`. The live service was stopped for
+verification and restored active with both models ready; the branch was not installed. Mac access details were
+requested but not provided; the user said to continue, so all Linux work and a self-contained Mac handoff were prepared.
+Transfer `/tmp/mentor-ticket-02.bundle` to the Mac, clone its ticket branch, and run the two documented model checks
+there (automatic MPS selection and explicit CPU); return both reports. Do not close or land this ticket until the real
+Mac requirement passes. Review any resulting fixes before committing and fast-forwarding main.
 
 Ticket 01 evidence: `docs/retrieval-baseline.md`, `docs/baselines/build-0-cuda.json`, fixtures and manifest under
 `tests/fixtures/`. Clean execution revision: `673849dfe42b2dd0b197689914b6798c258991cd`. The private read-only snapshot

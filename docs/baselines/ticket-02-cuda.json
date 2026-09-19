@@ -1,0 +1,1001 @@
+{
+  "started_at": "2026-09-19T10:48:07.142675+00:00",
+  "source_revision": "b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626",
+  "source_files_sha256": {
+    "src/mentor/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/mentor/access.py": "728597225e83e81b2f242b3ca8de550caa5b0c7add9a4f19365a7424c06d5dd4",
+    "src/mentor/app.py": "f58fd6820570ba62bf7966728a733b91fb38abf663612434d0aa5618b1dcf5db",
+    "src/mentor/channels.py": "8df6ed93c270c90de1af7f8bfcfe2f62e1e1aed30088d745072c837c500a0d61",
+    "src/mentor/channels_api.py": "bbfedc76acc57a07acf8b6c7a4bfbbdc032602c9a75dc3f35f28cd25f85326b0",
+    "src/mentor/chat.py": "c84062775712cb09f9c78c86ec42c16b8725c5c889ca3a2b8c85689706742d6e",
+    "src/mentor/chat_api.py": "ade441cf4572a6a9d05ad5f9373173f2e8b91a995232b684e25ba980cb620266",
+    "src/mentor/claude_chat.py": "ac5bccb943db94c17d350a23d4f51b06473816bc24e988d7efacd8451d6ea128",
+    "src/mentor/cli.py": "e9c66fa2ccc02709ca4d8b20adb40736920ecfb5c0d7c48e9ac7277715d4f07e",
+    "src/mentor/config.py": "51a39c2af4fee8762bd8a3fa45cef11217c53bfde0c0e16e415789b9025c0b6b",
+    "src/mentor/conversations.py": "a93f4bf441c389760ae654ba18f5cd0913a56aaf9b5b5aad09b43b01f2895b44",
+    "src/mentor/db.py": "da856901024e98ea32d8506292beeb563e5252646035c1069115e4643f2b2d18",
+    "src/mentor/devices.py": "1cd3bf0ef840854f5111ed2c41ab6a37ec711ebfe8c4f93a106da7441e6f405d",
+    "src/mentor/errors.py": "3a76ac303af17c2ea1308370583f83996af9af06aeba9d7791f47a8d42a67542",
+    "src/mentor/events.py": "226a73e5a323875a58bedf25680d498a2e035bff60b3d00c8da79f799f4b4932",
+    "src/mentor/events_api.py": "ccac96dbb7298a026de01b322c213c96aae6823735a6e2b8708b2bef43ecd296",
+    "src/mentor/fakes.py": "850805d55178732ab33df3b0e6692fd29f924734fab085a2c93a3285399f3cee",
+    "src/mentor/groups.py": "30268624214fa49594f230893e573418cff887f25e1eaeeaf5289aa1cbac625a",
+    "src/mentor/groups_api.py": "f9cd4d971fbd73344c3d96e23687ab067ad4cb96f497acb54551c8f9e6428ee3",
+    "src/mentor/mcp_server.py": "c06aa7631f44a4bbd91f7b8ce59dd8473e2bdd64c6eafdc49bc3b977200c660c",
+    "src/mentor/models.py": "6be2e148c6b405e45fd686cf07669d05a5028a0c895e5bc46fe518a0e9b512f1",
+    "src/mentor/ports.py": "f1c00546b5627b9c6c7565d64bbdc74f47ca6f7f8d0490d732cab62634c072a7",
+    "src/mentor/proxy.py": "ad65db14f45b5b030d4d353c6302487375f56b0d7c117834a827597421ccc438",
+    "src/mentor/ranking.py": "611561cca9d9fd5750dc3f239d6259c669b3dfe380c57b62c9801e12b099a0a1",
+    "src/mentor/scope.py": "94e8d78fdc7a0af49925519c163ffb7874894a54fe8fc94567322c4b138460b5",
+    "src/mentor/search.py": "8b8992cf898dfd9c07fc229a2a73c50a8704fc9f494482cdfc165b55fa73c87b",
+    "src/mentor/search_api.py": "e53ea97c232cfa4b3fa858ecb8899ba184cf6f8eddd9cef37503807e741f788d",
+    "src/mentor/segmentation.py": "f95c1db73119ab3a80a6bdf10a7624f495161009040675a635338e0b83cdb19f",
+    "src/mentor/segments.py": "a4cfacc0842a361ab8573c8edb7b12685f8893a28bb1022e24160c6f43209884",
+    "src/mentor/service.py": "3ee455f6b2898072f018b1e1daddb6e9057051f987274a937cd6ad24bc9253c6",
+    "src/mentor/sources.py": "74988c103475ef4bd5ed47ba4877c423343097ad200bef4f5b00a11265666ade",
+    "src/mentor/sql.py": "511a5f8dc78c069522fff6e4b04dd4c147beb932cdaf936b11c61dcc716f8861",
+    "src/mentor/status_command.py": "135a20f52ada616e24c36280c4ad2733acfd5e55a37d61c4ae2611fa3a2719f2",
+    "src/mentor/sync_command.py": "89b8f5494b9def41392661e10533b16601d33a33f8c4bef24d8777317d19141e",
+    "src/mentor/sync_worker.py": "1913a3b2bbcbfcaed69f1f726aecfcb5a1103e0202032ef72c3e32c6b8b557ba",
+    "src/mentor/syncs.py": "bb6ae9136c797f5b6c31b9cba4cd50c0de6d3db5f9290cf795a03b28bd247aa9",
+    "src/mentor/syncs_api.py": "97a4810802e20a040d2a2a1f2278d3f53705c64ac6e842f291cddecdc3e3e495",
+    "src/mentor/videos.py": "273572d655f3da9c6b499588daaade029962f4d7404262b39164ebfa862d92af",
+    "src/mentor/youtube.py": "cd8c61b00cd3c5098ca5363cb26ed141ca39afc83fd35dd01c07adaf411ee014"
+  },
+  "runner_sha256": "1f160e7ef4994a4c6a4e5fb44a50508ad6a862dd5f522e7e323452adbaaa1207",
+  "runner_inputs_sha256": "8b23f41dccc1e097bbfb9e068084b309bd3bb21c2fb106344a39ca2a5ac3dfdf",
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source_dirty": false,
+  "manifest": {
+    "snapshot": {
+      "sha256": "5504c1b1e96d4a11a7e229be6d3c24d9201e598e8d8fcbe724792f56d524c7da",
+      "schema_version": 11
+    },
+    "embedding": {
+      "model": "Qwen/Qwen3-Embedding-0.6B",
+      "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "dimension": 1024
+    },
+    "reranker": {
+      "model": "mixedbread-ai/mxbai-rerank-base-v2",
+      "revision": "3ea9d4dffa7d12a4f366be8e275c349de9fc9865"
+    }
+  },
+  "fixture_sha256": "9ecd3988c0fb1415e097152e7250860a260070bf483d8523fbd9804d8ac877d6",
+  "reference_date": "2026-09-18",
+  "retrieval": {
+    "temperature": 3.0,
+    "recency": {
+      "off": null,
+      "gentle": {
+        "half_life_days": 3650,
+        "max_penalty": 0.15
+      },
+      "strong": {
+        "half_life_days": 1095,
+        "max_penalty": 0.5
+      }
+    }
+  },
+  "python": "3.13.14",
+  "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+  "hardware": "NVIDIA GeForce RTX 3090",
+  "cuda": "13.0",
+  "precision": "bfloat16",
+  "dependencies": {
+    "torch": "2.14.0",
+    "sentence-transformers": "6.0.1",
+    "transformers": "5.17.0",
+    "huggingface-hub": "1.31.0",
+    "sqlite-vec": "0.1.9",
+    "numpy": "2.5.3"
+  },
+  "questions": [
+    {
+      "id": "saas-pricing",
+      "inputs": {
+        "id": "saas-pricing",
+        "query": "Which SaaS pricing mistakes weaken pricing power, especially framing product value too low and segmenting only by customer size?",
+        "group": "SaaS marketing",
+        "limit": 10,
+        "prefer_recent": "gentle",
+        "required_video_ids": [
+          "JUB5t1SuIMo"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "JUB5t1SuIMo",
+          "segment_id": 23577,
+          "start_seconds": 144.52,
+          "score": 0.9655558542252013
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "JUB5t1SuIMo",
+          "segment_id": 23588,
+          "start_seconds": 951.84,
+          "score": 0.9417077186347567
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "JUB5t1SuIMo",
+          "segment_id": 23585,
+          "start_seconds": 731.72,
+          "score": 0.9395304751026236
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "YWUzN6zU-_A",
+          "segment_id": 23683,
+          "start_seconds": 1237.0,
+          "score": 0.8653962078134411
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "YWUzN6zU-_A",
+          "segment_id": 23680,
+          "start_seconds": 1018.959,
+          "score": 0.8427024761395161
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "YWUzN6zU-_A",
+          "segment_id": 23674,
+          "start_seconds": 584.08,
+          "score": 0.8427024761395161
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "vCvJjoolf3A",
+          "segment_id": 58269,
+          "start_seconds": 1430.28,
+          "score": 0.8237886479637415
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "oYRzvehnC64",
+          "segment_id": 23327,
+          "start_seconds": 237.36,
+          "score": 0.822795174808358
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "DZFwU33uSsA",
+          "segment_id": 57465,
+          "start_seconds": 1430.84,
+          "score": 0.8182706427604076
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "FlbAfgJ2umk",
+          "segment_id": 23507,
+          "start_seconds": 799.839,
+          "score": 0.8124220489621433
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "linkedin-outreach",
+      "inputs": {
+        "id": "linkedin-outreach",
+        "query": "How should a developer founder prepare a LinkedIn profile and build a prospect list before cold outreach?",
+        "group": "SaaS marketing",
+        "limit": 10,
+        "prefer_recent": "strong",
+        "required_video_ids": [
+          "OWvDbX5Fmps"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "OWvDbX5Fmps",
+          "segment_id": 23779,
+          "start_seconds": 74.12,
+          "score": 0.881265104624534
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "OWvDbX5Fmps",
+          "segment_id": 23778,
+          "start_seconds": 0.36,
+          "score": 0.869613494342266
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "OWvDbX5Fmps",
+          "segment_id": 23781,
+          "start_seconds": 221.68,
+          "score": 0.8667616560839265
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "Dt6HAEuwEug",
+          "segment_id": 23619,
+          "start_seconds": 651.76,
+          "score": 0.8506823248919019
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "Dt6HAEuwEug",
+          "segment_id": 23620,
+          "start_seconds": 724.92,
+          "score": 0.8320317655245585
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "MBxhzARQNeo",
+          "segment_id": 23427,
+          "start_seconds": 2020.68,
+          "score": 0.8224688256603981
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "C-e54fVQUlg",
+          "segment_id": 23491,
+          "start_seconds": 648.36,
+          "score": 0.8142157117357829
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "AKWkaV88B38",
+          "segment_id": 30253,
+          "start_seconds": 2695.56,
+          "score": 0.8111093284877189
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "qc-3ITd4310",
+          "segment_id": 23733,
+          "start_seconds": 1593.279,
+          "score": 0.7960777067727927
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "AKWkaV88B38",
+          "segment_id": 30254,
+          "start_seconds": 2770.0,
+          "score": 0.7705024181457945
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "localized-app-pricing",
+      "inputs": {
+        "id": "localized-app-pricing",
+        "query": "Why should I research competitor app prices by country instead of accepting Apple's automatic currency conversions?",
+        "group": "SaaS marketing",
+        "limit": 10,
+        "prefer_recent": "off",
+        "required_video_ids": [
+          "UcJnr_z20Cw"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "UcJnr_z20Cw",
+          "segment_id": 25218,
+          "start_seconds": 145.72,
+          "score": 0.9525741268224334
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "UcJnr_z20Cw",
+          "segment_id": 25216,
+          "start_seconds": 0.04,
+          "score": 0.9444507398423881
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "oe_lA1V6XHo",
+          "segment_id": 36314,
+          "start_seconds": 1361.28,
+          "score": 0.9422238417466198
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "oe_lA1V6XHo",
+          "segment_id": 36319,
+          "start_seconds": 1726.64,
+          "score": 0.9399133498259924
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "UcJnr_z20Cw",
+          "segment_id": 25217,
+          "start_seconds": 73.64,
+          "score": 0.9387259217296546
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "oe_lA1V6XHo",
+          "segment_id": 36322,
+          "start_seconds": 1921.08,
+          "score": 0.935030830871336
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "01IzIHZvfZg",
+          "segment_id": 26462,
+          "start_seconds": 357.75,
+          "score": 0.9284088005554476
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "wMU3ADlptgo",
+          "segment_id": 30308,
+          "start_seconds": 2182.24,
+          "score": 0.9255894698626274
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "1BX9vrdWhnA",
+          "segment_id": 37198,
+          "start_seconds": 1523.159,
+          "score": 0.9132648470797085
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "GkP-YmuU9A0",
+          "segment_id": 45705,
+          "start_seconds": 361.12,
+          "score": 0.9132648470797085
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "music-retention",
+      "inputs": {
+        "id": "music-retention",
+        "query": "How can adding licensed music to an app improve user engagement and retention?",
+        "group": "SaaS marketing",
+        "limit": 10,
+        "prefer_recent": "gentle",
+        "required_video_ids": [
+          "osYXbQ41TmQ"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "osYXbQ41TmQ",
+          "segment_id": 24702,
+          "start_seconds": 0.16,
+          "score": 0.9385561800941224
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "osYXbQ41TmQ",
+          "segment_id": 24706,
+          "start_seconds": 293.68,
+          "score": 0.9310520025475262
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "osYXbQ41TmQ",
+          "segment_id": 24703,
+          "start_seconds": 72.96,
+          "score": 0.9157273046301511
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "WOvAzavRBdA",
+          "segment_id": 32533,
+          "start_seconds": 2091.76,
+          "score": 0.9082070948679534
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "WOvAzavRBdA",
+          "segment_id": 32534,
+          "start_seconds": 2164.16,
+          "score": 0.9049923063324656
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "WOvAzavRBdA",
+          "segment_id": 32532,
+          "start_seconds": 2019.039,
+          "score": 0.8749690520997377
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "8eUSszI8tBo",
+          "segment_id": 34505,
+          "start_seconds": 2831.359,
+          "score": 0.8604029788900367
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "dF0plMPMWuE",
+          "segment_id": 46269,
+          "start_seconds": 687.04,
+          "score": 0.8567602092714905
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "nIOtLRJ2dxU",
+          "segment_id": 25239,
+          "start_seconds": 576.959,
+          "score": 0.8394304841756453
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "V3e8LvmuWHM",
+          "segment_id": 40366,
+          "start_seconds": 64.75,
+          "score": 0.8393919182686141
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "positioning-alternatives",
+      "inputs": {
+        "id": "positioning-alternatives",
+        "query": "In a positioning exercise, why should competitive alternatives include manual processes and the customer's status quo?",
+        "group": "SaaS marketing",
+        "limit": 10,
+        "prefer_recent": "gentle",
+        "required_video_ids": [
+          "BDkpuQps4nk"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "BDkpuQps4nk",
+          "segment_id": 57190,
+          "start_seconds": 206.879,
+          "score": 0.9666856246202568
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "BDkpuQps4nk",
+          "segment_id": 57201,
+          "start_seconds": 889.279,
+          "score": 0.9637668938352797
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "BDkpuQps4nk",
+          "segment_id": 57202,
+          "start_seconds": 962.24,
+          "score": 0.9584614669109318
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "8I32-60GJGA",
+          "segment_id": 57263,
+          "start_seconds": 1.28,
+          "score": 0.9448429896923368
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "S_A5RS-mIsc",
+          "segment_id": 57583,
+          "start_seconds": 74.439,
+          "score": 0.9420834082593237
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "S_A5RS-mIsc",
+          "segment_id": 57584,
+          "start_seconds": 146.04,
+          "score": 0.9406192427566413
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "UeNwIuRw36I",
+          "segment_id": 57236,
+          "start_seconds": 1538.88,
+          "score": 0.936312103753631
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "S_A5RS-mIsc",
+          "segment_id": 57586,
+          "start_seconds": 276.96,
+          "score": 0.935873744354659
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "UeNwIuRw36I",
+          "segment_id": 57227,
+          "start_seconds": 935.6,
+          "score": 0.9304105294341198
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "sQkSDNcinFE",
+          "segment_id": 57660,
+          "start_seconds": 470.159,
+          "score": 0.9260156420081513
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "test-positioning",
+      "inputs": {
+        "id": "test-positioning",
+        "query": "Why is A/B testing a homepage a poor way to validate B2B positioning, and how do bad-fit visitors confound the result?",
+        "group": "SaaS marketing",
+        "limit": 10,
+        "prefer_recent": "strong",
+        "required_video_ids": [
+          "D9pf_iEomjY"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "D9pf_iEomjY",
+          "segment_id": 57125,
+          "start_seconds": 276.76,
+          "score": 0.9138389439250149
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "D9pf_iEomjY",
+          "segment_id": 57124,
+          "start_seconds": 207.44,
+          "score": 0.8965409497162231
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "D9pf_iEomjY",
+          "segment_id": 57126,
+          "start_seconds": 338.32,
+          "score": 0.8799865283202319
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "UeNwIuRw36I",
+          "segment_id": 57227,
+          "start_seconds": 935.6,
+          "score": 0.8628021031471038
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "UeNwIuRw36I",
+          "segment_id": 57228,
+          "start_seconds": 1004.079,
+          "score": 0.8600263416464344
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "UeNwIuRw36I",
+          "segment_id": 57225,
+          "start_seconds": 791.12,
+          "score": 0.8541745986101812
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "FlbAfgJ2umk",
+          "segment_id": 23524,
+          "start_seconds": 2036.8,
+          "score": 0.8262973090556003
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "Q-6KQGbV3r0",
+          "segment_id": 33818,
+          "start_seconds": 2952.48,
+          "score": 0.7325541862520875
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "FlbAfgJ2umk",
+          "segment_id": 23507,
+          "start_seconds": 799.839,
+          "score": 0.7072492728309668
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "C0FlwT0Plag",
+          "segment_id": 25059,
+          "start_seconds": 659.72,
+          "score": 0.6769129035758393
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "raise-existing-prices",
+      "inputs": {
+        "id": "raise-existing-prices",
+        "query": "What should I put in a price increase letter to existing customers to explain the value they already receive?",
+        "group": "business growth",
+        "limit": 10,
+        "prefer_recent": "off",
+        "required_video_ids": [
+          "Gy-RmpRif-I"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "Gy-RmpRif-I",
+          "segment_id": 10099,
+          "start_seconds": 106.24,
+          "score": 0.9455336638716532
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "oRMG_HpOAN4",
+          "segment_id": 4906,
+          "start_seconds": 1389.279,
+          "score": 0.9422238417466198
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "Gy-RmpRif-I",
+          "segment_id": 10100,
+          "start_seconds": 179.36,
+          "score": 0.9387259217296546
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "Gy-RmpRif-I",
+          "segment_id": 10103,
+          "start_seconds": 403.84,
+          "score": 0.9362850057480346
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "B2QbLzHvKbg",
+          "segment_id": 13483,
+          "start_seconds": 10628.96,
+          "score": 0.9226683592540582
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "QTZsh3BgOwY",
+          "segment_id": 4098,
+          "start_seconds": 585.16,
+          "score": 0.9028382824509342
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "oRMG_HpOAN4",
+          "segment_id": 4907,
+          "start_seconds": 1463.159,
+          "score": 0.8991213772699436
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "QTZsh3BgOwY",
+          "segment_id": 4096,
+          "start_seconds": 439.599,
+          "score": 0.8933094060543487
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "OQf2Ba-Lp_4",
+          "segment_id": 366,
+          "start_seconds": 366.16,
+          "score": 0.8785923002569277
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "QTZsh3BgOwY",
+          "segment_id": 4094,
+          "start_seconds": 293.039,
+          "score": 0.8763524676528907
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "retention-benchmarks",
+      "inputs": {
+        "id": "retention-benchmarks",
+        "query": "What monthly retention benchmarks did Hormozi learn from Skool communities, and why does reducing churn from 20% to 10% double lifetime value?",
+        "group": "business growth",
+        "limit": 10,
+        "prefer_recent": "gentle",
+        "required_video_ids": [
+          "-j8_YCWZ05Q"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "WeH2E1fGgaw",
+          "segment_id": 11679,
+          "start_seconds": 2768.88,
+          "score": 0.9285944484671744
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "-j8_YCWZ05Q",
+          "segment_id": 574,
+          "start_seconds": 74.64,
+          "score": 0.9278043955775694
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "DfXy_PzlC0o",
+          "segment_id": 11736,
+          "start_seconds": 1018.6,
+          "score": 0.924303534038109
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "_ooj0V4hpgw",
+          "segment_id": 12154,
+          "start_seconds": 2093.84,
+          "score": 0.9186539178143214
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "I0nCuqu7Cac",
+          "segment_id": 13020,
+          "start_seconds": 11126.399,
+          "score": 0.9182182272248557
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "FiL0r5_dUvM",
+          "segment_id": 2598,
+          "start_seconds": 1173.28,
+          "score": 0.914415934722304
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "-j8_YCWZ05Q",
+          "segment_id": 573,
+          "start_seconds": 0.0,
+          "score": 0.913512123292938
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "tnDC4ZJ0oy8",
+          "segment_id": 12357,
+          "start_seconds": 3329.839,
+          "score": 0.9132595332840895
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "I0nCuqu7Cac",
+          "segment_id": 13021,
+          "start_seconds": 11196.0,
+          "score": 0.9078152000729027
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "DfXy_PzlC0o",
+          "segment_id": 11732,
+          "start_seconds": 727.24,
+          "score": 0.9069227654518229
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "overtime-profit",
+      "inputs": {
+        "id": "overtime-profit",
+        "query": "How does unplanned overtime leak profit from a cabinet shop, and why should I treat it as a system problem?",
+        "group": "business growth",
+        "limit": 10,
+        "prefer_recent": "strong",
+        "required_video_ids": [
+          "H-vDOxOIML8"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "H-vDOxOIML8",
+          "segment_id": 47734,
+          "start_seconds": 2738.76,
+          "score": 0.9330867139860635
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "H-vDOxOIML8",
+          "segment_id": 47695,
+          "start_seconds": 0.0,
+          "score": 0.9240219621594055
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "H-vDOxOIML8",
+          "segment_id": 47715,
+          "start_seconds": 1370.04,
+          "score": 0.9197751435568554
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "9rUtizrNoo0",
+          "segment_id": 48551,
+          "start_seconds": 1021.36,
+          "score": 0.9014592114970734
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "4NlR7zGdBAQ",
+          "segment_id": 48370,
+          "start_seconds": 2778.8,
+          "score": 0.8874779145037771
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "9rUtizrNoo0",
+          "segment_id": 48542,
+          "start_seconds": 364.28,
+          "score": 0.8844706480891212
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "rjX1bmeptoM",
+          "segment_id": 48692,
+          "start_seconds": 2487.08,
+          "score": 0.8776326323954106
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "9rUtizrNoo0",
+          "segment_id": 48552,
+          "start_seconds": 1094.44,
+          "score": 0.8622597702126391
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "i9bkEvySZa4",
+          "segment_id": 49093,
+          "start_seconds": 1096.08,
+          "score": 0.8342638531249998
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "eqaBxdgBRrc",
+          "segment_id": 49674,
+          "start_seconds": 1096.24,
+          "score": 0.8140016807355162
+        }
+      ],
+      "missing_video_ids": []
+    },
+    {
+      "id": "estimating-assumptions",
+      "inputs": {
+        "id": "estimating-assumptions",
+        "query": "How can reviewing a cabinet shop's estimating assumptions uncover unpaid installer travel time and recover lost profit?",
+        "group": "business growth",
+        "limit": 10,
+        "prefer_recent": "off",
+        "required_video_ids": [
+          "UR8O8TeI4ys"
+        ],
+        "pass_condition": "Every required Video must appear among the first 10 returned Segments; duplicate Segments of a Video do not satisfy a different required Video."
+      },
+      "passed": true,
+      "rankings": [
+        {
+          "rank": 1,
+          "youtube_video_id": "UR8O8TeI4ys",
+          "segment_id": 55079,
+          "start_seconds": 457.65,
+          "score": 0.9241418199787566
+        },
+        {
+          "rank": 2,
+          "youtube_video_id": "UR8O8TeI4ys",
+          "segment_id": 55074,
+          "start_seconds": 100.32,
+          "score": 0.9099070060380482
+        },
+        {
+          "rank": 3,
+          "youtube_video_id": "UR8O8TeI4ys",
+          "segment_id": 55073,
+          "start_seconds": 28.26,
+          "score": 0.9099070060380482
+        },
+        {
+          "rank": 4,
+          "youtube_video_id": "eqaBxdgBRrc",
+          "segment_id": 49674,
+          "start_seconds": 1096.24,
+          "score": 0.8913074976164841
+        },
+        {
+          "rank": 5,
+          "youtube_video_id": "htpg1fSGKQA",
+          "segment_id": 51417,
+          "start_seconds": 0.199,
+          "score": 0.8913074976164841
+        },
+        {
+          "rank": 6,
+          "youtube_video_id": "VKonDqYFgGY",
+          "segment_id": 47949,
+          "start_seconds": 795.96,
+          "score": 0.8829671500784982
+        },
+        {
+          "rank": 7,
+          "youtube_video_id": "UXjbeebPME0",
+          "segment_id": 54542,
+          "start_seconds": 511.44,
+          "score": 0.8829671500784982
+        },
+        {
+          "rank": 8,
+          "youtube_video_id": "lMZvQkQeByU",
+          "segment_id": 49500,
+          "start_seconds": 0.08,
+          "score": 0.8740772351648677
+        },
+        {
+          "rank": 9,
+          "youtube_video_id": "-RGral3WykQ",
+          "segment_id": 51532,
+          "start_seconds": 3254.28,
+          "score": 0.8717662624074807
+        },
+        {
+          "rank": 10,
+          "youtube_video_id": "EmGEoqbT_HA",
+          "segment_id": 52042,
+          "start_seconds": 0.179,
+          "score": 0.8670357598021706
+        }
+      ],
+      "missing_video_ids": []
+    }
+  ],
+  "passed": true,
+  "models": {
+    "embedding": {
+      "name": "Qwen/Qwen3-Embedding-0.6B",
+      "state": "ready",
+      "downloaded_bytes": null,
+      "total_bytes": null,
+      "error": null,
+      "device": "cuda",
+      "precision": "bfloat16",
+      "fallback_reason": null
+    },
+    "reranker": {
+      "name": "mixedbread-ai/mxbai-rerank-base-v2",
+      "state": "ready",
+      "downloaded_bytes": null,
+      "total_bytes": null,
+      "error": null,
+      "device": "cuda",
+      "precision": "bfloat16",
+      "fallback_reason": null
+    }
+  },
+  "finished_at": "2026-09-19T10:48:19.748246+00:00",
+  "snapshot_unchanged": true,
+  "artifact_note": "Only model-status cache paths replaced with manifest repository names; execution results unchanged."
+}
