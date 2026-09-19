@@ -9,12 +9,23 @@ This resolves the older-ticket prerequisite for build 0. Ticket 01 is complete; 
 questions on 2026-09-18. Mentor was temporarily stopped for the run and restored active with both models ready.
 Independent ticket review and a focused re-review are complete, with all four findings addressed in the tickets and
 spec: stale CLI sessions after failed/stopped API turns, retained partial token usage, credential-replacement races,
-and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: ticket 04, platform paths and
-foreground lifecycle, in a fresh worktree off main.** On 2026-09-19 Drew corrected the hardware assumption:
+and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: ticket 05, secrets and preferences,
+in a fresh worktree off main.** Ticket 04 is complete. On 2026-09-19 Drew corrected the hardware assumption:
 no Apple Silicon machine is available, so Mac tests are explicitly deferred. Ticket 02's reviewed implementation
 is accepted for landing with Linux CPU/CUDA evidence; ticket 03 is parked, not completed. Ticket 10's Mac checks
 are likewise deferred. Resume unchecked hardware verification when a real Mac becomes available; do not claim
 MPS execution or Mac installation verified. This decision supersedes earlier Mac closure gates below.
+
+Ticket 04 complete (2026-09-19), implementation `5971370`: `config.config_dir(env, platform, home)` and
+`data_dir(env, platform, home)` are the pure path functions. `load_config` uses them and accepts platform/home
+injection, preserving Linux defaults and explicit overrides. `ensure_directories(config)` prepares config/data
+directories for foreground startup without overwriting files. `mentor serve` prints the configured loopback URL
+as a startup attempt and explains terminal lifetime; off-Linux service installation refuses before schedule
+validation and Sync skips systemctl. Linux service/timer behavior remains unchanged. README and ADR 0002 document
+the paths. Tests: 394 passed, 4 opt-in deselected; mypy 78 files and web typecheck passed. Isolated real Linux
+foreground health/first-start/Ctrl+C check passed with temporary data and no loaded model weights. Independent
+Standards and Spec reviews: zero findings. See `.scratch/mentor-build-0/ticket-04-review.md`. The live service
+and library were untouched; no new version was installed into the running service.
 
 Ticket 02 progress (2026-09-19): device selection, safe precision, reranker warm-up and one-time MPS-to-CPU fallback,
 fused search on reranker failure, continuing model events and additive device/precision/fallback status are implemented.
