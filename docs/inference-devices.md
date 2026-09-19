@@ -58,10 +58,10 @@ neither expected Videos nor the frozen corpus may be regenerated.
 
 ## Execution record
 
-**Mac verification is pending. Ticket 02 is not complete and has not landed on main.**
-No Mac SSH host/user or Mac output was supplied in this session. The implementation and
-Linux checks are committed on `build-0/ticket-02-inference-devices`; do not start ticket 03
-or claim MPS support verified until the real Mac commands above pass.
+**Mac verification is explicitly deferred by Drew (2026-09-19): no Apple Silicon machine is available.**
+The reviewed implementation and Linux checks are accepted for landing. Ticket 03's comparison
+is parked; continue with ticket 04. The commands above remain the reopening procedure when
+hardware becomes available. MPS support has not been verified on a real Mac.
 
 Linux execution on clean `b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626`, 2026-09-19:
 
@@ -102,7 +102,7 @@ cd ~/mentor-ticket-02
 uv sync --frozen
 ```
 
-Then run the Mac commands above and return both JSON reports. No database snapshot or personal
-configuration is needed for this ticket's Mac device test. Resolve failures here, then update
-the ticket, review any fixes, commit and fast-forward main. The full-corpus MPS comparison
-belongs to ticket 03.
+When hardware is available, use current main (the bundle is an earlier implementation handoff),
+run the Mac commands above and retain both JSON reports. No database snapshot or personal
+configuration is needed for this ticket's Mac device test. Resolve failures here and review any
+fixes. The full-corpus MPS comparison belongs to the deferred ticket 03.

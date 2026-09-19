@@ -5,7 +5,9 @@ questions recorded before the device change. (Story 14.)
 
 **Blocked by:** 02 — Run inference on CUDA, MPS or CPU and preserve search on reranker failure.
 
-**Status:** ready-for-agent
+**Status:** deferred — Drew has no Apple Silicon machine and explicitly deferred Mac testing on 2026-09-19.
+No comparison has run; none of the checks below is complete. Resume when a real Apple Silicon Mac is available,
+using the exact ticket-01 snapshot and fixtures. This deferral does not block independent tickets 04–09.
 
 - [ ] Transfer the exact frozen snapshot and fixture from ticket 01 to an Apple Silicon Mac. Verify the checksum,
   schema, model revisions, reference date, retrieval settings and required Video identifiers before comparing.

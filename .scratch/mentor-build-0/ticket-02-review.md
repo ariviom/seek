@@ -1,5 +1,9 @@
 # Ticket 02 branch review — 2026-09-19
 
+Subsequent execution decision: Drew explicitly deferred Mac testing because no Apple Silicon machine is available
+(2026-09-19). The reviewed implementation is accepted for landing; the Mac check remains unchecked and unverified.
+The original review's hardware closure blocker below is superseded by that decision, not satisfied by Linux tests.
+
 Fixed point: `61334e9`. Separate Standards and Spec reviewers inspected
 `git diff 61334e9...b7b39ad`, the ticket, spec, ADR and surrounding implementation.
 A Standards attempt hit a usage limit; the retry completed. Available agents were used;

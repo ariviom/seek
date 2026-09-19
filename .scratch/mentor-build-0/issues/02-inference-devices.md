@@ -6,8 +6,8 @@ and still search if reranking fails. Drew's existing CUDA behaviour and stored v
 
 **Blocked by:** 01 — Freeze real retrieval questions and record the CUDA baseline.
 
-**Status:** in-progress — implementation, Linux CPU/CUDA verification and review complete;
-awaiting required Apple Silicon Mac execution. Not landed on main.
+**Status:** implemented and accepted for landing — Mac verification explicitly deferred by Drew on 2026-09-19.
+The unchecked Mac criterion remains unverified; Linux CPU/CUDA evidence is recorded below.
 
 - [x] Choose CUDA, then MPS, then CPU through a pure function of an injected probe result. Pass the selection to both
   model adapters, including standalone CLI Sync/reindex wiring as well as the server. No CUDA-only refusal remains.
@@ -38,7 +38,9 @@ awaiting required Apple Silicon Mac execution. Not landed on main.
 failure and failed CPU retry; existing opt-in real-model checks extended to the selected device. Use injected model
 execution failures where required to cover the wrapper fallback itself. Record the actual Mac and CUDA results.
 
-**Closure precondition:** Mac access. Do not close solely on Linux unit tests.
+**Revised closure decision (Drew, 2026-09-19):** no Apple Silicon machine is available. Defer the real Mac
+checks and land the reviewed implementation with its Linux CPU/CUDA evidence. Reopen the unchecked Mac
+criterion when hardware becomes available; do not claim MPS execution verified.
 
 ## Progress — 2026-09-19
 
@@ -55,5 +57,5 @@ remains open. Details, exact commands and reports: `docs/inference-devices.md`.
 - Independent whole-branch reviews: no hard Standards violations or implementation Spec findings.
   An optional duplicated test-fake observation was retained for explicit, independent seam setup.
 - Mentor's previous active service state restored, both installed models ready. No live reinstall.
-- Missing input: Mac SSH access or the actual reports from the prepared Mac verification commands.
-  Do not mark done, land on main, or proceed to ticket 03 until that requirement is satisfied.
+- Mac execution remains deferred under Drew's revised decision above. Ticket 03 is parked for the same
+  hardware limitation. Proceed with ticket 04; preserve the prepared verification commands and frozen corpus.

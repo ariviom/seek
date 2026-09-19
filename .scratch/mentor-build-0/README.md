@@ -2,8 +2,9 @@
 
 Status: breakdown approved by Drew on 2026-09-18; ten tickets published locally and independently reviewed.
 All four planning review findings are addressed. Ticket 01 is complete: the real CUDA baseline
-passed all ten questions on 2026-09-18. Ticket 02 is implemented on its own branch with passing
-Linux CUDA/CPU verification, awaiting required Mac execution before landing. Tickets 03–10 remain ready-for-agent.
+passed all ten questions on 2026-09-18. Ticket 02 is accepted for landing with passing Linux CUDA/CPU
+verification; Drew explicitly deferred its Mac checks on 2026-09-19. Ticket 03 is parked for lack of hardware.
+Tickets 04–10 remain ready-for-agent; ticket 10's Mac execution steps are also deferred, not passed.
 
 Source: spec 0003 (ready-for-agent), ADRs 0004 and 0005. The spec takes precedence over the desktop roadmap.
 The source documents were committed as `0db90a4` before drafting this breakdown.
@@ -32,7 +33,9 @@ The shared prerequisites below still apply before implementation starts.
 - Use the reviewed spec and ticket set on `main` as the base for implementation worktrees.
 - Run ticket 01 first. The dependency graph shows actual technical prerequisites, not permission to change inference
   before recording the baseline. The numbered order is the recommended serial execution order.
-- Mac access is a closure precondition for 02, 03 and 10; Drew has it. Fake probes do not satisfy these checks.
+- Drew corrected the hardware assumption on 2026-09-19: no Apple Silicon machine is available. Real Mac checks
+  for 02, 03 and 10 are deferred. Ticket 02 may land; park 03 and proceed with 04. Fake probes do not constitute
+  Mac evidence; resume the unchecked hardware steps when a real machine becomes available.
 - Follow the handoff's implementation process: one ticket per session in a worktree off `main`, with `opus-worker`
   subagents and a reviewer pass over the whole branch at the end. Every ticket lands with `main` working.
 - Ticket 06 is deliberately the largest slice: the spec requires the new engine, selection and status to land

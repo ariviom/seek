@@ -9,9 +9,12 @@ This resolves the older-ticket prerequisite for build 0. Ticket 01 is complete; 
 questions on 2026-09-18. Mentor was temporarily stopped for the run and restored active with both models ready.
 Independent ticket review and a focused re-review are complete, with all four findings addressed in the tickets and
 spec: stale CLI sessions after failed/stopped API turns, retained partial token usage, credential-replacement races,
-and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Resume ticket 02's required Mac verification
-in `/home/drew/mentor-ticket-02`, branch `build-0/ticket-02-inference-devices`.** It is implemented but incomplete:
-the actual Apple Silicon run is outstanding, so this branch has not landed on main. No ticket 03 work has started.
+and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: ticket 04, platform paths and
+foreground lifecycle, in a fresh worktree off main.** On 2026-09-19 Drew corrected the hardware assumption:
+no Apple Silicon machine is available, so Mac tests are explicitly deferred. Ticket 02's reviewed implementation
+is accepted for landing with Linux CPU/CUDA evidence; ticket 03 is parked, not completed. Ticket 10's Mac checks
+are likewise deferred. Resume unchecked hardware verification when a real Mac becomes available; do not claim
+MPS execution or Mac installation verified. This decision supersedes earlier Mac closure gates below.
 
 Ticket 02 progress (2026-09-19): device selection, safe precision, reranker warm-up and one-time MPS-to-CPU fallback,
 fused search on reranker failure, continuing model events and additive device/precision/fallback status are implemented.
@@ -21,9 +24,9 @@ typecheck/build pass. Independent reviews found no hard Standards or implementat
 `docs/inference-devices.md` and `.scratch/mentor-build-0/ticket-02-review.md`. The live service was stopped for
 verification and restored active with both models ready; the branch was not installed. Mac access details were
 requested but not provided; the user said to continue, so all Linux work and a self-contained Mac handoff were prepared.
-Transfer `/tmp/mentor-ticket-02.bundle` to the Mac, clone its ticket branch, and run the two documented model checks
-there (automatic MPS selection and explicit CPU); return both reports. Do not close or land this ticket until the real
-Mac requirement passes. Review any resulting fixes before committing and fast-forwarding main.
+When Mac access becomes available, use current main and run the two documented model checks (automatic MPS
+selection and explicit CPU), retaining both reports. The `/tmp/mentor-ticket-02.bundle` is an earlier handoff snapshot.
+Review any resulting fixes, then resume ticket 03 against the frozen corpus. Mac work does not block ticket 04.
 
 Ticket 01 evidence: `docs/retrieval-baseline.md`, `docs/baselines/build-0-cuda.json`, fixtures and manifest under
 `tests/fixtures/`. Clean execution revision: `673849dfe42b2dd0b197689914b6798c258991cd`. The private read-only snapshot

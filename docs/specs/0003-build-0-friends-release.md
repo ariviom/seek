@@ -6,6 +6,11 @@ differ, this spec wins, and the brief's milestones 1 and 4 to 6 are deferred by 
 (ADR 0003): Channel, Group, Video, Transcript, Segment, Citation, Sync, Pipeline stage, Conversation. New decisions:
 ADR 0004 (chat engines), ADR 0005 (inference device). Shaped by a grilling session on 2026-09-17.
 
+Execution amendment — Drew, 2026-09-19: no Apple Silicon machine is available. Real Mac testing for tickets
+02, 03 and 10 is explicitly deferred. Land ticket 02's reviewed implementation with its recorded Linux CPU/CUDA
+evidence, park ticket 03, and continue with ticket 04. Keep Mac checks unchecked with reopening instructions;
+this supersedes the Mac-in-this-session closure gates below without claiming MPS or Mac installation verified.
+
 ## Problem Statement
 
 Mentor runs on exactly one machine in the world. A friend who wanted to try it could not: the embedding and reranking

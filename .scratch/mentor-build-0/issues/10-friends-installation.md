@@ -9,6 +9,11 @@ supported service path. (Stories 1–2, 8, 33, 40, 47; final verification of the
 
 **Status:** ready-for-agent
 
+**Mac verification deferred (Drew, 2026-09-19):** Apple Silicon hardware is unavailable. The Mac-specific
+execution and measurement checks below remain unchecked and deferred; retain them for when hardware is
+available. Continue implementation and non-Mac verification in ticket order without claiming a verified Mac
+release. Ticket 03's hardware-dependent comparison is likewise parked, not passed.
+
 - [ ] Provide a per-operating-system README path for Apple Silicon macOS and Linux. State Python requirements and
   how uv supplies the compatible interpreter; enumerate uv, Node 22 (at least the web build's required minor), pnpm
   and any VCS prerequisite of the chosen public-repository install command, each with a check and rough setup time.
