@@ -13,6 +13,7 @@ from mentor.claude_chat import ClaudeChatEngine
 from mentor.config import HOST, Config, ConfigError, load_config
 from mentor.errors import NotFound
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
+from mentor.devices import probe_device, select_device
 from mentor.service import TIMER_NAME, UNIT_NAME, install_service
 from mentor.status_command import format_list, format_status, list_all, status
 from mentor.sync_command import SyncCommandError, answers, sync_channels
@@ -51,8 +52,9 @@ def serve() -> None:
     # proxy_headers=False: forwarded headers are handled deliberately by the app (ticket 17's
     # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
     gpu = GpuRunner()
-    embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu)
-    reranker = CrossEncoderReranker(config.reranker_model, gpu)
+    selection = select_device(probe_device())
+    embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu, selection)
+    reranker = CrossEncoderReranker(config.reranker_model, gpu, selection)
     youtube = _youtube(config)
     app = create_app(config, youtube, embedder, reranker, _chat_engine(config))
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
@@ -68,7 +70,9 @@ def _service_active() -> bool:
 
 def sync(channel: str | None, reindex: bool = False) -> None:
     config = _config()
-    embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, GpuRunner())
+    embedder = SentenceTransformerEmbedder(
+        config.embedding_model, config.embedding_dimension, GpuRunner(), select_device(probe_device())
+    )
     # The service counts as active as soon as it starts, before it answers: at login a scheduled Sync can start
     # alongside it, and waiting keeps the models from loading twice.
     server_wait_seconds = 30 if _service_active() else 0

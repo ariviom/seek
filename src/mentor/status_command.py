@@ -123,11 +123,15 @@ def format_status(report: StatusReport) -> str:
 
 def _model_state(model: ModelStatus) -> str:
     text = f"{model.state} ({model.name})"
+    if model.device is not None:
+        text += f", {model.device} / {model.precision}"
     if model.state == "downloading" and model.downloaded_bytes is not None:
         total = f" of {model.total_bytes // 1_000_000} MB" if model.total_bytes else ""
         text += f", {model.downloaded_bytes // 1_000_000} MB{total}"
     if model.error:
         text += f": {model.error}"
+    if model.fallback_reason:
+        text += f"; CPU fallback: {model.fallback_reason}"
     return text
 
 

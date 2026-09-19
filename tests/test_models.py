@@ -9,6 +9,44 @@ from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscr
 from mentor.ports import ModelStatus
 
 
+async def test_model_events_continue_reporting_failures_after_startup(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    class RuntimeReranker(FakeReranker):
+        runtime_status: ModelStatus | None = None
+
+        def status(self) -> ModelStatus:
+            return self.runtime_status or super().status()
+
+    gate = Gate()
+    reranker = RuntimeReranker(before_load=gate)
+    app = create_app(
+        config, transcripts, FakeEmbedder(), reranker, FakeChatEngine(),
+        static_dir=tmp_path / "none", model_progress_seconds=0.01,
+    )
+    async with running(app) as client, event_stream(app) as events:
+        await gate.wait_entered()
+        gate.released.set()
+        await events.until(lambda e: e["type"] == "models" and e["models"]["reranker"]["state"] == "ready")
+        reranker.runtime_status = ModelStatus(
+            "fake-reranker", "ready", device="cpu", precision="float32", fallback_reason="MPS scoring unsupported"
+        )
+        fallback = await events.until(
+            lambda e: e["type"] == "models" and e["models"]["reranker"]["device"] == "cpu", timeout=0.5
+        )
+        assert fallback[-1]["models"] == (await client.get("/api/health")).json()["models"]
+        reranker.runtime_status = ModelStatus(
+            "fake-reranker", "failed", error="CPU scoring failed", device="cpu", precision="float32",
+            fallback_reason="MPS scoring unsupported",
+        )
+        changed = await events.until(
+            lambda e: e["type"] == "models" and e["models"]["reranker"]["state"] == "failed", timeout=0.5
+        )
+        health = (await client.get("/api/health")).json()["models"]
+    assert changed[-1]["models"] == health
+    assert health["reranker"]["error"] == "CPU scoring failed"
+
+
 async def test_models_load_in_the_background_while_health_and_events_report_their_progress(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
@@ -35,6 +73,9 @@ async def test_models_load_in_the_background_while_health_and_events_report_thei
             "downloaded_bytes": 340,
             "total_bytes": 1200,
             "error": None,
+            "device": None,
+            "precision": None,
+            "fallback_reason": None,
         },
         # Models load one at a time.
         "reranker": {
@@ -43,6 +84,9 @@ async def test_models_load_in_the_background_while_health_and_events_report_thei
             "downloaded_bytes": None,
             "total_bytes": None,
             "error": None,
+            "device": None,
+            "precision": None,
+            "fallback_reason": None,
         },
     }
     assert after == published[-1]["models"]
@@ -95,7 +139,7 @@ async def test_an_embedding_model_that_fails_to_load_fails_syncs_before_any_yout
     assert (search.status_code, search.json()["detail"]) == (503, "The GPU ran out of memory loading fake-embedder")
 
 
-async def test_a_reranking_model_that_fails_to_load_stops_search_but_not_syncs(
+async def test_a_reranking_model_that_fails_to_load_preserves_fused_search_and_syncs(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
@@ -109,4 +153,5 @@ async def test_a_reranking_model_that_fails_to_load_stops_search_but_not_syncs(
         search = await client.post("/api/search", json={"query": "welcome"})
 
     assert (synced["status"], synced["stage_counts"]["done"]) == ("done", 1)
-    assert (search.status_code, search.json()["detail"]) == (503, "Hugging Face has no model named fake-reranker")
+    assert search.status_code == 200
+    assert [(result["youtube_video_id"], result["score"]) for result in search.json()] == [("v-one", 0.0)]

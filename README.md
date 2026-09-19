@@ -8,7 +8,7 @@ answer links back to the moment in the Video where it was said.
 
 - Linux with systemd (for the service), and [uv](https://docs.astral.sh/uv/)
 - Node 22.12 or later and pnpm, to build the web UI during install
-- An NVIDIA GPU with about 3.5 GB free, for the embedding and reranking models
+- Inference uses NVIDIA CUDA when available, then Apple Silicon MPS, then CPU. CPU is supported but slower.
 - [Deno](https://deno.com) on PATH: yt-dlp needs it to solve YouTube's JavaScript challenges
 - For the web chat: Claude Code, logged in to your subscription
 - For live backups: the `sqlite3` command
@@ -283,8 +283,17 @@ citations, while observations from a project or web page are identified separate
 4. After changing settings, restart the service, then restart the agent session (or `/mcp` in Claude Code to
    reconnect).
 
-**Models fail to load.** The rail's health dot turns red; hover it for the reason, click it for the details. Usually the GPU is out of memory, because another process holds
-it. Free some memory, then `systemctl --user restart mentor`.
+**Models fail to load.** The rail's health dot turns red; hover it for the reason, click it for the details.
+`mentor status` and Server health show each model's device, precision and fallback reason. CUDA uses bfloat16 where
+supported and float32 otherwise; MPS and CPU use float32. If MPS reranking fails during warm-up or a search, only
+the reranker retries on CPU. If that also fails, search still returns fused results without reranking; their order
+may be less accurate. The embedding model must be ready for search and Syncs.
+
+If CUDA runs out of memory, free GPU memory and restart Mentor. A Video that runs out of CUDA memory during
+embedding can be retried without losing its transcript. Allocation failures on MPS or CPU are reported as model
+failures. A missing model cache needs an online restart to download it; download progress remains visible in
+the terminal and web UI. With both models fully cached, `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 mentor serve`
+starts and searches locally without network access. YouTube Sync and provider chat still need connectivity.
 
 **Syncs fail with "Sign in to confirm you're not a bot" or rate limits.** Wait before syncing again, raise
 `youtube_delay_seconds`, or add a `youtube_cookie_file`. If Videos fail on JavaScript challenges, check that `deno` is

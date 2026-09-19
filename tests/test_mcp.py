@@ -84,8 +84,9 @@ async def test_mcp_clients_see_the_tools_and_grounded_advisor_guidance(served: S
         assert [phrase for phrase in guidance if phrase not in text.lower()] == []
 
 
+@pytest.mark.parametrize("reranker_unavailable", [False, True])
 async def test_the_search_tool_returns_what_the_search_api_returns(
-    served: Served, transcripts: FakeTranscriptSource
+    served: Served, transcripts: FakeTranscriptSource, reranker: FakeReranker, reranker_unavailable: bool
 ) -> None:
     client, app = served
     fake_channel(transcripts, "UC-wright").videos.append(
@@ -98,11 +99,15 @@ async def test_the_search_tool_returns_what_the_search_api_returns(
     rex = await add_channel(client, "@rexkrueger")
     await sync(client, wright, rex)
     group = await add_group(client, "Joinery", wright)
+    if reranker_unavailable:
+        reranker.unavailable = "Reranker CPU scoring failed"
 
     for scope in ({}, {"group": group["id"]}, {"group": "joinery"}, {"channels": [rex["id"]]}):
         arguments: Json = {"query": "sharpen a chisel", "limit": 5, "prefer_recent": "strong", **scope}
         api = (await client.post("/api/search", json=arguments)).json()
         assert api != []
+        if reranker_unavailable:
+            assert all(result["score"] == 0 for result in api)
         assert await call(app, "search", **arguments) == {"result": api}
 
 

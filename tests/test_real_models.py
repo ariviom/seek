@@ -1,4 +1,4 @@
-"""With the configured models on the GPU, downloading them on first run; run with `uv run pytest -m real_models`."""
+"""With the real models on the selected device; run explicitly with `uv run pytest -m real_models`."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta

@@ -6,7 +6,7 @@ and still search if reranking fails. Drew's existing CUDA behaviour and stored v
 
 **Blocked by:** 01 — Freeze real retrieval questions and record the CUDA baseline.
 
-**Status:** ready-for-agent
+**Status:** in-progress — implementation and device verification in this session.
 
 - [ ] Choose CUDA, then MPS, then CPU through a pure function of an injected probe result. Pass the selection to both
   model adapters, including standalone CLI Sync/reindex wiring as well as the server. No CUDA-only refusal remains.

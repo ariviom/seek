@@ -20,7 +20,7 @@ from mentor import db, syncs
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import ChatEngineStatus, VideoUnavailable
+from mentor.ports import ChatEngineStatus, ModelStatus, VideoUnavailable
 from mentor.status_command import format_list, format_status, list_all, status
 
 
@@ -28,6 +28,25 @@ def server_config(config: Config, url: str) -> Config:
     port = urlsplit(url).port
     assert port is not None
     return replace(config, port=port)
+
+
+async def test_status_shows_actual_device_precision_and_fallback_without_losing_download_progress(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    gate = Gate()
+    reranker = FakeReranker(before_load=gate, status_while_loading=ModelStatus(
+        "fake-reranker", "downloading", downloaded_bytes=2_000_000, total_bytes=8_000_000,
+        device="cpu", precision="float32", fallback_reason="MPS scoring unsupported",
+    ))
+    app = create_app(config, transcripts, FakeEmbedder(), reranker, FakeChatEngine(), static_dir=tmp_path / "none")
+    async with serving(app) as url:
+        await gate.wait_entered()
+        report = await status(server_config(config, url), FakeChatEngine())
+        gate.released.set()
+    formatted = format_status(report)
+    assert "cpu / float32" in formatted
+    assert "CPU fallback: MPS scoring unsupported" in formatted
+    assert "2 MB of 8 MB" in formatted
 
 
 async def test_mentor_status_reports_the_running_servers_models_claude_cli_and_sync_queue(

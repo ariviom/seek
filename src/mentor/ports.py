@@ -142,6 +142,9 @@ class ModelStatus:
     total_bytes: int | None = None
     # Why loading failed, for the user.
     error: str | None = None
+    device: Literal["cuda", "mps", "cpu"] | None = None
+    precision: Literal["bfloat16", "float32"] | None = None
+    fallback_reason: str | None = None
 
 
 class Model(Protocol):

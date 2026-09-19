@@ -471,7 +471,7 @@ export function App() {
       )}
       <Lightbox controls={playback} />
       <Dialog open={healthOpen} onOpenChange={setHealthOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Server health</DialogTitle>
           </DialogHeader>
@@ -485,9 +485,9 @@ export function App() {
                 // The failure is what the user needs; the model's name only says which one failed.
                 const value =
                   status.state === "failed" && status.error !== null
-                    ? `${status.name} — ${status.error}`
+                    ? `${status.name} (${describeModel(status)}): ${status.error}`
                     : `${status.name} (${describeModel(status)})`;
-                return <Fact key={role} term={modelLabels[role]} value={value} />;
+                return <Fact key={role} term={modelLabels[role]} value={value} wrap />;
               })}
               <Fact
                 term="Claude CLI"
@@ -507,11 +507,11 @@ export function App() {
   );
 }
 
-function Fact({ term, value }: { term: string; value: string }) {
+function Fact({ term, value, wrap = false }: { term: string; value: string; wrap?: boolean }) {
   return (
     <div className="flex min-w-0 gap-2">
-      <dt className="text-muted-foreground first-letter:uppercase">{term}</dt>
-      <dd className="min-w-0 truncate">{value}</dd>
+      <dt className="max-w-[35%] shrink-0 text-muted-foreground first-letter:uppercase">{term}</dt>
+      <dd className={wrap ? "min-w-0 break-words" : "min-w-0 truncate"}>{value}</dd>
     </div>
   );
 }

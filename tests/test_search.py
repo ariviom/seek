@@ -29,8 +29,9 @@ async def search(client: httpx.AsyncClient, query: str, **scope: object) -> list
     return results
 
 
+@pytest.mark.parametrize("reranker_unavailable", [False, True])
 async def test_a_result_carries_its_channel_video_chapter_and_a_citation_to_the_matched_cue(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, reranker: FakeReranker, reranker_unavailable: bool
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(
         fake_video(
@@ -51,6 +52,8 @@ async def test_a_result_carries_its_channel_video_chapter_and_a_citation_to_the_
     )
     wright = await add_channel(client, "@woodbywright", "Paul Wright")
     await sync(client, wright, await add_channel(client, "@rexkrueger"))
+    if reranker_unavailable:
+        reranker.unavailable = "Reranker scoring failed"
 
     results = await search(client, "which side of the line does the kerf go")
 
@@ -72,13 +75,17 @@ async def test_a_result_carries_its_channel_video_chapter_and_a_citation_to_the_
         "url": "https://www.youtube.com/watch?v=v-dovetails&t=41s",
     }
     assert isinstance(results[0]["segment_id"], int) and isinstance(results[0]["video_id"], int)
-    assert 0 < results[0]["score"] <= 1
+    if reranker_unavailable:
+        assert all(result["score"] == 0 for result in results)
+    else:
+        assert 0 < results[0]["score"] <= 1
     assert sorted(r["youtube_video_id"] for r in results) == ["v-dovetails", "v-dovetails", "v-sheath"]
     assert [r["score"] for r in results] == sorted((r["score"] for r in results), reverse=True)
 
 
+@pytest.mark.parametrize("reranker_unavailable", [False, True])
 async def test_search_is_scoped_to_a_group_by_id_or_name_to_channels_or_to_everything(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, reranker: FakeReranker, reranker_unavailable: bool
 ) -> None:
     for youtube_id, video_id in [("UC-wright", "v-wright"), ("UC-rex", "v-rex")]:
         fake_channel(transcripts, youtube_id).videos.append(
@@ -90,6 +97,8 @@ async def test_search_is_scoped_to_a_group_by_id_or_name_to_channels_or_to_every
     # A Group can be named like another Group's id: a JSON number is an id, a string is a name.
     first = await add_group(client, "Joinery", wright)
     await add_group(client, str(first["id"]), rex)
+    if reranker_unavailable:
+        reranker.unavailable = "Reranker scoring failed"
 
     async def found(**scope: object) -> set[str]:
         return {r["youtube_video_id"] for r in await search(client, "sharpen a chisel", **scope)}
@@ -222,8 +231,9 @@ async def test_a_segment_is_indexed_and_reranked_with_its_video_title_and_chapte
     assert reranker.calls[0][1][0] == passage
 
 
+@pytest.mark.parametrize("reranker_unavailable", [False, True])
 async def test_results_spread_across_videos_before_one_videos_overlapping_windows_fill_the_list(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, reranker: FakeReranker, reranker_unavailable: bool
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos += [
         # Five minutes of one passage: several overlapping Segments, all matching equally well.
@@ -232,6 +242,8 @@ async def test_results_spread_across_videos_before_one_videos_overlapping_window
     ]
     await sync(client, await add_channel(client, "@woodbywright"))
 
+    if reranker_unavailable:
+        reranker.unavailable = "Reranker scoring failed"
     results = await search(client, "hone the chisel bevel")
     windows = [r["youtube_video_id"] for r in results]
 
@@ -288,21 +300,31 @@ async def test_a_small_channel_in_a_large_corpus_still_gets_vector_hits_and_at_m
     assert [len(passages) for _, passages in reranker.calls] == [50, 1]
 
 
-@pytest.mark.parametrize("model", ["embedder", "reranker"])
-async def test_search_reports_an_unavailable_model(
+async def test_search_reports_an_unavailable_embedder(
     client: httpx.AsyncClient,
     transcripts: FakeTranscriptSource,
     embedder: FakeEmbedder,
-    reranker: FakeReranker,
-    model: str,
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One"))
     await sync(client, await add_channel(client, "@woodbywright"))
-    if model == "embedder":
-        embedder.unavailable = "The model is still loading"
-    else:
-        reranker.unavailable = "The model is still loading"
+    embedder.unavailable = "The model is still loading"
 
     response = await client.post("/api/search", json={"query": "welcome"})
 
     assert (response.status_code, response.json()) == (503, {"detail": "The model is still loading"})
+
+
+async def test_search_returns_unscored_fused_results_when_the_reranker_is_unavailable(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, reranker: FakeReranker
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-exact", "Sharpen chisel", cues=said("Sharpen chisel")),
+        fake_video("v-other", "Other", cues=said("Saw timber")),
+    ]
+    await sync(client, await add_channel(client, "@woodbywright"))
+    reranker.unavailable = "The reranker is still loading"
+
+    results = await search(client, "sharpen chisel", prefer_recent="strong", limit=2)
+
+    assert [result["youtube_video_id"] for result in results] == ["v-exact", "v-other"]
+    assert [result["score"] for result in results] == [0.0, 0.0]

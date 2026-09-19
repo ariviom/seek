@@ -60,7 +60,7 @@ def _statuses(models: Mapping[str, Model]) -> dict[str, ModelStatus]:
 async def _load_models(
     models: Mapping[str, Model], events: Events, on_state_change: Callable[[], None], progress_seconds: float
 ) -> None:
-    """Loads the models in order, publishing their statuses whenever they change, download progress included."""
+    """Loads models in order and reports progress and runtime failures until shutdown."""
     loop = asyncio.get_running_loop()
     loaded = asyncio.Event()
 
@@ -78,7 +78,7 @@ async def _load_models(
     threading.Thread(target=load_all, name="mentor-models", daemon=True).start()
     published: dict[str, ModelStatus] = {}
     while True:
-        # Checked before reading the statuses, so the last pass publishes their final state.
+        # Once startup completes, keep observing one-time device fallbacks and runtime failures.
         finished = loaded.is_set()
         statuses = _statuses(models)
         if statuses != published:
@@ -87,9 +87,10 @@ async def _load_models(
                 on_state_change()
             published = statuses
         if finished:
-            return
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(loaded.wait(), progress_seconds)
+            await asyncio.sleep(progress_seconds)
+        else:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(loaded.wait(), progress_seconds)
 
 
 async def _serve_mcp(mcp: MCPServer, started: asyncio.Future[None]) -> None:

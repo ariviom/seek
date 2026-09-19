@@ -4,6 +4,9 @@ export type ModelStatus = {
   downloaded_bytes: number | null;
   total_bytes: number | null;
   error: string | null;
+  device: "cuda" | "mps" | "cpu" | null;
+  precision: "bfloat16" | "float32" | null;
+  fallback_reason: string | null;
 };
 export type Models = { embedding: ModelStatus; reranker: ModelStatus };
 

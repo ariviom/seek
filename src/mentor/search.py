@@ -14,7 +14,7 @@ import sqlite_vec
 
 from mentor.db import Database
 from mentor.errors import NotFound
-from mentor.ports import Embedder, Reranker
+from mentor.ports import Embedder, ModelUnavailable, Reranker
 from mentor.ranking import Recency, fuse, matched_seconds, recency_score
 from mentor.scope import CHANNEL_IN_SCOPE, Scope, scope_params
 from mentor.segmentation import SegmentCue
@@ -44,6 +44,7 @@ class SearchResult:
     chapter_title: str | None
     channel_id: int
     channel_name: str
+    # Recency-adjusted reranker confidence; zero for unscored fused fallback results.
     score: float
     url: str
 
@@ -201,7 +202,12 @@ class Search:
         candidates = await self._database.run(lambda conn: _candidates(conn, covered, query, query_vector))
         if not candidates:
             return []
-        reranked = await asyncio.to_thread(self._reranker.score, query, [c.passage for c in candidates])
+        try:
+            reranked = await asyncio.to_thread(self._reranker.score, query, [c.passage for c in candidates])
+        except ModelUnavailable:
+            # The model's status exposes the failure. Keep fused order and zero (unscored)
+            # scores: recency calibration requires reranker logits that we do not have.
+            return spread_across_videos([c.result for c in candidates], limit)
         today = datetime.now(UTC).date()
         recency = self._recency[prefer_recent]
         scored = [
