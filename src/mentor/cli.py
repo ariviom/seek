@@ -10,7 +10,7 @@ import uvicorn
 
 from mentor.app import create_app
 from mentor.claude_chat import ClaudeChatEngine
-from mentor.config import HOST, Config, ConfigError, load_config
+from mentor.config import HOST, Config, ConfigError, ensure_directories, load_config
 from mentor.errors import NotFound
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.devices import probe_device, select_device
@@ -49,6 +49,10 @@ def _chat_engine(config: Config) -> ClaudeChatEngine:
 
 def serve() -> None:
     config = _config()
+    try:
+        ensure_directories(config)
+    except ConfigError as e:
+        sys.exit(f"mentor: {e}")
     # proxy_headers=False: forwarded headers are handled deliberately by the app (ticket 17's
     # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
     gpu = GpuRunner()
@@ -57,11 +61,15 @@ def serve() -> None:
     reranker = CrossEncoderReranker(config.reranker_model, gpu, selection)
     youtube = _youtube(config)
     app = create_app(config, youtube, embedder, reranker, _chat_engine(config))
+    print(f"Starting Mentor at http://{HOST}:{config.port}/ — watch the startup log for readiness.", flush=True)
+    print("Closing this terminal stops Mentor. Press Ctrl+C to stop it.", flush=True)
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.
     uvicorn.run(app, host=config.listen_host, port=config.port, proxy_headers=False, timeout_graceful_shutdown=5)
 
 
 def _service_active() -> bool:
+    if sys.platform != "linux":
+        return False
     try:
         return subprocess.run(["systemctl", "--user", "is-active", "--quiet", UNIT_NAME]).returncode == 0
     except OSError:
@@ -127,6 +135,8 @@ def _check_schedule(schedule: str) -> None:
 
 
 def install(sync_schedule: str | None) -> None:
+    if sys.platform != "linux":
+        sys.exit("mentor: install-service is supported only on Linux with systemd; run `mentor serve` in a terminal")
     config = _config()
     if sync_schedule is not None:
         _check_schedule(sync_schedule)

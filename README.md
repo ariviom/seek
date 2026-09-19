@@ -6,7 +6,7 @@ answer links back to the moment in the Video where it was said.
 
 ## Requirements
 
-- Linux with systemd (for the service), and [uv](https://docs.astral.sh/uv/)
+- [uv](https://docs.astral.sh/uv/); the optional Linux service also requires systemd
 - Node 22.12 or later and pnpm, to build the web UI during install
 - Inference uses NVIDIA CUDA when available, then Apple Silicon MPS, then CPU. CPU is supported but slower.
 - [Deno](https://deno.com) on PATH: yt-dlp needs it to solve YouTube's JavaScript challenges
@@ -15,14 +15,30 @@ answer links back to the moment in the Video where it was said.
 
 ## Install
 
-Clone this repository to, say, `~/src/mentor`, then run these from an ordinary terminal (not one inside an editor or
-agent session, whose PATH the service would copy):
+Clone this repository to, say, `~/src/mentor`, then install and run it in a terminal:
 
 ```sh
 uv tool install ~/src/mentor
 uv tool update-shell   # once, if ~/.local/bin isn't on your PATH yet
-mentor install-service
+mentor serve
 ```
+
+Foreground startup prints the loopback URL using the configured port (normally
+<http://127.0.0.1:7337/>) and tells you that closing the terminal stops Mentor. The startup
+message announces the attempt; wait for Uvicorn's startup/listening confirmation before
+opening the URL. Errors stay in the terminal. Use Ctrl+C to stop it. Initial startup creates
+missing config and data directories, preserving any existing configuration and database.
+
+Foreground mode does not need systemd. Off Linux, Sync is manual through the UI or
+`mentor sync`; `mentor install-service` refuses with a pointer to `mentor serve`, including
+when `--timer` was requested. Apple Silicon hardware checks are currently deferred, so these
+path and lifecycle rules do not claim a verified Mac installation. Windows path resolution
+is preparatory work, not a supported native Windows release.
+
+### Optional Linux service
+
+Run `mentor install-service` from an ordinary terminal (not an editor or agent session,
+whose PATH the service would copy).
 
 `mentor install-service` writes `~/.config/systemd/user/mentor.service`, enables it, starts it, and waits until the server
 answers on <http://127.0.0.1:7337/>. From then on it starts whenever you log in. To start it at boot without logging in, run
@@ -41,13 +57,16 @@ On first start, the models download into the Hugging Face cache (`~/.cache/huggi
 details. Syncs wait until the models are ready, and until then Search answers
 that they are still loading.
 
-To upgrade, pull and reinstall, then rerun `mentor install-service`, which restarts the service:
+To upgrade a foreground installation, stop Mentor with Ctrl+C, pull and reinstall, then start it again:
 
 ```sh
 git -C ~/src/mentor pull
 uv tool install --reinstall ~/src/mentor
-mentor install-service
+mentor serve
 ```
+
+For a Linux service installation, replace the final command with `mentor install-service`,
+which refreshes the recorded environment and restarts the service.
 
 Recorded variables override the config file, like any `MENTOR_*` variable. That includes the recorded
 `MENTOR_CLAUDE_CLI_PATH`. Rerun `mentor install-service` whenever they should change, including after you set
@@ -78,7 +97,7 @@ Videos wait for the next one; no Sync runs for `youtube_backoff_seconds`, doubli
 from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a mentor that indexes
 passages differently; until each Video is done again it is out of search.
 
-To Sync every active Channel on a schedule, install the service with a timer:
+On Linux, to Sync every active Channel on a schedule, install the service with a timer:
 
 ```sh
 mentor install-service --timer                    # daily at midnight
@@ -103,7 +122,22 @@ server isn't running (only the server loads the models) and checks the Claude CL
 
 ## Data
 
-Your data lives in `~/.local/share/mentor/` (or `$XDG_DATA_HOME/mentor`, or the `data_dir` setting):
+Default directories depend on the platform:
+
+| Platform | Configuration directory | Data directory |
+| --- | --- | --- |
+| Linux | `~/.config/mentor` | `~/.local/share/mentor` |
+| macOS | `~/Library/Application Support/mentor` | `~/Library/Application Support/mentor` |
+| Windows (preparatory) | `%APPDATA%\mentor` | `%LOCALAPPDATA%\mentor` |
+
+On Windows, missing application-data variables fall back to `~/AppData/Roaming/mentor` for
+config and `~/AppData/Local/mentor` for data. An explicit `XDG_CONFIG_HOME` or `XDG_DATA_HOME`
+takes precedence on **every** platform, with `mentor` appended. The `data_dir` setting or
+`MENTOR_DATA_DIR` overrides the data location independently of the config directory.
+All commands use the same resolution rules. `status` and `list` do not create an empty
+knowledge base just to report that none exists.
+
+The data directory contains:
 
 - `mentor.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Transcripts, Segments, vectors,
   and Conversations.
@@ -113,13 +147,15 @@ Backup is a copy of `mentor.db`. The database uses WAL mode, so recent changes c
 Either stop the service and copy both files, or take a consistent single-file copy while it runs:
 
 ```sh
+# Linux default; substitute your platform's data directory or configured override.
 sqlite3 ~/.local/share/mentor/mentor.db ".backup $HOME/mentor-backup.db"
 ```
 
 ## Configuration
 
-Settings are read from `~/.config/mentor/config.toml` (or `$XDG_CONFIG_HOME/mentor/config.toml`). An environment
-variable `MENTOR_<KEY>` overrides any key; for example, `MENTOR_PORT=7400` overrides `port`. Unknown keys are an error.
+Settings are read from `config.toml` in the configuration directory above. The file is optional;
+startup creates the directory, not a replacement config file. An environment variable `MENTOR_<KEY>`
+overrides any key; for example, `MENTOR_PORT=7400` overrides `port`. Unknown keys are an error.
 
 ```toml
 port = 7400
@@ -129,7 +165,7 @@ allowed_hosts = ["mentor.example.com"]
 
 | Key | Default | Meaning |
 |---|---|---|
-| `data_dir` | `~/.local/share/mentor` | Where `mentor.db` lives (an absolute path) |
+| `data_dir` | Platform data directory above | Where `mentor.db` lives (an absolute path) |
 | `port` | `7337` | Port on 127.0.0.1 (and every interface with `listen_all_interfaces`) |
 | `min_duration_seconds` | `120` | Shorter Videos, which covers Shorts, are excluded from ingestion |
 | `embedding_model` | `Qwen/Qwen3-Embedding-0.6B` | Hugging Face model for Segment vectors |

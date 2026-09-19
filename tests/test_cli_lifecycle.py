@@ -1,0 +1,177 @@
+import asyncio
+import os
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
+import pytest
+import uvicorn
+from harness import add_channel, serving, wait_for_syncs
+
+from mentor import cli
+from mentor.app import create_app
+from mentor.config import Config
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+
+
+@pytest.fixture
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    for key in os.environ:
+        if key.startswith("MENTOR_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    return tmp_path
+
+
+def command(monkeypatch: pytest.MonkeyPatch, platform: str, *args: str) -> None:
+    # Change the CLI's OS view without changing the test runner's own platform.
+    monkeypatch.setattr(sys, "argv", ["mentor", *args])
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(**(vars(sys) | {"platform": platform})))
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+@pytest.mark.parametrize("timer", [[], ["--timer"], ["--timer", "weekly"]])
+def test_service_installation_off_linux_points_to_foreground_before_reading_config_or_running_systemd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, timer: list[str]
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("MENTOR_PORT", "invalid configuration must not obscure the platform message")
+
+    def unexpected_process(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("service installation attempted an external command on a non-Linux platform")
+
+    monkeypatch.setattr(subprocess, "run", unexpected_process)
+    command(monkeypatch, platform, "install-service", *timer)
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert "Linux" in str(error.value)
+    assert "mentor serve" in str(error.value)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_foreground_startup_creates_directories_and_explains_url_and_terminal_lifetime(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], platform: str
+) -> None:
+    monkeypatch.setenv("MENTOR_PORT", "7468")
+    reached_server = False
+
+    def start_server(app: Any, **kwargs: Any) -> None:
+        nonlocal reached_server
+        reached_server = True
+        assert (isolated_home / "config" / "mentor").is_dir()
+        assert (isolated_home / "data" / "mentor").is_dir()
+        assert kwargs["host"] == "127.0.0.1"
+        assert kwargs["port"] == 7468
+        assert kwargs["proxy_headers"] is False
+        assert kwargs["timeout_graceful_shutdown"] == 5
+        output = capsys.readouterr().out
+        assert "http://127.0.0.1:7468/" in output
+        assert "Starting" in output
+        assert "Closing this terminal stops Mentor" in output
+
+    monkeypatch.setattr(uvicorn, "run", start_server)
+    command(monkeypatch, platform, "serve")
+    cli.main()
+    assert reached_server
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+@pytest.mark.parametrize("subcommand", ["sync", "reindex"])
+async def test_sync_commands_off_linux_queue_work_on_the_foreground_server_without_systemctl(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    transcripts: FakeTranscriptSource, platform: str, subcommand: str,
+) -> None:
+    # Import the optional inference runtime before forbidding external commands (its import probes the host).
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+
+    def unexpected_process(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("ordinary Sync tried to launch a process, including systemctl")
+
+    monkeypatch.setattr(subprocess, "run", unexpected_process)
+    app = create_app(
+        Config(data_dir=isolated_home / "server"), transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(),
+        static_dir=isolated_home / "none",
+    )
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        monkeypatch.setenv("MENTOR_PORT", str(urlsplit(url).port))
+        command(monkeypatch, platform, subcommand, "--all")
+        await asyncio.to_thread(cli.main)
+        finished = await wait_for_syncs(client)
+
+    assert "Queued on the server at" in capsys.readouterr().out
+    assert [(s["channel_name"], s["status"]) for s in finished] == [("Wood By Wright", "done")]
+
+
+def test_startup_preserves_existing_config_and_database(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = isolated_home / "config" / "mentor" / "config.toml"
+    config_file.parent.mkdir(parents=True)
+    database = isolated_home / "data" / "mentor" / "mentor.db"
+    database.parent.mkdir(parents=True)
+    config_file.write_text("port = 7469\n")
+    database.write_bytes(b"existing knowledge base")
+
+    def start_server(app: Any, **kwargs: Any) -> None:
+        assert kwargs["port"] == 7469
+        assert config_file.read_text() == "port = 7469\n"
+        assert database.read_bytes() == b"existing knowledge base"
+
+    monkeypatch.setattr(uvicorn, "run", start_server)
+    command(monkeypatch, "linux", "serve")
+    cli.main()
+
+
+def test_directory_creation_failure_identifies_the_path_before_starting_the_server(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    blocked = isolated_home / "blocked"
+    blocked.write_text("existing file")
+    monkeypatch.setenv("MENTOR_DATA_DIR", str(blocked))
+
+    def unexpected_server(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("server started despite an unusable data directory")
+
+    monkeypatch.setattr(uvicorn, "run", unexpected_server)
+    command(monkeypatch, "linux", "serve")
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert "mentor:" in str(error.value)
+    assert str(blocked) in str(error.value)
+    assert blocked.read_text() == "existing file"
+    assert "Starting Mentor" not in capsys.readouterr().out
+
+
+def test_server_startup_failure_remains_visible_and_does_not_claim_readiness(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    def failed_server(*args: Any, **kwargs: Any) -> None:
+        print("ERROR: address already in use", file=sys.stderr)
+        raise SystemExit(1)
+
+    monkeypatch.setattr(uvicorn, "run", failed_server)
+    command(monkeypatch, "linux", "serve")
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 1
+    captured = capsys.readouterr()
+    assert "address already in use" in captured.err
+    assert "Starting Mentor" in captured.out
+    assert "watch the startup log for readiness" in captured.out
+    assert "is running" not in captured.out

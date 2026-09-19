@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -273,3 +274,97 @@ def test_listening_on_every_interface_without_access_verification_or_a_boolean_i
 
     with pytest.raises(ConfigError, match="listen_all_interfaces"):
         load_config({"XDG_CONFIG_HOME": str(tmp_path), **env})
+
+
+def test_linux_directory_defaults_use_the_explicit_home() -> None:
+    from mentor.config import config_dir, data_dir
+
+    assert config_dir({}, "linux", Path("/users/friend")) == Path("/users/friend/.config/mentor")
+    assert data_dir({}, "linux", Path("/users/friend")) == Path("/users/friend/.local/share/mentor")
+
+
+def test_macos_uses_application_support_for_config_and_data() -> None:
+    from mentor.config import config_dir, data_dir
+
+    assert config_dir({}, "darwin", Path("/Users/friend")) == Path("/Users/friend/Library/Application Support/mentor")
+    assert data_dir({}, "darwin", Path("/Users/friend")) == Path("/Users/friend/Library/Application Support/mentor")
+
+
+@pytest.mark.parametrize(
+    ("env", "expected_config", "expected_data"),
+    [
+        ({}, "/users/friend/AppData/Roaming/mentor", "/users/friend/AppData/Local/mentor"),
+        ({"APPDATA": "/roaming", "LOCALAPPDATA": "/local"}, "/roaming/mentor", "/local/mentor"),
+    ],
+)
+def test_windows_separates_roaming_config_and_local_data(
+    env: dict[str, str], expected_config: str, expected_data: str
+) -> None:
+    from mentor.config import config_dir, data_dir
+
+    assert config_dir(env, "win32", Path("/users/friend")) == Path(expected_config)
+    assert data_dir(env, "win32", Path("/users/friend")) == Path(expected_data)
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_explicit_xdg_directories_win_on_every_platform(platform: str) -> None:
+    from mentor.config import config_dir, data_dir
+
+    env = {"XDG_CONFIG_HOME": "/config", "XDG_DATA_HOME": "/data", "APPDATA": "/roaming", "LOCALAPPDATA": "/local"}
+    assert config_dir(env, platform, Path("/users/friend")) == Path("/config/mentor")
+    assert data_dir(env, platform, Path("/users/friend")) == Path("/data/mentor")
+
+
+def test_load_config_reads_the_platform_location_without_creating_directories(tmp_path: Path) -> None:
+    app_support = tmp_path / "Library/Application Support"
+    empty = load_config({}, platform="darwin", home=tmp_path)
+    assert empty.data_dir == app_support / "mentor"
+    assert not app_support.exists()
+    write_config(app_support, 'port = 7401\ndata_dir = "/explicit/data"\n')
+    configured = load_config({}, platform="darwin", home=tmp_path)
+    assert (configured.port, configured.data_dir) == (7401, Path("/explicit/data"))
+    overridden = load_config({"MENTOR_DATA_DIR": "/env/data"}, platform="darwin", home=tmp_path)
+    assert overridden.data_dir == Path("/env/data")
+
+
+def test_startup_creates_directories_and_preserves_existing_files(tmp_path: Path) -> None:
+    from mentor.config import ensure_directories
+
+    config = Config(data_dir=tmp_path / "custom-data")
+    ensure_directories(config, env={}, platform="linux", home=tmp_path)
+    config_path = tmp_path / ".config/mentor/config.toml"
+    assert config_path.parent.is_dir()
+    assert config.data_dir.is_dir()
+    assert not config_path.exists()
+    assert not config.database_path.exists()
+    config_path.write_text("port = 7444\n")
+    config.database_path.write_bytes(b"preserve existing database")
+    ensure_directories(config, env={}, platform="linux", home=tmp_path)
+    assert config_path.read_text() == "port = 7444\n"
+    assert config.database_path.read_bytes() == b"preserve existing database"
+
+
+@pytest.mark.parametrize("directory_kind", ["config", "data"])
+def test_startup_reports_the_unusable_directory(tmp_path: Path, directory_kind: str) -> None:
+    from mentor.config import ensure_directories
+
+    config = Config(data_dir=tmp_path / "data")
+    blocked = tmp_path / ".config/mentor" if directory_kind == "config" else config.data_dir
+    blocked.parent.mkdir(parents=True, exist_ok=True)
+    blocked.write_text("a file occupies the directory")
+    with pytest.raises(ConfigError, match=str(blocked)):
+        ensure_directories(config, env={}, platform="linux", home=tmp_path)
+
+
+def test_startup_reports_an_existing_unwritable_directory(tmp_path: Path) -> None:
+    from mentor.config import ensure_directories
+
+    config = Config(data_dir=tmp_path / "read-only")
+    config.data_dir.mkdir(mode=0o500)
+    try:
+        if os.access(config.data_dir, os.W_OK):
+            pytest.skip("The current user/filesystem does not enforce directory write permissions")
+        with pytest.raises(ConfigError, match="read-only.*writable"):
+            ensure_directories(config, env={}, platform="linux", home=tmp_path)
+    finally:
+        config.data_dir.chmod(0o700)

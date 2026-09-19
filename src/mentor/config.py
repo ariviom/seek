@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -86,8 +87,20 @@ class Config:
         return "0.0.0.0" if self.listen_all_interfaces else HOST
 
 
-def _xdg_dir(env: Mapping[str, str], var: str, fallback: str) -> Path:
-    return Path(env.get(var) or Path.home() / fallback)
+def config_dir(env: Mapping[str, str], platform: str, home: Path) -> Path:
+    """Resolve Mentor's config directory without consulting the host machine."""
+    default = home / "Library/Application Support" if platform == "darwin" else home / ".config"
+    if platform == "win32":
+        default = Path(env.get("APPDATA") or home / "AppData/Roaming")
+    return Path(env.get("XDG_CONFIG_HOME") or default) / "mentor"
+
+
+def data_dir(env: Mapping[str, str], platform: str, home: Path) -> Path:
+    """Resolve Mentor's default data directory without consulting the host machine."""
+    default = home / "Library/Application Support" if platform == "darwin" else home / ".local/share"
+    if platform == "win32":
+        default = Path(env.get("LOCALAPPDATA") or home / "AppData/Local")
+    return Path(env.get("XDG_DATA_HOME") or default) / "mentor"
 
 
 def _integer(key: str, value: object, source: str, low: int, high: int) -> int:
@@ -170,9 +183,13 @@ def _team_domain(key: str, value: object, source: str) -> str:
     return text
 
 
-def load_config(env: Mapping[str, str] = os.environ) -> Config:
+def load_config(
+    env: Mapping[str, str] = os.environ, *, platform: str | None = None, home: Path | None = None
+) -> Config:
     """Config file values, overridden by MENTOR_* environment variables."""
-    path = _xdg_dir(env, "XDG_CONFIG_HOME", ".config") / "mentor" / "config.toml"
+    platform = sys.platform if platform is None else platform
+    home = Path.home() if home is None else home
+    path = config_dir(env, platform, home) / "config.toml"
     raw: dict[str, tuple[object, str]] = {}
     if path.exists():
         try:
@@ -190,9 +207,9 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         if env_name in env:
             raw[key] = (env[env_name], env_name)
 
-    data_dir = _xdg_dir(env, "XDG_DATA_HOME", ".local/share") / "mentor"
+    resolved_data_dir = data_dir(env, platform, home)
     if "data_dir" in raw:
-        data_dir = _absolute_path("data_dir", *raw["data_dir"])
+        resolved_data_dir = _absolute_path("data_dir", *raw["data_dir"])
     port = _integer("port", *raw["port"], 1, 65535) if "port" in raw else DEFAULT_PORT
     min_duration = DEFAULT_MIN_DURATION_SECONDS
     if "min_duration_seconds" in raw:
@@ -260,7 +277,7 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
             "without Access verification anyone who reaches the port gets everything"
         )
     return Config(
-        data_dir=data_dir,
+        data_dir=resolved_data_dir,
         port=port,
         min_duration_seconds=min_duration,
         embedding_model=embedding_model,
@@ -283,3 +300,17 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
         cf_access_aud=audience,
         listen_all_interfaces=listen_all,
     )
+
+
+def ensure_directories(
+    config: Config, *, env: Mapping[str, str] = os.environ, platform: str | None = None, home: Path | None = None
+) -> None:
+    """Prepare startup directories without creating or replacing configuration or data files."""
+    directory = config_dir(env, sys.platform if platform is None else platform, Path.home() if home is None else home)
+    for path in (directory, config.data_dir):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if not os.access(path, os.W_OK | os.X_OK):
+                raise ConfigError(f"Mentor directory {path} must be writable and accessible")
+        except OSError as error:
+            raise ConfigError(f"Cannot create Mentor directory {path}: {error}") from error
