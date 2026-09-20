@@ -1,10 +1,18 @@
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import type { ClaudeCli, Models, ModelStatus } from "@/lib/api";
+import type { ChatEngineStatus, ChatHealth, EngineName, Models, ModelStatus } from "@/lib/api";
 
 type ServerState = { kind: "loading" } | { kind: "ok" } | { kind: "error"; message: string };
 
 export const modelRoles = ["embedding", "reranker"] as const;
 export const modelLabels: Record<keyof Models, string> = { embedding: "embedding model", reranker: "reranking model" };
+
+export const engineNames = ["api", "cli"] as const;
+export const engineLabels: Record<EngineName, string> = { api: "Anthropic API", cli: "Claude CLI" };
+
+// An engine's standing in a sentence: its own message when it has one, since that says what to add.
+export function describeEngine(status: ChatEngineStatus): string {
+  return status.state === "ready" ? "ready" : (status.message ?? status.state.replace("_", " "));
+}
 
 function megabytes(bytes: number): string {
   return String(Math.floor(bytes / 1_000_000));
@@ -63,11 +71,28 @@ export function ModelNotice({ models }: { models: Models }) {
   );
 }
 
-export function ClaudeNotice({ claude }: { claude: ClaudeCli }) {
-  if (claude.state === "ready") return null;
+// Only chat needs an engine, so nothing here says the app is broken. With no active engine both engines' messages
+// show, since either one satisfied brings chat back.
+export function EngineNotice({ chat }: { chat: ChatHealth }) {
+  if (chat.active === null) {
+    return (
+      <div role="alert" className="space-y-1 text-sm text-destructive">
+        <p>Chat has no engine yet. Search, the Library and Syncs work without one.</p>
+        <ul className="list-disc pl-5">
+          {engineNames.map((name) => (
+            <li key={name}>
+              {engineLabels[name]}: {describeEngine(chat.engines[name])}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  const status = chat.engines[chat.active];
+  if (status.state === "ready") return null;
   return (
     <p role="alert" className="text-sm text-destructive">
-      {claude.message ?? "The Claude CLI can't answer right now."}
+      {engineLabels[chat.active]}: {describeEngine(status)}
     </p>
   );
 }

@@ -8,11 +8,15 @@ from pathlib import Path
 
 import uvicorn
 
+from mentor.api_chat import ApiEngine
 from mentor.app import create_app
 from mentor.claude_chat import ClaudeChatEngine
+from mentor.credentials import Credentials
+from mentor.events import Events
 from mentor.config import HOST, Config, ConfigError, ensure_directories, load_config
 from mentor.errors import NotFound
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
+from mentor.ports import ChatEngine, EngineName
 from mentor.devices import probe_device, select_device
 from mentor.secrets import KeyringSecrets
 from mentor.service import TIMER_NAME, UNIT_NAME, install_service
@@ -46,6 +50,11 @@ def _chat_engine(config: Config) -> ClaudeChatEngine:
     on_path = shutil.which("claude")
     claude = config.claude_cli_path or (Path(on_path) if on_path else None)
     return ClaudeChatEngine(config.data_dir / "chat", claude)
+
+
+def _chat_engines(config: Config) -> dict[EngineName, ChatEngine]:
+    """Both engines, for a `mentor status` with no server to ask. The events go nowhere: nothing subscribes."""
+    return {"api": ApiEngine(Credentials(KeyringSecrets(config.data_dir), Events())), "cli": _chat_engine(config)}
 
 
 def serve() -> None:
@@ -110,7 +119,7 @@ def sync(channel: str | None, reindex: bool = False) -> None:
 def show_status() -> None:
     config = _config()
     try:
-        print(format_status(asyncio.run(status(config, _chat_engine(config)))))
+        print(format_status(asyncio.run(status(config, _chat_engines(config)))))
     except SyncCommandError as e:
         sys.exit(f"mentor: {e}")
 
@@ -181,7 +190,7 @@ def main() -> None:
     reindex_target = reindex_parser.add_mutually_exclusive_group(required=True)
     reindex_target.add_argument("--all", action="store_true", help="every active Channel")
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
-    commands.add_parser("status", help="the server, models, Claude CLI, and running and queued Syncs")
+    commands.add_parser("status", help="the server, models, chat engines, and running and queued Syncs")
     commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups")
     install_parser = commands.add_parser(
         "install-service", help="run the server as a systemd user service that starts at login"

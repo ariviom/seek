@@ -113,12 +113,12 @@ run: `systemctl --user list-timers mentor-sync.timer`. Logs: `journalctl --user 
 ## Check on it from the command line
 
 ```sh
-mentor status   # the server, its models, the Claude CLI, and running and queued Syncs
+mentor status   # the server, its models, both chat engines, and running and queued Syncs
 mentor list     # Channels, active or paused, with ready, failed, and excluded Videos and when each last synced, then Groups with their Channels
 ```
 
 Both ask the running server. When none answers, they read the knowledge base instead: `mentor status` then says the
-server isn't running (only the server loads the models) and checks the Claude CLI itself.
+server isn't running (only the server loads the models) and checks both chat engines itself.
 
 ## Data
 
@@ -208,7 +208,7 @@ allowed_hosts = ["mentor.example.com"]
 | `youtube_cookies_from_browser` | none | Read cookies from a browser profile instead, in yt-dlp's `BROWSER[+KEYRING][:PROFILE][::CONTAINER]` form, e.g. `firefox` or `chrome:Profile 1` |
 | `youtube_extractor_args` | `skip = ["hls", "dash"]` | A table of yt-dlp `youtube` extractor arguments merged over the default, e.g. `player_client` or `po_token` |
 | `allowed_hosts` | none | Host headers accepted besides loopback, such as your proxy's public hostname |
-| `claude_cli_path` | `claude` on PATH | The Claude CLI the web chat drives |
+| `claude_cli_path` | `claude` on PATH | The Claude CLI the web chat drives on the Claude CLI engine |
 | `cf_access_team_domain` | none | With `cf_access_aud`, requires a Cloudflare Access token on requests from outside this machine (see [Publishing](#publishing-through-a-reverse-proxy)) |
 | `cf_access_aud` | none | The Access application's Audience (AUD) tag |
 | `listen_all_interfaces` | `false` | Listen on every network interface, not only 127.0.0.1; needs the two Access keys (see [Publishing](#publishing-through-a-reverse-proxy)) |
@@ -308,21 +308,45 @@ The tools are `list_groups`, `list_channels`, `search` (scoped to a `group` or a
 
 ## Web chat
 
-A chat in a Group or a Channel answers through your own Claude CLI. Whether it can run shows in the rail's health dot
-(hover it for the reason, click it for the details), and in the `claude_cli` part of `/api/health` with a message
-saying what to do:
+A chat in a Group or a Channel answers through one of two engines: the **Anthropic API**, using a key you store in
+`PUT /api/credentials/anthropic`, or your own **Claude CLI**, using the Claude Code login you already have. Both get
+the same scoped Mentor tools, the same grounded-advisor prompt, and the same streamed answers with Citations.
 
-| State | What to do |
-|---|---|
-| `ready` | Nothing |
-| `missing` | Install Claude Code, or set `claude_cli_path`, then rerun `mentor install-service` |
-| `logged_out` | Run `claude auth login` |
-| `api_key` | Claude Code would bill an API key instead of your subscription. The message names where the key comes from, for example an `apiKeyHelper` in Claude Code's settings; remove it there |
-| `unknown` | `claude auth status` failed, hung, or answered unexpectedly; the message says which |
+Chat is the only thing an engine gates. Search, the Library, Syncs and the MCP tools work without either.
+
+With no stored preference, Mentor uses the API engine when a key is present and the Claude CLI otherwise. Set
+`engine` in `PATCH /api/settings` to `"api"` or `"cli"` to choose deliberately, or to `null` to go back to automatic.
+A preference whose requirement is missing is an error that says what to add, not a quiet switch to the other engine.
+
+Both engines' availability shows in the rail's health dot (hover it for the reason, click it for the details) and in
+the `chat` part of `/api/health`, which reports `active` — the engine the next turn would use, or `null` when neither
+can answer — and a state per engine with a message saying what to do:
+
+| Engine | State | What to do |
+|---|---|---|
+| both | `ready` | Nothing |
+| api | `no_key` | Store an Anthropic API key; create one at <https://console.anthropic.com/settings/keys> |
+| api | `invalid_key` | The stored key was rejected when it was entered or during a turn; replace it |
+| cli | `missing` | Install Claude Code, or set `claude_cli_path`, then rerun `mentor install-service` |
+| cli | `logged_out` | Run `claude auth login` |
+| cli | `api_key` | Claude Code would bill an API key instead of your subscription. Mentor already keeps `ANTHROPIC_API_KEY` out of the CLI it runs, so this names another source, such as an `apiKeyHelper` in Claude Code's settings; remove it there |
+| both | `unknown` | The credential store or `claude auth status` couldn't be read; the message says which |
+
+Health never calls the provider: it reports the last known state of the key, so an offline machine says what it knew
+rather than flapping. A key is checked once when you store it, and again only by a turn that it fails.
+
+`model` in `PATCH /api/settings` picks `"fast"` or `"deep"`, which each engine maps to its own identifier — the API
+engine to `claude-sonnet-5` and `claude-opus-5`, the Claude CLI to its `sonnet` and `opus` aliases. A model set on a
+Conversation is a pin and wins for that Conversation; the rest follow the setting from their next question, including
+mid-thread. Each message records the engine and model that produced it, and each question records what its turn
+reported using, so a Conversation can total its tokens. A turn that failed or was stopped keeps what it had already
+reported and says the total is incomplete rather than claiming to be a bill.
 
 The **Add context** control beside the chat box can give a new Conversation read-only access to one local project
-directory, the public web, or both. Context is fixed after the first question so a resumed Claude session keeps the
-same working directory and capabilities. Project access exposes only file reading, listing, and search within the
+directory, the public web, or both. Those tools are Claude Code built-ins, so they are a Claude CLI capability only:
+the control is hidden while the API engine is active, and the API engine refuses such a Conversation before making any
+request rather than answering without them. Context is fixed after the first question so a resumed Claude session keeps
+the same working directory and capabilities. Project access exposes only file reading, listing, and search within the
 selected directory; web access exposes Claude Code's web search and fetch tools. User settings, plugins, skills, other
 MCP servers, file editing, and shell commands stay disabled. Channel-derived advice still needs Mentor's timestamped
 citations, while observations from a project or web page are identified separately.

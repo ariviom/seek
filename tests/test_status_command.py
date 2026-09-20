@@ -20,8 +20,18 @@ from mentor import db, syncs
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import ChatEngineStatus, ModelStatus, VideoUnavailable
+from mentor.ports import ChatEngine, ChatEngineStatus, EngineName, ModelStatus, VideoUnavailable
 from mentor.status_command import format_list, format_status, list_all, status
+
+
+def _engines(
+    cli: FakeChatEngine | None = None, api: FakeChatEngine | None = None
+) -> dict[EngineName, ChatEngine]:
+    """Both engines, as `mentor status` is wired with them when it has to ask them itself."""
+    return {
+        "api": api or FakeChatEngine("api", engine_status=ChatEngineStatus("api", "no_key", None, "Add a key")),
+        "cli": cli or FakeChatEngine("cli"),
+    }
 
 
 def server_config(config: Config, url: str) -> Config:
@@ -41,7 +51,7 @@ async def test_status_shows_actual_device_precision_and_fallback_without_losing_
     app = create_app(config, transcripts, FakeEmbedder(), reranker, FakeChatEngine(), static_dir=tmp_path / "none")
     async with serving(app) as url:
         await gate.wait_entered()
-        report = await status(server_config(config, url), FakeChatEngine())
+        report = await status(server_config(config, url), _engines())
         gate.released.set()
     formatted = format_status(report)
     assert "cpu / float32" in formatted
@@ -49,14 +59,24 @@ async def test_status_shows_actual_device_precision_and_fallback_without_losing_
     assert "2 MB of 8 MB" in formatted
 
 
-async def test_mentor_status_reports_the_running_servers_models_claude_cli_and_sync_queue(
+async def test_mentor_status_reports_the_running_servers_models_both_engines_and_sync_queue(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     gate = Gate()
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-held", "Held", before_fetch=gate))
-    server_engine = FakeChatEngine(engine_status=ChatEngineStatus("logged_out", "/usr/bin/claude", "Run claude auth login"))
-    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), server_engine, static_dir=tmp_path / "none")
-    cli_engine = FakeChatEngine()
+    server_cli = FakeChatEngine(
+        "cli", engine_status=ChatEngineStatus("cli", "logged_out", "/usr/bin/claude", "Run claude auth login")
+    )
+    server_api = FakeChatEngine("api", engine_status=ChatEngineStatus("api", "ready"))
+    app = create_app(
+        config,
+        transcripts,
+        FakeEmbedder(),
+        FakeReranker(),
+        server_cli,
+        static_dir=tmp_path / "none",
+        api_engine=server_api,
+    )
 
     async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
         wright = await add_channel(client, "@woodbywright", "Paul Wright")
@@ -64,48 +84,60 @@ async def test_mentor_status_reports_the_running_servers_models_claude_cli_and_s
         await start_sync(client, wright["id"])
         await gate.wait_entered()
         await start_sync(client, rex["id"])
-        report = await status(server_config(config, url), cli_engine)
+        # The engines passed here are ignored: a running server already knows both states.
+        report = await status(server_config(config, url), _engines())
         gate.released.set()
         await wait_for_syncs(client)
 
     assert report.server_url == url
     assert report.models is not None
     assert {role: m.state for role, m in report.models.items()} == {"embedding": "ready", "reranker": "ready"}
-    assert report.claude_cli == server_engine.engine_status
+    assert report.chat.engines == {"api": server_api.engine_status, "cli": server_cli.engine_status}
     assert [(s.channel_name, s.status) for s in report.syncs] == [("Paul Wright", "running"), ("Rex Krueger", "queued")]
     assert format_status(report).splitlines() == [
         f"Server: running at {url}",
         "Models:",
         "  embedding: ready (fake-embedder)",
         f"  reranker: ready ({report.models['reranker'].name})",
-        "Claude CLI: logged_out (/usr/bin/claude)",
-        "  Run claude auth login",
+        "Chat: api",
+        "  api: ready",
+        "  cli: logged_out (/usr/bin/claude)",
+        "    Run claude auth login",
         "Syncs: 1 running, 1 queued",
         "  running  Paul Wright",
         "  queued   Rex Krueger",
     ]
 
 
-async def test_mentor_status_reads_the_store_and_checks_the_claude_cli_itself_when_no_server_answers(
+async def test_mentor_status_reads_the_store_and_asks_both_engines_itself_when_no_server_answers(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     offline = replace(config, port=free_port())
-    cli_engine = FakeChatEngine(engine_status=ChatEngineStatus("missing", None, "Install Claude Code"))
-    nothing_yet = await status(offline, cli_engine)
-    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    cli = FakeChatEngine("cli", engine_status=ChatEngineStatus("cli", "missing", None, "Install Claude Code"))
+    engines = _engines(cli=cli)
+    nothing_yet = await status(offline, engines)
+    app = create_app(
+        config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine("cli"), static_dir=tmp_path / "none"
+    )
     async with running(app) as client:
         wright = await add_channel(client, "@woodbywright", "Paul Wright")
     await db.Database(config.database_path).run(lambda conn: syncs.enqueue(conn, wright["id"]))
 
-    report = await status(offline, cli_engine)
+    report = await status(offline, engines)
 
     assert (nothing_yet.server_url, nothing_yet.syncs) == (None, [])
-    assert (report.server_url, report.models, report.claude_cli) == (None, None, cli_engine.engine_status)
+    assert (report.server_url, report.models) == (None, None)
+    # Neither engine can answer, which disables chat and nothing else.
+    assert report.chat.active is None
+    assert report.chat.engines["cli"] == cli.engine_status
     assert [(s.channel_name, s.status) for s in report.syncs] == [("Paul Wright", "queued")]
     assert format_status(report).splitlines() == [
         "Server: not running (the models load when it starts)",
-        "Claude CLI: missing",
-        "  Install Claude Code",
+        "Chat: no engine ready",
+        "  api: no_key",
+        "    Add a key",
+        "  cli: missing",
+        "    Install Claude Code",
         "Syncs: 0 running, 1 queued",
         "  queued   Paul Wright",
     ]

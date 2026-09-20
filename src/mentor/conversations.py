@@ -7,8 +7,9 @@ from dataclasses import asdict, dataclass
 from typing import Literal
 
 from mentor.db import now_iso, transaction
+from mentor.engines import ModelChoice, resolve_model
 from mentor.errors import Conflict, NotFound
-from mentor.ports import PastMessage
+from mentor.ports import EngineName, PastMessage, TokenUsage
 from mentor.scope import CHANNEL_IN_SCOPE, SCOPE_NOUN, Scope, ScopeKind, scope_params
 from mentor.sources import watch_url
 
@@ -64,6 +65,28 @@ class Citation:
 
 
 @dataclass(frozen=True)
+class MessageUsage:
+    """What one turn's provider requests reported, recorded on the user message that started the turn."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    # False when the turn failed or was stopped before everything was reported: the numbers are a floor.
+    complete: bool
+
+
+@dataclass(frozen=True)
+class ConversationUsage:
+    """A Conversation's known usage. Not a bill: it counts what the provider reported, nothing more."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    # False when any turn reported nothing, or reported only part of what it used.
+    complete: bool
+
+
+@dataclass(frozen=True)
 class Message:
     id: int
     role: Literal["user", "assistant"]
@@ -71,6 +94,11 @@ class Message:
     tool_calls: list[ToolUse]
     citations: list[Citation]
     created_at: str
+    # None on messages saved before engines were selectable: unknown, not assumed.
+    engine: EngineName | None = None
+    model: str | None = None
+    # On the user message of a turn that reported any usage; None when nothing was reported.
+    usage: MessageUsage | None = None
 
 
 @dataclass(frozen=True)
@@ -79,22 +107,30 @@ class ConversationSummary(Conversation):
     title: str
     message_count: int
     last_message_at: str | None
+    usage: ConversationUsage
 
 
 @dataclass(frozen=True)
 class ConversationDetail(Conversation):
     messages: list[Message]
+    usage: ConversationUsage
 
 
 @dataclass(frozen=True)
 class Turn:
-    """What a new turn needs: the scope it consults, the Claude session to resume, and the messages before it."""
+    """What a started turn needs: its scope, the engine and model chosen for it, and the messages before it.
+
+    `user_message_id` is the saved question this turn's usage is recorded against, so the accounting
+    survives a turn that never saves an answer.
+    """
 
     conversation_id: int
+    user_message_id: int
     scope: Scope
     scope_name: str
     channel_names: list[str]
-    model: str | None
+    engine: EngineName
+    model: str
     context: ConversationContext
     claude_session_id: str | None
     history: list[PastMessage]
@@ -107,6 +143,17 @@ _CONVERSATION_COLUMNS = (
 )
 
 
+def _usage(row: sqlite3.Row) -> MessageUsage | None:
+    if row["input_tokens"] is None and row["output_tokens"] is None and row["cache_read_tokens"] is None:
+        return None
+    return MessageUsage(
+        input_tokens=row["input_tokens"] or 0,
+        output_tokens=row["output_tokens"] or 0,
+        cache_read_tokens=row["cache_read_tokens"] or 0,
+        complete=bool(row["usage_complete"]),
+    )
+
+
 def _message(row: sqlite3.Row) -> Message:
     return Message(
         id=row["id"],
@@ -115,6 +162,30 @@ def _message(row: sqlite3.Row) -> Message:
         tool_calls=[ToolUse(**t) for t in json.loads(row["tool_calls"])],
         citations=[Citation(**c) for c in json.loads(row["citations"])],
         created_at=row["created_at"],
+        engine=row["engine"],
+        model=row["engine_model"],
+        usage=_usage(row),
+    )
+
+
+_USAGE_TOTALS = """
+    SELECT coalesce(sum(input_tokens), 0) AS input_tokens,
+           coalesce(sum(output_tokens), 0) AS output_tokens,
+           coalesce(sum(cache_read_tokens), 0) AS cache_read_tokens,
+           -- Complete only if every question either reported all of its usage or never started a turn.
+           min(coalesce(usage_complete, role = 'assistant')) AS complete
+    FROM messages WHERE conversation_id = ?
+"""
+
+
+def conversation_usage(conn: sqlite3.Connection, conversation_id: int) -> ConversationUsage:
+    row = conn.execute(_USAGE_TOTALS, (conversation_id,)).fetchone()
+    return ConversationUsage(
+        input_tokens=row["input_tokens"],
+        output_tokens=row["output_tokens"],
+        cache_read_tokens=row["cache_read_tokens"],
+        # No messages at all: nothing is missing, so the empty total is exact.
+        complete=bool(row["complete"]) if row["complete"] is not None else True,
     )
 
 
@@ -149,7 +220,15 @@ def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...])
                 ORDER BY id LIMIT 1) AS first_question,
                (SELECT count(*) FROM messages WHERE conversation_id = conversations.id) AS message_count,
                (SELECT max(created_at) FROM messages WHERE conversation_id = conversations.id) AS last_message_at,
-               (SELECT max(id) FROM messages WHERE conversation_id = conversations.id) AS last_message_id
+               (SELECT max(id) FROM messages WHERE conversation_id = conversations.id) AS last_message_id,
+               (SELECT coalesce(sum(input_tokens), 0) FROM messages
+                WHERE conversation_id = conversations.id) AS input_tokens,
+               (SELECT coalesce(sum(output_tokens), 0) FROM messages
+                WHERE conversation_id = conversations.id) AS output_tokens,
+               (SELECT coalesce(sum(cache_read_tokens), 0) FROM messages
+                WHERE conversation_id = conversations.id) AS cache_read_tokens,
+               (SELECT min(coalesce(usage_complete, role = 'assistant')) FROM messages
+                WHERE conversation_id = conversations.id) AS usage_complete
         FROM conversations
         WHERE {where}
         -- Message ids order activity more finely than second-resolution timestamps; unused Conversations come last.
@@ -167,6 +246,12 @@ def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...])
             title=row["title"] or _title(row["first_question"]),
             message_count=row["message_count"],
             last_message_at=row["last_message_at"],
+            usage=ConversationUsage(
+                input_tokens=row["input_tokens"],
+                output_tokens=row["output_tokens"],
+                cache_read_tokens=row["cache_read_tokens"],
+                complete=bool(row["usage_complete"]) if row["usage_complete"] is not None else True,
+            ),
         )
         for row in rows
     ]
@@ -201,7 +286,11 @@ def get_conversation(conn: sqlite3.Connection, conversation_id: int) -> Conversa
     if row is None:
         raise NotFound(f"Conversation {conversation_id} not found")
     messages = conn.execute("SELECT * FROM messages WHERE conversation_id = ? ORDER BY id", (conversation_id,))
-    return ConversationDetail(**vars(_conversation(row)), messages=[_message(m) for m in messages])
+    return ConversationDetail(
+        **vars(_conversation(row)),
+        messages=[_message(m) for m in messages],
+        usage=conversation_usage(conn, conversation_id),
+    )
 
 
 def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
@@ -248,8 +337,15 @@ def create_conversation(
         return _conversation(row)
 
 
-def begin_turn(conn: sqlite3.Connection, conversation_id: int, message: str) -> Turn:
-    """Saves the user's message, before any answer, and returns what the turn needs."""
+def begin_turn(
+    conn: sqlite3.Connection, conversation_id: int, message: str, engine: EngineName, choice: ModelChoice
+) -> Turn:
+    """Saves the user's message with the engine and model chosen for it, and returns what the turn needs.
+
+    An API turn also clears the stored Claude CLI session here, in the same transaction: the API keeps no
+    provider-side session, so a later CLI turn must replay the whole Conversation even if this turn fails
+    or is stopped. A pin this engine cannot express raises before anything is saved.
+    """
     with transaction(conn):
         row = conn.execute(
             f"SELECT {_CONVERSATION_COLUMNS}, claude_session_id FROM conversations WHERE id = ?", (conversation_id,)
@@ -259,6 +355,7 @@ def begin_turn(conn: sqlite3.Connection, conversation_id: int, message: str) -> 
         scope = _scope(row)
         if scope.id is None:
             raise Conflict(f"The {SCOPE_NOUN[scope.kind]} {scope.name!r} was deleted, so this Conversation is read-only")
+        model = resolve_model(engine, row["model"], choice)
         live = Scope(scope.kind, scope.id)
         history = [
             PastMessage(role=m["role"], content=m["content"])
@@ -266,22 +363,53 @@ def begin_turn(conn: sqlite3.Connection, conversation_id: int, message: str) -> 
                 "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id", (conversation_id,)
             )
         ]
-        conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
-            (conversation_id, message, now_iso()),
-        )
+        saved = conn.execute(
+            """
+            INSERT INTO messages (conversation_id, role, content, created_at, engine, engine_model)
+            VALUES (?, 'user', ?, ?, ?, ?) RETURNING id
+            """,
+            (conversation_id, message, now_iso(), engine, model),
+        ).fetchone()
+        if engine == "api":
+            conn.execute("UPDATE conversations SET claude_session_id = NULL WHERE id = ?", (conversation_id,))
         channels = conn.execute(
             f"SELECT name FROM channels WHERE {CHANNEL_IN_SCOPE} ORDER BY name COLLATE NOCASE, id", scope_params(live)
         )
         return Turn(
             conversation_id=conversation_id,
+            user_message_id=saved["id"],
             scope=live,
             scope_name=scope.name,
             channel_names=[channel["name"] for channel in channels],
-            model=row["model"],
+            engine=engine,
+            model=model,
             context=ConversationContext(workspace=row["workspace_path"], web_access=bool(row["web_access"])),
-            claude_session_id=row["claude_session_id"],
+            claude_session_id=None if engine == "api" else row["claude_session_id"],
             history=history,
+        )
+
+
+def record_usage(conn: sqlite3.Connection, turn: Turn, usage: TokenUsage | None, complete: bool) -> None:
+    """Records the turn's reported usage against the question that started it, however the turn ended.
+
+    Nothing reported stays NULL: unknown usage is not a measured zero.
+    """
+    if usage is None:
+        return
+    with transaction(conn):
+        conn.execute(
+            """
+            UPDATE messages
+            SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, usage_complete = ?
+            WHERE id = ?
+            """,
+            (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                int(complete),
+                turn.user_message_id,
+            ),
         )
 
 
@@ -324,18 +452,24 @@ def record_answer(
     content: str,
     tool_calls: list[ToolUse],
     links: Sequence[tuple[str, int]],
-    claude_session_id: str,
+    claude_session_id: str | None,
 ) -> Message:
-    """Saves the answer with the Citations among its links, and the session to resume next turn."""
+    """Saves the answer with the Citations among its links, and the session to resume next turn.
+
+    An engine that keeps no session reports None, which leaves the stored session as this turn left it.
+    """
     with transaction(conn):
         citations = _citations(conn, turn.scope, links)
-        conn.execute(
-            "UPDATE conversations SET claude_session_id = ? WHERE id = ?", (claude_session_id, turn.conversation_id)
-        )
+        if claude_session_id is not None:
+            conn.execute(
+                "UPDATE conversations SET claude_session_id = ? WHERE id = ?",
+                (claude_session_id, turn.conversation_id),
+            )
         row = conn.execute(
             """
-            INSERT INTO messages (conversation_id, role, content, tool_calls, citations, created_at)
-            VALUES (?, 'assistant', ?, ?, ?, ?)
+            INSERT INTO messages
+                (conversation_id, role, content, tool_calls, citations, created_at, engine, engine_model)
+            VALUES (?, 'assistant', ?, ?, ?, ?, ?, ?)
             RETURNING id, created_at
             """,
             (
@@ -344,6 +478,8 @@ def record_answer(
                 json.dumps([asdict(t) for t in tool_calls]),
                 json.dumps([asdict(c) for c in citations]),
                 now_iso(),
+                turn.engine,
+                turn.model,
             ),
         ).fetchone()
         return Message(
@@ -353,4 +489,6 @@ def record_answer(
             tool_calls=tool_calls,
             citations=citations,
             created_at=row["created_at"],
+            engine=turn.engine,
+            model=turn.model,
         )

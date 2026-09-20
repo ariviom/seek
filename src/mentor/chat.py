@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,11 +13,25 @@ from urllib.parse import parse_qs
 from mentor import conversations
 from mentor.conversations import ConversationContext, ToolUse, Turn
 from mentor.db import Database
+from mentor.engines import active_engine, choose_engine
 from mentor.errors import Conflict, NotFound
 from mentor.mcp_server import GROUNDED_ADVISOR, bound_tool_names, create_scope_server
-from mentor.ports import ChatDone, ChatEngine, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
+from mentor.ports import (
+    ChatDone,
+    ChatEngine,
+    ChatEngineStatus,
+    ChatFailed,
+    ChatRequest,
+    EngineName,
+    TextDelta,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+    UsageReported,
+)
 from mentor.scope import Scope
 from mentor.search import Search
+from mentor.settings import read_settings
 
 log = logging.getLogger(__name__)
 
@@ -81,16 +96,52 @@ def citation_links(answer: str) -> list[tuple[str, int]]:
     return list(links)
 
 
-class Chat:
-    """Runs at most one turn per Conversation. A turn runs to completion even if its stream's reader goes away."""
+class _Accounting:
+    """One turn's reported usage, summed across its provider requests.
 
-    def __init__(self, database: Database, search: Search, engine: ChatEngine) -> None:
+    `complete` only once the engine said the turn finished: a turn that failed or was stopped keeps what it
+    reported, marked as the floor it is.
+    """
+
+    def __init__(self) -> None:
+        self.usage: TokenUsage | None = None
+        self.complete = False
+
+    def add(self, reported: TokenUsage) -> None:
+        self.usage = reported if self.usage is None else self.usage + reported
+
+    def finish(self) -> None:
+        # A turn that answered without reporting anything used something; say so rather than record a zero.
+        self.complete = self.usage is not None
+
+
+class Chat:
+    """Runs at most one turn per Conversation. A turn runs to completion even if its stream's reader goes away.
+
+    The engine is chosen once per turn, before the question is saved, so a settings change lands on the
+    next turn rather than halfway through this one.
+    """
+
+    def __init__(self, database: Database, search: Search, engines: Mapping[EngineName, ChatEngine]) -> None:
         self._database = database
         self._search = search
-        self._engine = engine
+        self._engines = engines
         # Conversations with a turn under way, and each turn's task once started.
         self._busy: set[int] = set()
         self._tasks: dict[int, asyncio.Task[None]] = {}
+        # Usage writes that outlive their cancelled turn; held so the loop doesn't collect them early.
+        self._saving: set[asyncio.Task[None]] = set()
+
+    async def statuses(self) -> dict[EngineName, ChatEngineStatus]:
+        """Both engines' availability. Neither call reaches a provider, so Health stays cheap and offline-safe."""
+        api, cli = await asyncio.gather(self._engines["api"].status(), self._engines["cli"].status())
+        return {"api": api, "cli": cli}
+
+    async def active(self) -> tuple[EngineName | None, dict[EngineName, ChatEngineStatus]]:
+        """The engine the next turn would use, with both engines' status, for Health."""
+        settings = await self._database.run(read_settings)
+        statuses = await self.statuses()
+        return active_engine(settings.engine, statuses), statuses
 
     def answering(self, conversation_id: int) -> bool:
         return conversation_id in self._busy
@@ -112,7 +163,12 @@ class Chat:
         # Claimed before the first await, so a second message can't slip in while the first is being saved.
         self._busy.add(conversation_id)
         try:
-            turn = await self._database.run(lambda conn: conversations.begin_turn(conn, conversation_id, message))
+            settings = await self._database.run(read_settings)
+            engine = choose_engine(settings.engine, await self.statuses())
+            choice = settings.model
+            turn = await self._database.run(
+                lambda conn: conversations.begin_turn(conn, conversation_id, message, engine, choice)
+            )
         except BaseException:
             self._busy.discard(conversation_id)
             raise
@@ -159,11 +215,16 @@ class Chat:
             ),
             tool_names=bound_tool_names(turn.scope),
         )
+        # Every provider request's usage, kept as it arrives so a later failure or a stop cannot lose it.
+        accounting = _Accounting()
+        engine = self._engines[turn.engine]
         try:
-            if await self._answer(turn, request, events):
+            if await self._answer(engine, turn, request, events, accounting):
                 # The Claude session is gone (expired or cleaned up): start a new one, replaying the Conversation.
                 log.info("Conversation %s's Claude session was lost; replaying it", turn.conversation_id)
-                await self._answer(turn, replace(request, resume_session_id=None), events)
+                await self._answer(
+                    engine, turn, replace(request, resume_session_id=None), events, accounting
+                )
         except asyncio.CancelledError:
             events.put_nowait({"type": "error", "message": "Stopped before the answer finished"})
             raise
@@ -171,16 +232,41 @@ class Chat:
             log.exception("Chat turn for Conversation %s failed", turn.conversation_id)
             events.put_nowait({"type": "error", "message": "The chat failed unexpectedly; see the server log"})
         finally:
+            await self._save_usage(turn, accounting)
             events.put_nowait(None)
 
-    async def _answer(self, turn: Turn, request: ChatRequest, events: asyncio.Queue[TurnEvent | None]) -> bool:
+    async def _save_usage(self, turn: Turn, accounting: "_Accounting") -> None:
+        """Records what the turn used, whether it answered, failed, or was stopped.
+
+        A task of its own, shielded: a stopped turn is already being cancelled here, and its accounting
+        must still reach the store even though nothing is left to wait for it.
+        """
+        if accounting.usage is None:
+            return
+        usage, complete = accounting.usage, accounting.complete
+        saving = asyncio.ensure_future(
+            self._database.run(lambda conn: conversations.record_usage(conn, turn, usage, complete))
+        )
+        self._saving.add(saving)
+        saving.add_done_callback(self._saving.discard)
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.shield(saving)
+
+    async def _answer(
+        self,
+        engine: ChatEngine,
+        turn: Turn,
+        request: ChatRequest,
+        events: asyncio.Queue[TurnEvent | None],
+        accounting: "_Accounting",
+    ) -> bool:
         """Streams one attempt at the turn's answer, saving it when done. True if the session to resume is gone."""
         answer: list[str] = []
         uses: dict[str, ToolUse] = {}
         # Text written after a tool call starts a new paragraph; the model's separate steps don't end in whitespace.
         after_tool = False
         # Closed on return, so the engine stops its CLI process now rather than whenever it's garbage collected.
-        async with contextlib.aclosing(self._engine.stream(request)) as stream:
+        async with contextlib.aclosing(engine.stream(request)) as stream:
             async for event in stream:
                 match event:
                     case TextDelta(text):
@@ -197,7 +283,10 @@ class Chat:
                         if call_id in uses:
                             uses[call_id] = replace(uses[call_id], is_error=is_error)
                         events.put_nowait({"type": "tool_result", **asdict(event)})
+                    case UsageReported(reported):
+                        accounting.add(reported)
                     case ChatDone(session_id):
+                        accounting.finish()
                         content = "".join(answer)
                         saved = await self._database.run(
                             lambda conn: conversations.record_answer(

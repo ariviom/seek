@@ -6,6 +6,7 @@ import {
   type ChatStreamEvent,
   type Citation,
   type ConversationDetail,
+  type EngineName,
   type Group,
   type Scope,
   type Sync,
@@ -29,6 +30,7 @@ export function ConversationView({
   groups,
   channels,
   syncs,
+  engine,
   playback,
   notices,
   onChanged,
@@ -41,6 +43,8 @@ export function ConversationView({
   groups: Group[] | null;
   channels: Channel[] | null;
   syncs: Sync[] | null;
+  // The engine that would answer the next turn, for the composer's models and context controls.
+  engine: EngineName | null;
   playback: PlaybackControls;
   notices: ReactNode;
   // After each turn, also a failed one: the Conversation exists and holds the question.
@@ -274,6 +278,7 @@ export function ConversationView({
           draft={draft}
           onDraft={setDraft}
           questionRef={questionBox}
+          engine={engine}
           model={model}
           onModel={setModel}
           modelLocked={!isNew}

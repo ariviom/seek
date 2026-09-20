@@ -243,8 +243,35 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    """What one provider request reported. Cache writes are billed as input and counted there."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            self.input_tokens + other.input_tokens,
+            self.output_tokens + other.output_tokens,
+            self.cache_read_tokens + other.cache_read_tokens,
+        )
+
+
+@dataclass(frozen=True)
+class UsageReported:
+    """One provider request's usage, emitted as soon as it is known so a later failure cannot lose it.
+
+    An engine emits this at most once per provider request; a turn's usage is their sum.
+    """
+
+    usage: TokenUsage
+
+
+@dataclass(frozen=True)
 class ChatDone:
-    session_id: str
+    # The session to resume next turn, for an engine that keeps one; None where the history is replayed instead.
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -254,18 +281,25 @@ class ChatFailed:
     session_lost: bool = False
 
 
-type ChatEvent = TextDelta | ToolCall | ToolResult | ChatDone | ChatFailed
+type ChatEvent = TextDelta | ToolCall | ToolResult | UsageReported | ChatDone | ChatFailed
 
 
-# api_key: logged in, but through an API key that would be billed instead of the subscription.
-type ChatEngineState = Literal["ready", "missing", "logged_out", "api_key", "unknown"]
+type EngineName = Literal["api", "cli"]
+
+# Claude CLI: api_key means logged in, but through an API key that would be billed instead of the subscription.
+# Anthropic API: no_key means none is stored, invalid_key that the stored one was rejected.
+type ChatEngineState = Literal[
+    "ready", "missing", "logged_out", "api_key", "no_key", "invalid_key", "unknown"
+]
 
 
 @dataclass(frozen=True)
 class ChatEngineStatus:
+    # Which engine this describes, so Health can report both.
+    engine: EngineName
     state: ChatEngineState
-    # The Claude CLI checked, if one was found.
-    cli_path: str | None
+    # The Claude CLI checked, if one was found; always None for the API engine.
+    cli_path: str | None = None
     # What to do about a state other than ready, for the user.
     message: str | None = None
 
@@ -274,5 +308,5 @@ class ChatEngine(Protocol):
     def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]: ...
 
     async def status(self) -> ChatEngineStatus:
-        """Whether chat can run: the Claude CLI is present and logged in. Never raises."""
+        """Whether this engine can answer a turn right now. Never raises, and never calls the provider."""
         ...

@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Literal
@@ -14,16 +16,30 @@ from mentor.events import Events
 from mentor.ports import Secrets, SecretsUnavailable
 
 # SDK debug tracebacks can include provider-echoed credentials. Suppress its transport
-# diagnostics only in the current validation task, leaving unrelated requests/logs alone.
-_validating = ContextVar("validating_credential", default=False)
+# diagnostics only in the task currently holding a key, leaving unrelated requests/logs alone.
+_using_key = ContextVar("using_credential", default=False)
 
 
-class _ValidationLogs(logging.Filter):
+class _CredentialLogs(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        return not _validating.get()
+        return not _using_key.get()
 
 
-logging.getLogger("anthropic._base_client").addFilter(_ValidationLogs())
+logging.getLogger("anthropic._base_client").addFilter(_CredentialLogs())
+
+
+@contextmanager
+def suppressed_sdk_logs() -> Iterator[None]:
+    """Keeps SDK transport diagnostics out of the log while this task sends a credential.
+
+    Entry-time validation and chat turns both need it: either can make the SDK log a request the
+    provider echoed a key into.
+    """
+    token = _using_key.set(True)
+    try:
+        yield
+    finally:
+        _using_key.reset(token)
 
 Validity = Literal["unverified", "valid", "invalid"]
 
@@ -88,21 +104,21 @@ class Credentials:
         credential = Credential(str(uuid4()), key)
         await asyncio.shield(self._commit(credential))
         validity: Validity = "unverified"
-        token = _validating.set(True)
-        try:
-            async with anthropic.AsyncAnthropic(
-                api_key=key, base_url="https://api.anthropic.com", max_retries=0, timeout=10,
-            ) as client:
-                # Per-request headers win over SDK custom-header environment values.
-                await client.models.list(limit=1, extra_headers={"X-Api-Key": key, "Authorization": anthropic.omit})
-            validity = "valid"
-        except anthropic.AuthenticationError:
-            validity = "invalid"
-        except anthropic.APIError:
-            # Rate limits, connection failures, overload and permission errors do not prove an invalid key.
-            pass
-        finally:
-            _validating.reset(token)
+        with suppressed_sdk_logs():
+            try:
+                async with anthropic.AsyncAnthropic(
+                    api_key=key, base_url="https://api.anthropic.com", max_retries=0, timeout=10,
+                ) as client:
+                    # Per-request headers win over SDK custom-header environment values.
+                    await client.models.list(
+                        limit=1, extra_headers={"X-Api-Key": key, "Authorization": anthropic.omit}
+                    )
+                validity = "valid"
+            except anthropic.AuthenticationError:
+                validity = "invalid"
+            except anthropic.APIError:
+                # Rate limits, connection failures, overload and permission errors do not prove an invalid key.
+                pass
         return await asyncio.shield(self._result(credential.generation, validity))
 
     async def _commit(self, credential: Credential | None) -> None:

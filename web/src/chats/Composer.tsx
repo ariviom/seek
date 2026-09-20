@@ -4,19 +4,30 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { EngineName } from "@/lib/api";
 import { ChatContext } from "./ChatContext";
 
 const defaultModel = "default";
-// Claude CLI aliases; "default" keeps the CLI's own default and is sent as null.
-const models: { value: string; label: string }[] = [
-  { value: defaultModel, label: "Claude CLI default" },
-  { value: "opus", label: "Opus" },
-  { value: "sonnet", label: "Sonnet" },
-  { value: "haiku", label: "Haiku" },
-];
+// Sent as null, which leaves the turn on whatever the default model setting says.
+const unpinned = { value: defaultModel, label: "Follow my default model setting" };
+// A pin is only ever offered from the engine that would receive it: the API takes model ids, the CLI aliases.
+const engineModels: Record<EngineName, { value: string; label: string }[]> = {
+  api: [
+    { value: "claude-sonnet-5", label: "Sonnet 5 (fast)" },
+    { value: "claude-opus-5", label: "Opus 5 (deep)" },
+  ],
+  cli: [
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+    { value: "haiku", label: "Haiku" },
+  ],
+};
 
-export function modelLabel(model: string | null): string {
-  return models.find((m) => m.value === (model ?? defaultModel))?.label ?? model ?? "Claude CLI default";
+// A Conversation can be pinned to a model the active engine doesn't offer; show it as stored rather than lose it.
+export function modelLabel(model: string | null, engine: EngineName | null): string {
+  if (model === null) return unpinned.label;
+  const known = engine === null ? [...engineModels.api, ...engineModels.cli] : engineModels[engine];
+  return known.find((m) => m.value === model)?.label ?? model;
 }
 
 // The question box with who answers, the model, and Ask/Stop. The send flow itself lives with the conversation.
@@ -26,6 +37,7 @@ export function Composer({
   draft,
   onDraft,
   questionRef,
+  engine,
   model,
   onModel,
   modelLocked,
@@ -48,6 +60,8 @@ export function Composer({
   draft: string;
   onDraft: (draft: string) => void;
   questionRef: Ref<HTMLTextAreaElement>;
+  // The engine that would answer the next turn, which decides the models on offer; null when none can.
+  engine: EngineName | null;
   model: string | null;
   onModel: (model: string | null) => void;
   modelLocked: boolean;
@@ -66,6 +80,11 @@ export function Composer({
   syncingNotice: string | null;
   error: string | null;
 }) {
+  const offered = engine === null ? [] : engineModels[engine];
+  const options =
+    model === null || offered.some((m) => m.value === model)
+      ? [unpinned, ...offered]
+      : [unpinned, ...offered, { value: model, label: modelLabel(model, engine) }];
   return (
     <div className="shrink-0 px-4 pb-3">
       <div className="mx-auto max-w-3xl space-y-2">
@@ -97,16 +116,19 @@ export function Composer({
           />
           <div className="flex items-center gap-1.5 px-2 pb-2">
             {chip}
-            <ChatContext
-              workspace={workspace}
-              onWorkspace={onWorkspace}
-              webAccess={webAccess}
-              onWebAccess={onWebAccess}
-              locked={contextLocked}
-            />
+            {/* The API engine refuses a project directory or web access, so it offers neither. */}
+            {engine !== "api" && (
+              <ChatContext
+                workspace={workspace}
+                onWorkspace={onWorkspace}
+                webAccess={webAccess}
+                onWebAccess={onWebAccess}
+                locked={contextLocked}
+              />
+            )}
             <span className="flex-1" />
             {modelLocked ? (
-              <span className="px-1.5 text-xs text-muted-foreground">{modelLabel(model)}</span>
+              <span className="px-1.5 text-xs text-muted-foreground">{modelLabel(model, engine)}</span>
             ) : (
               <Select
                 value={model ?? defaultModel}
@@ -116,7 +138,7 @@ export function Composer({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {models.map((m) => (
+                  {options.map((m) => (
                     <SelectItem key={m.value} value={m.value}>
                       {m.label}
                     </SelectItem>

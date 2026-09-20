@@ -20,8 +20,11 @@ import { Inspector, useInspector } from "@/shell/Inspector";
 import { ListColumn } from "@/shell/ListColumn";
 import { MainHeader } from "@/shell/MainHeader";
 import {
-  ClaudeNotice,
+  describeEngine,
   describeModel,
+  EngineNotice,
+  engineLabels,
+  engineNames,
   modelLabels,
   modelRoles,
   ModelNotice,
@@ -169,8 +172,9 @@ export function App() {
   });
 
   useServerEvents((event) => {
-    // Models may have progressed while the stream was down.
-    if (event.type === "ready") void loadHealth();
+    // Models may have progressed while the stream was down, and a key or preference saved since changes who
+    // answers, so the composer follows without a reload.
+    if (event.type === "ready" || event.type === "settings" || event.type === "credentials") void loadHealth();
     if (event.type === "models") {
       latestModels.current = event.models;
       modelEvents.current += 1;
@@ -236,7 +240,7 @@ export function App() {
           <span className="truncate">{chat.scope !== null ? "New chat" : summary?.title}</span>
           {summary !== undefined && (
             <Badge variant="outline" className="font-normal text-muted-foreground">
-              {modelLabel(summary.model)}
+              {modelLabel(summary.model, health?.chat.active ?? null)}
             </Badge>
           )}
         </span>
@@ -266,12 +270,13 @@ export function App() {
           groups={groups}
           channels={channels}
           syncs={syncs}
+          engine={health?.chat.active ?? null}
           playback={playback}
           notices={
             health !== null && (
               <>
                 {!liveUpdatesStopped && <ModelNotice models={health.models} />}
-                <ClaudeNotice claude={health.claude_cli} />
+                <EngineNotice chat={health.chat} />
               </>
             )
           }
@@ -392,7 +397,7 @@ export function App() {
         onView={changeView}
         syncs={syncs}
         models={state.kind === "ok" ? state.health.models : null}
-        claude={state.kind === "ok" ? state.health.claude_cli : null}
+        chat={state.kind === "ok" ? state.health.chat : null}
         serverError={serverError}
         onShowHealth={() => setHealthOpen(true)}
       />
@@ -490,13 +495,16 @@ export function App() {
                 return <Fact key={role} term={modelLabels[role]} value={value} wrap />;
               })}
               <Fact
-                term="Claude CLI"
+                term="Chat engine"
                 value={
-                  state.health.claude_cli.state === "ready"
-                    ? "ready"
-                    : (state.health.claude_cli.message ?? state.health.claude_cli.state.replace("_", " "))
+                  state.health.chat.active === null
+                    ? "none available"
+                    : engineLabels[state.health.chat.active]
                 }
               />
+              {engineNames.map((name) => (
+                <Fact key={name} term={engineLabels[name]} value={describeEngine(state.health.chat.engines[name])} wrap />
+              ))}
               <Fact term="Knowledge base" value={state.health.database.path} />
             </dl>
           )}

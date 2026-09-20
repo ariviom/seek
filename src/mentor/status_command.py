@@ -2,7 +2,7 @@
 
 import asyncio
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -10,15 +10,24 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from mentor import channels, db, groups, syncs
 from mentor.channels import Channel
 from mentor.config import HOST, Config
+from mentor.engines import active_engine
 from mentor.groups import Group
-from mentor.ports import ChatEngine, ChatEngineStatus, ModelStatus
+from mentor.ports import ChatEngine, ChatEngineStatus, EngineName, ModelStatus
+from mentor.settings import Settings, read_settings
 from mentor.sync_command import SyncCommandError, answers, request
 from mentor.syncs import Sync
 
 
+class ChatHealth(BaseModel):
+    """Both engines' availability and which one would answer the next turn; neither probes a provider."""
+
+    active: EngineName | None
+    engines: dict[EngineName, ChatEngineStatus]
+
+
 class _Health(BaseModel):
     models: dict[str, ModelStatus]
-    claude_cli: ChatEngineStatus
+    chat: ChatHealth
 
 
 @dataclass(frozen=True)
@@ -27,7 +36,7 @@ class StatusReport:
     server_url: str | None
     # By role; None without a server, since only the server loads them.
     models: dict[str, ModelStatus] | None
-    claude_cli: ChatEngineStatus
+    chat: ChatHealth
     # Running and queued, oldest first.
     syncs: list[Sync]
 
@@ -57,15 +66,18 @@ def _unfinished(all_syncs: list[Sync]) -> list[Sync]:
     return sorted((s for s in all_syncs if s.status in ("queued", "running")), key=lambda s: s.id)
 
 
-async def status(config: Config, chat_engine: ChatEngine) -> StatusReport:
-    """chat_engine checks the Claude CLI only when no server answers."""
+async def status(config: Config, engines: Mapping[EngineName, ChatEngine]) -> StatusReport:
+    """The engines are asked directly only when no server answers; neither call reaches a provider."""
     url = await asyncio.to_thread(_server_url, config)
     if url is not None:
         health = _parse(url, TypeAdapter(_Health), await asyncio.to_thread(request, f"{url}api/health"))
         listed = _parse(url, TypeAdapter(list[Sync]), await asyncio.to_thread(request, f"{url}api/syncs"))
-        return StatusReport(url, health.models, health.claude_cli, _unfinished(listed))
+        return StatusReport(url, health.models, health.chat, _unfinished(listed))
     stored: list[Sync] = await _read_store(config, lambda conn: syncs.list_syncs(conn), [])
-    return StatusReport(None, None, await chat_engine.status(), _unfinished(stored))
+    statuses = {name: await engine.status() for name, engine in engines.items()}
+    settings = await _read_store(config, read_settings, Settings())
+    chat = ChatHealth(active=active_engine(settings.engine, statuses), engines=statuses)
+    return StatusReport(None, None, chat, _unfinished(stored))
 
 
 async def list_all(config: Config) -> ListReport:
@@ -110,10 +122,12 @@ def format_status(report: StatusReport) -> str:
         lines.append("Models:")
         for role, model in (report.models or {}).items():
             lines.append(f"  {role}: {_model_state(model)}")
-    cli = report.claude_cli
-    lines.append(f"Claude CLI: {cli.state}" + (f" ({cli.cli_path})" if cli.cli_path else ""))
-    if cli.message:
-        lines.append(f"  {cli.message}")
+    lines.append(f"Chat: {report.chat.active or 'no engine ready'}")
+    for name, engine in report.chat.engines.items():
+        where = f" ({engine.cli_path})" if engine.cli_path else ""
+        lines.append(f"  {name}: {engine.state}{where}")
+        if engine.message:
+            lines.append(f"    {engine.message}")
     running = sum(s.status == "running" for s in report.syncs)
     lines.append(f"Syncs: {running} running, {len(report.syncs) - running} queued")
     for s in report.syncs:

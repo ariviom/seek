@@ -3,8 +3,9 @@
 import asyncio
 import contextlib
 import json
+import os
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -28,6 +29,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import HookEvent, McpSdkServerConfig
 
+from mentor.engines import MAX_TURNS
 from mentor.ports import (
     ChatDone,
     ChatEngineStatus,
@@ -35,20 +37,24 @@ from mentor.ports import (
     ChatFailed,
     ChatRequest,
     TextDelta,
+    TokenUsage,
     ToolCall,
     ToolResult,
+    UsageReported,
 )
 
 TOOL_SERVER_NAME = "mentor"
 # MCP resource tools the CLI adds whenever an MCP server is configured, even with built-in tools off. The model still
 # sees them listed, but calls are denied (checked against Claude Code 2.x on 2026-09-13).
 MCP_RESOURCE_TOOLS = ("ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool")
-# Model turns (each a response, usually with tool calls) before the answer is cut off.
-MAX_TURNS = 30
 # How the CLI refuses to resume a session it no longer has or can't read (Claude Code 2.1.270).
 _RESUME_FAILURES = ("No conversation found with session ID", "Failed to resume session", "resume load failed")
 # The most of a Conversation replayed into a new session; the model's context holds much more, but tools need room.
 REPLAY_CHARACTER_LIMIT = 100_000
+# The CLI bills an API key in its environment instead of the subscription, so Mentor never hands it one.
+# The SDK merges options.env over os.environ and cannot remove a name, but an empty value reads as unset
+# to both the SDK and the CLI (checked against Claude Code 2.1.278 on 2026-09-20).
+CHILD_ENVIRONMENT = {"CLAUDE_AGENT_SDK_CLIENT_APP": "mentor", "ANTHROPIC_API_KEY": ""}
 STATUS_TIMEOUT_SECONDS = 10
 STATUS_CACHE_SECONDS = 30
 
@@ -129,7 +135,7 @@ def chat_options(request: ChatRequest, working_directory: Path, cli_path: Path |
         resume=request.resume_session_id,
         max_turns=MAX_TURNS,
         include_partial_messages=True,
-        env={"CLAUDE_AGENT_SDK_CLIENT_APP": "mentor"},
+        env=dict(CHILD_ENVIRONMENT),
     )
 
 
@@ -153,12 +159,38 @@ def chat_events(message: Message) -> list[ChatEvent]:
                 for b in blocks
                 if isinstance(b, ToolResultBlock)
             ]
-        case ResultMessage(is_error=False, session_id=session_id):
-            return [ChatDone(session_id)]
-        case ResultMessage(result=result, errors=errors, subtype=subtype):
+        case ResultMessage(is_error=False, session_id=session_id, usage=usage):
+            return [*_usage(usage), ChatDone(session_id)]
+        case ResultMessage(result=result, errors=errors, subtype=subtype, usage=usage):
             reason = result or "; ".join(errors or []) or f"Claude Code stopped: {subtype}"
-            return [ChatFailed(reason, session_lost=_is_resume_failure(reason))]
+            # Before the failure, so a turn that ends badly still keeps what it cost.
+            return [*_usage(usage), ChatFailed(reason, session_lost=_is_resume_failure(reason))]
     return []
+
+
+def _usage(reported: dict[str, object] | None) -> list[ChatEvent]:
+    """The CLI's own totals for the turn, once, when it supplies them.
+
+    A result message with no recognisable counts means unknown usage, which is not a measured zero.
+    """
+    if not isinstance(reported, dict):
+        return []
+    counts = {
+        name: value
+        for name in ("input_tokens", "output_tokens", "cache_read_input_tokens")
+        if isinstance(value := reported.get(name), int)
+    }
+    if not counts:
+        return []
+    return [
+        UsageReported(
+            TokenUsage(
+                input_tokens=counts.get("input_tokens", 0),
+                output_tokens=counts.get("output_tokens", 0),
+                cache_read_tokens=counts.get("cache_read_input_tokens", 0),
+            )
+        )
+    ]
 
 
 def _is_resume_failure(text: str) -> bool:
@@ -193,6 +225,15 @@ def prompt(request: ChatRequest) -> str:
         "no answer after it went unanswered). Cite only what the tools return now.\n\n"
         f"<earlier_conversation>\n{earlier}\n</earlier_conversation>\n\n{request.message}"
     )
+
+
+def probe_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """The environment `claude auth status` is asked in: this process's, minus the key the chat won't use.
+
+    Without this the probe reports an api_key state for a key the chat subprocess never sees. An
+    apiKeyHelper or a key in Claude Code's own settings still shows, which is the state worth explaining.
+    """
+    return {name: value for name, value in environment.items() if name != "ANTHROPIC_API_KEY"}
 
 
 def failure(error: ClaudeSDKError) -> ChatFailed:
@@ -251,7 +292,7 @@ class ClaudeChatEngine:
     async def _probe(self) -> ChatEngineStatus:
         cli = str(self._cli_path) if self._cli_path else None
         if self._cli_path is None or not self._cli_path.is_file():
-            return ChatEngineStatus("missing", cli, self._missing())
+            return ChatEngineStatus("cli", "missing", cli, self._missing())
         try:
             process = await asyncio.create_subprocess_exec(
                 self._cli_path,
@@ -261,13 +302,16 @@ class ClaudeChatEngine:
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                env=probe_environment(os.environ),
             )
         except OSError as e:
-            return ChatEngineStatus("unknown", cli, f"Couldn't run `claude auth status`: {e}")
+            return ChatEngineStatus("cli", "unknown", cli, f"Couldn't run `claude auth status`: {e}")
         try:
             output, _ = await asyncio.wait_for(process.communicate(), STATUS_TIMEOUT_SECONDS)
         except TimeoutError:
-            return ChatEngineStatus("unknown", cli, f"`claude auth status` didn't answer within {STATUS_TIMEOUT_SECONDS} s")
+            return ChatEngineStatus(
+                "cli", "unknown", cli, f"`claude auth status` didn't answer within {STATUS_TIMEOUT_SECONDS} s"
+            )
         finally:
             # Also when the Health request is cancelled.
             if process.returncode is None:
@@ -277,12 +321,17 @@ class ClaudeChatEngine:
             auth = json.loads(output)
             logged_in, api_key = auth.get("loggedIn"), auth.get("apiKeySource")
         except (ValueError, AttributeError):
-            return ChatEngineStatus("unknown", cli, "`claude auth status` didn't answer with its usual JSON")
+            return ChatEngineStatus("cli", "unknown", cli, "`claude auth status` didn't answer with its usual JSON")
         if api_key:
             # The chat inherits mentor's environment, so a key there bills the API instead of the subscription.
             return ChatEngineStatus(
-                "api_key", cli, f"Claude Code would use the API key from {api_key}, not your subscription; unset it for mentor"
+                "cli",
+                "api_key",
+                cli,
+                f"Claude Code would use the API key from {api_key}, not your subscription; remove it there",
             )
         if logged_in is True:
-            return ChatEngineStatus("ready", cli)
-        return ChatEngineStatus("logged_out", cli, "Claude Code isn't logged in; run `claude auth login` on the server")
+            return ChatEngineStatus("cli", "ready", cli)
+        return ChatEngineStatus(
+            "cli", "logged_out", cli, "Claude Code isn't logged in; run `claude auth login` on the server"
+        )

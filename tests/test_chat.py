@@ -60,6 +60,10 @@ async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resu
         "tool_calls": [{"name": "search", "arguments": {"query": "tear-out"}, "is_error": False}],
         "citations": [],
         "created_at": "",
+        # The engine and model that produced it; this engine reports no usage, so none is recorded.
+        "engine": "cli",
+        "model": "claude-sonnet-5",
+        "usage": None,
     }
     assert stored_messages(config, conversation["id"])[:2] == [
         ("user", "How do I stop tear-out?"),

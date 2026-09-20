@@ -8,7 +8,7 @@ from harness import running
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChannel, FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import ChannelInfo
+from mentor.ports import ChannelInfo, ChatEngineStatus
 
 
 @pytest.fixture
@@ -48,7 +48,18 @@ def reranker() -> FakeReranker:
 
 @pytest.fixture
 def engine() -> FakeChatEngine:
-    return FakeChatEngine()
+    """The Claude CLI engine, which answers by default: the fake API engine starts without a key."""
+    return FakeChatEngine("cli")
+
+
+@pytest.fixture
+def api_engine() -> FakeChatEngine:
+    return FakeChatEngine("api", engine_status=ChatEngineStatus("api", "no_key", None, "Add an Anthropic API key"))
+
+
+@pytest.fixture
+def secrets() -> FakeSecrets:
+    return FakeSecrets()
 
 
 @pytest.fixture
@@ -58,9 +69,20 @@ async def client(
     embedder: FakeEmbedder,
     reranker: FakeReranker,
     engine: FakeChatEngine,
+    api_engine: FakeChatEngine,
+    secrets: FakeSecrets,
     tmp_path: Path,
 ) -> AsyncIterator[httpx.AsyncClient]:
     # No web bundle: API tests don't need one.
-    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=tmp_path / "no-bundle", secrets=FakeSecrets())
+    app = create_app(
+        config,
+        transcripts,
+        embedder,
+        reranker,
+        engine,
+        static_dir=tmp_path / "no-bundle",
+        secrets=secrets,
+        api_engine=api_engine,
+    )
     async with running(app) as c:
         yield c

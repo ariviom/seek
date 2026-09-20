@@ -14,6 +14,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from mentor import access, db
+from mentor.api_chat import ApiEngine
 from mentor.channels_api import channels_router
 from mentor.chat import Chat
 from mentor.chat_api import chat_router
@@ -126,7 +127,7 @@ def create_app(
     transcripts: TranscriptSource,
     embedder: Embedder,
     reranker: Reranker,
-    chat_engine: ChatEngine,
+    cli_engine: ChatEngine,
     static_dir: Path = PACKAGE_STATIC_DIR,
     sync_poll_seconds: float = 5.0,
     events_keepalive_seconds: float = 15.0,
@@ -135,6 +136,7 @@ def create_app(
     fetch_access_keys: access.FetchKeys = access.fetch_url,
     access_keys_refetch_seconds: float = 60.0,
     secrets: Secrets | None = None,
+    api_engine: ChatEngine | None = None,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
@@ -155,7 +157,7 @@ def create_app(
         cooldown_seconds=config.youtube_backoff_seconds,
     )
     models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
-    chat = Chat(database, search, chat_engine)
+    chat = Chat(database, search, {"api": api_engine or ApiEngine(credentials), "cli": cli_engine})
     mcp = create_mcp_server(database, search, sql_time_limit_seconds)
     mcp_hosts = [*LOOPBACK_HOSTS, *config.allowed_hosts]
     # Stateless JSON responses: the tools never call back to the client, and plain responses pass through proxies
@@ -202,11 +204,14 @@ def create_app(
 
     @app.get("/api/health")
     async def health() -> dict[str, object]:
+        # Both engines, so the settings screen can offer a choice this machine can honour, and the active
+        # one, so the composer knows who would answer. Neither status calls a provider.
+        active, engines = await chat.active()
         return {
             "status": "ok",
             "database": app.state.database_info,
             "models": _statuses(models),
-            "claude_cli": await chat_engine.status(),
+            "chat": {"active": active, "engines": engines},
         }
 
     app.include_router(channels_router(database, transcripts, events), prefix="/api")

@@ -76,6 +76,8 @@ async def test_conversations_are_listed_newest_first_by_scope_and_reopen_with_th
         "title": "How do I flatten a workbench top that has cupped badly over the winter in my da…",
         "message_count": 4,
         "last_message_at": "",
+        # This engine reports no usage, so the total is zero and says it is incomplete rather than exact.
+        "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "complete": False},
     }
     assert everything[1]["scope"] == {"kind": "channel", "id": rex["id"], "name": "Rex Krueger"}
     assert [(m["role"], m["content"]) for m in reopened["messages"]] == [
@@ -250,17 +252,22 @@ async def test_a_turn_after_a_failed_first_one_replays_the_unanswered_question(
     assert (retry.resume_session_id, retry.history) == (None, [PastMessage("user", "Which stone?")])
 
 
-async def test_each_conversation_keeps_the_model_it_was_started_with(
+async def test_a_pinned_model_wins_while_an_unpinned_conversation_follows_the_setting(
     client: httpx.AsyncClient, engine: FakeChatEngine
 ) -> None:
-    default = await new_group_conversation(client)
-    haiku = await start_conversation(client, default["scope"]["id"], model="haiku")
+    """A pin is a deliberate one-off; everything else follows the current preference, mid-thread included."""
+    unpinned = await new_group_conversation(client)
+    haiku = await start_conversation(client, unpinned["scope"]["id"], model="haiku")
 
-    await send(client, default["id"], "One?")
+    await send(client, unpinned["id"], "One?")
     await send(client, haiku["id"], "Two?")
+    assert (await client.patch("/api/settings", json={"model": "deep"})).status_code == 200
+    await send(client, unpinned["id"], "Three?")
+    await send(client, haiku["id"], "Four?")
 
-    assert [r.model for r in engine.requests] == [None, "haiku"]
-    assert (default["model"], haiku["model"]) == (None, "haiku")
+    # fast and deep are Claude CLI aliases on this engine; the pin is passed through untouched.
+    assert [r.model for r in engine.requests] == ["sonnet", "haiku", "opus", "haiku"]
+    assert (unpinned["model"], haiku["model"]) == (None, "haiku")
 
 
 async def test_a_conversation_can_be_renamed(client: httpx.AsyncClient) -> None:

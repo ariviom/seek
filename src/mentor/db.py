@@ -293,6 +293,19 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
         )
     ) WITHOUT ROWID;
     """,
+    """
+    -- Which engine and model produced a message. NULL on everything saved before engines were
+    -- selectable: unknown provenance, which is honest, rather than a guess at the engine of the day.
+    ALTER TABLE messages ADD COLUMN engine TEXT CHECK (engine IN ('api', 'cli'));
+    ALTER TABLE messages ADD COLUMN engine_model TEXT;
+    -- A turn's reported usage lives on the user message that started it, so it survives a turn that
+    -- fails or is stopped without an answer to attach it to. NULL means unreported, never measured zero.
+    ALTER TABLE messages ADD COLUMN input_tokens INTEGER;
+    ALTER TABLE messages ADD COLUMN output_tokens INTEGER;
+    ALTER TABLE messages ADD COLUMN cache_read_tokens INTEGER;
+    -- 0 when the turn ended before the provider reported everything, so a total built from it is a floor.
+    ALTER TABLE messages ADD COLUMN usage_complete INTEGER CHECK (usage_complete IN (0, 1));
+    """,
 ]
 
 

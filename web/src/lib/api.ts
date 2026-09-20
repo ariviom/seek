@@ -10,17 +10,30 @@ export type ModelStatus = {
 };
 export type Models = { embedding: ModelStatus; reranker: ModelStatus };
 
-// Whether the web chat can run: the Claude CLI is present and logged in. `message` says what to do otherwise.
-export type ClaudeCli = {
-  state: "ready" | "missing" | "logged_out" | "unknown";
+export type EngineName = "api" | "cli";
+// `no_key` and `invalid_key` only happen on the api engine, `missing`, `logged_out` and `api_key` only on the cli one.
+export type ChatEngineState =
+  | "ready"
+  | "missing"
+  | "logged_out"
+  | "api_key"
+  | "no_key"
+  | "invalid_key"
+  | "unknown";
+export type ChatEngineStatus = {
+  engine: EngineName;
+  state: ChatEngineState;
   cli_path: string | null;
+  // What to add for a state other than ready, written for the user; shown as it stands.
   message: string | null;
 };
+// `active` is the engine the next turn would use; null is the one case where chat can't answer at all.
+export type ChatHealth = { active: EngineName | null; engines: Record<EngineName, ChatEngineStatus> };
 
 export type Health = {
   status: string;
   models: Models;
-  claude_cli: ClaudeCli;
+  chat: ChatHealth;
   database: {
     path: string;
     journal_mode: string;
@@ -126,7 +139,7 @@ export type Expansion = {
   cues: { start_seconds: number; text: string }[];
 };
 
-// A null model uses the Claude CLI's default.
+// A null model follows the default model setting rather than pinning one.
 // `scope.id` is null once the Group or Channel is deleted, which leaves the Conversation read-only.
 export type ScopeKind = "group" | "channel";
 export type Scope = { kind: ScopeKind; id: number };
@@ -138,6 +151,13 @@ export type Conversation = {
   model: string | null;
   context: ChatContext;
   created_at: string;
+};
+// What the provider reported, never an estimate; `complete` is false when a turn ended before all of it arrived.
+export type TokenUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  complete: boolean;
 };
 export type Citation = {
   video_id: number;
@@ -156,14 +176,19 @@ export type ChatMessage = {
   tool_calls: { name: string; arguments: Record<string, unknown>; is_error: boolean }[];
   citations: Citation[];
   created_at: string;
+  // Null on messages saved before engines were selectable: unknown, not zero.
+  engine: EngineName | null;
+  model: string | null;
+  usage: TokenUsage | null;
 };
 export type ConversationSummary = Conversation & {
   // The title given to the Conversation, or else its first question, shortened.
   title: string;
   message_count: number;
   last_message_at: string | null;
+  usage: TokenUsage;
 };
-export type ConversationDetail = Conversation & { messages: ChatMessage[] };
+export type ConversationDetail = Conversation & { messages: ChatMessage[]; usage: TokenUsage };
 // One turn's stream: text and tool activity as it happens, then the saved answer or an error.
 export type ChatStreamEvent =
   | { type: "text"; text: string }

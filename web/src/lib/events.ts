@@ -7,7 +7,9 @@ export type ServerEvent =
   | { type: "video"; channel_id: number; video: Video }
   | { type: "videos"; channel_id: number }
   | { type: "syncs" }
-  | { type: "models"; models: Models };
+  | { type: "models"; models: Models }
+  | { type: "settings" }
+  | { type: "credentials" };
 
 type Listener = (event: ServerEvent) => void;
 

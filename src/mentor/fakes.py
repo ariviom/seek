@@ -13,6 +13,7 @@ from mentor.ports import (
     ChatEngineStatus,
     ChatEvent,
     ChatRequest,
+    EngineName,
     ModelStatus,
     ModelUnavailable,
     PlaylistNotFound,
@@ -202,17 +203,31 @@ class FakeReranker(_FakeModel):
 
 @dataclass
 class FakeChatEngine:
-    """Streams the script for every turn, or, when `respond` is set, whatever it yields for the request."""
+    """Streams the script for every turn, or, when `respond` is set, whatever it yields for the request.
 
-    script: list[ChatEvent] = field(default_factory=lambda: [TextDelta("Nothing to say."), ChatDone("session-1")])
+    `engine` decides which half of the pair this stands in for, and what a ready status looks like: the
+    Claude CLI reports the path it found, the API engine never has one.
+    """
+
+    engine: EngineName = "cli"
+    script: list[ChatEvent] | None = None
     # E.g. calls the request's tools as a model would before answering.
     respond: Callable[[ChatRequest], AsyncIterator[ChatEvent]] | None = None
     # Every request, in order.
     requests: list[ChatRequest] = field(default_factory=list)
-    # What status() reports.
-    engine_status: ChatEngineStatus = field(default_factory=lambda: ChatEngineStatus("ready", "/usr/bin/claude"))
+    # What status() reports; ready for this engine unless set.
+    engine_status: ChatEngineStatus | None = None
+
+    def __post_init__(self) -> None:
+        if self.script is None:
+            session = "session-1" if self.engine == "cli" else None
+            self.script = [TextDelta("Nothing to say."), ChatDone(session)]
+        if self.engine_status is None:
+            path = "/usr/bin/claude" if self.engine == "cli" else None
+            self.engine_status = ChatEngineStatus(self.engine, "ready", path)
 
     async def status(self) -> ChatEngineStatus:
+        assert self.engine_status is not None
         return self.engine_status
 
     async def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]:
@@ -221,5 +236,5 @@ class FakeChatEngine:
             async for event in self.respond(request):
                 yield event
         else:
-            for event in self.script:
+            for event in self.script or []:
                 yield event

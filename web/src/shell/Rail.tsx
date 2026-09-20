@@ -7,10 +7,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { ClaudeCli, Models, Sync } from "@/lib/api";
+import type { ChatHealth, Models, Sync } from "@/lib/api";
 import { useTheme, type Theme } from "@/lib/theme";
 import type { View } from "@/lib/url-state";
-import { describeModel, modelLabels, modelRoles } from "./Notices";
+import { describeEngine, describeModel, engineLabels, engineNames, modelLabels, modelRoles } from "./Notices";
 
 const sections: { view: View; label: string; Icon: typeof MessageSquare }[] = [
   { view: "chats", label: "Chats", Icon: MessageSquare },
@@ -25,27 +25,37 @@ const themes: { value: Theme; label: string; Icon: typeof Sun }[] = [
   { value: "system", label: "System", Icon: Monitor },
 ];
 
+// Both engines, marking the one a turn would use, so the dot says which requirement is outstanding.
+function engineText(chat: ChatHealth): string {
+  return engineNames
+    .map((name) => `${engineLabels[name]}${name === chat.active ? " (active)" : ""}: ${describeEngine(chat.engines[name])}`)
+    .join(". ");
+}
+
 // Green when everything can answer; amber while a model is still arriving; red when the server, a model, or the
-// CLI can't. The wording is the one the notices use, so the dot and the notice never disagree.
+// active engine can't. The wording is the one the notices use, so the dot and the notice never disagree.
 function health(
   models: Models | null,
-  claude: ClaudeCli | null,
+  chat: ChatHealth | null,
   serverError: string | null,
 ): { tone: string; text: string } {
   if (serverError !== null) return { tone: "bg-red-500", text: `Server unavailable: ${serverError}` };
-  if (models === null || claude === null) return { tone: "bg-muted-foreground", text: "Checking the server…" };
+  if (models === null || chat === null) return { tone: "bg-muted-foreground", text: "Checking the server…" };
   const failed = modelRoles.find((role) => models[role].state === "failed");
   if (failed !== undefined) {
     return { tone: "bg-red-500", text: models[failed].error ?? `The ${modelLabels[failed]} failed to load` };
   }
-  if (claude.state !== "ready") {
-    return { tone: "bg-red-500", text: claude.message ?? "The Claude CLI can't answer right now." };
+  if (chat.active === null) {
+    return { tone: "bg-red-500", text: `Chat has no engine yet. ${engineText(chat)}` };
+  }
+  if (chat.engines[chat.active].state !== "ready") {
+    return { tone: "bg-red-500", text: `Chat can't answer. ${engineText(chat)}` };
   }
   const waiting = modelRoles.find((role) => models[role].state !== "ready");
   if (waiting !== undefined) {
     return { tone: "bg-amber-400", text: `The ${modelLabels[waiting]} is ${describeModel(models[waiting])}` };
   }
-  return { tone: "bg-emerald-500", text: "Models and the Claude CLI are ready" };
+  return { tone: "bg-emerald-500", text: `Models are ready. ${engineText(chat)}` };
 }
 
 // The icon rail, or a bottom bar below 768px, where a left column would crowd the page.
@@ -54,7 +64,7 @@ export function Rail({
   onView,
   syncs,
   models,
-  claude,
+  chat,
   serverError,
   onShowHealth,
 }: {
@@ -62,13 +72,13 @@ export function Rail({
   onView: (view: View) => void;
   syncs: Sync[] | null;
   models: Models | null;
-  claude: ClaudeCli | null;
+  chat: ChatHealth | null;
   serverError: string | null;
   onShowHealth: () => void;
 }) {
   const running = (syncs ?? []).some((sync) => sync.status === "queued" || sync.status === "running");
   const { theme, setTheme } = useTheme();
-  const dot = health(models, claude, serverError);
+  const dot = health(models, chat, serverError);
   const ThemeIcon = themes.find((t) => t.value === theme)?.Icon ?? Monitor;
 
   return (

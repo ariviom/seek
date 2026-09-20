@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +18,17 @@ from mcp.server.mcpserver import MCPServer
 
 from mentor import claude_chat
 from mentor.claude_chat import ClaudeChatEngine, chat_events, chat_options, failure, prompt
-from mentor.ports import ChatDone, ChatFailed, ChatRequest, PastMessage, TextDelta, ToolCall, ToolResult
+from mentor.ports import (
+    ChatDone,
+    ChatFailed,
+    ChatRequest,
+    PastMessage,
+    TextDelta,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+    UsageReported,
+)
 
 
 def request(**changes: object) -> ChatRequest:
@@ -250,3 +261,72 @@ def test_sdk_messages_become_chat_events() -> None:
     assert chat_events(ResultMessage(subtype="error_max_turns", is_error=True, **result)) == [  # type: ignore[arg-type]
         ChatFailed("Claude Code stopped: error_max_turns")
     ]
+
+
+async def test_the_api_key_is_kept_out_of_the_cli_subprocess_without_changing_this_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An API key in the environment makes Claude Code bill the key instead of the subscription.
+
+    The SDK merges its env over this process's and cannot remove a name, so the value is emptied instead;
+    an empty ANTHROPIC_API_KEY reads exactly like an unset one (checked against Claude Code 2.1.278).
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-would-be-billed")
+
+    options = chat_options(request(), tmp_path / "chat", tmp_path / "claude")
+    probe = claude_chat.probe_environment(os.environ)
+
+    assert options.env["ANTHROPIC_API_KEY"] == ""
+    assert "ANTHROPIC_API_KEY" not in probe
+    # The status probe sees what the chat will see, so it can't report a key the chat never uses.
+    assert probe["PATH"] == os.environ["PATH"]
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-would-be-billed"
+
+
+async def test_the_status_probe_asks_without_the_key_this_process_was_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-would-be-billed")
+    cli = tmp_path / "claude"
+    # Reports the key only if it can still see one, exactly as Claude Code does.
+    cli.write_text(
+        '#!/bin/sh\nif [ -n "$ANTHROPIC_API_KEY" ]; then\n'
+        '  echo \'{"loggedIn": true, "apiKeySource": "ANTHROPIC_API_KEY"}\'\nelse\n'
+        '  echo \'{"loggedIn": true, "apiKeySource": null}\'\nfi\n'
+    )
+    cli.chmod(0o755)
+
+    status = await ClaudeChatEngine(tmp_path / "chat", cli).status()
+
+    assert status.state == "ready"
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        ({"input_tokens": 120, "output_tokens": 15, "cache_read_input_tokens": 90}, TokenUsage(120, 15, 90)),
+        # Partial counts are kept as far as they go; the missing ones stay zero within a known report.
+        ({"output_tokens": 15}, TokenUsage(0, 15, 0)),
+        (None, None),
+        ({"server_tool_use": {"web_search_requests": 0}}, None),
+    ],
+)
+async def test_the_cli_turns_usage_is_kept_when_its_sdk_reports_it(
+    usage: dict[str, object] | None, expected: TokenUsage | None
+) -> None:
+    done = ResultMessage(
+        subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
+        session_id="session-1", usage=usage, result="done",
+    )
+    failed = ResultMessage(
+        subtype="error_during_execution", duration_ms=1, duration_api_ms=1, is_error=True, num_turns=1,
+        session_id="session-1", usage=usage, result="Claude Code stopped",
+    )
+
+    reported = [e for e in chat_events(done) if isinstance(e, UsageReported)]
+    after_failure = [e for e in chat_events(failed) if isinstance(e, UsageReported)]
+
+    assert [e.usage for e in reported] == ([expected] if expected else [])
+    # A failed turn still cost what it cost, and the usage arrives before the failure.
+    assert [e.usage for e in after_failure] == ([expected] if expected else [])
+    assert isinstance(chat_events(failed)[-1], ChatFailed)
