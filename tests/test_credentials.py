@@ -176,3 +176,60 @@ async def test_canceled_key_write_cannot_complete_after_a_later_deletion(tmp_pat
         assert (await deletion).json() == {"present": False, "validity": "unverified"}
         assert (await client.get("/api/credentials/anthropic")).json()["present"] is False
         assert (await stream.until(lambda e: e["type"] == "credentials"))[-1] == {"type": "credentials"}
+
+
+async def test_locked_keychain_after_restart_allows_safe_replacement_and_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import keyring
+    from keyring.errors import KeyringLocked
+    from mentor.secrets import KeyringSecrets
+
+    values: dict[str, str] = {}
+    locked = False
+
+    def get(service: str, account: str) -> str | None:
+        if locked:
+            raise KeyringLocked("private-secret")
+        return values.get(account)
+
+    def set_key(service: str, account: str, value: str) -> None:
+        if locked:
+            raise KeyringLocked("private-secret")
+        values[account] = value
+
+    def delete(service: str, account: str) -> None:
+        if locked:
+            raise KeyringLocked("private-secret")
+        values.pop(account, None)
+
+    async def send(client: httpx2.AsyncClient, request: httpx2.Request, **kwargs: object) -> httpx2.Response:
+        return httpx2.Response(200, json={"data": [], "has_more": False}, request=request)
+
+    monkeypatch.setattr(keyring, "get_password", get)
+    monkeypatch.setattr(keyring, "set_password", set_key)
+    monkeypatch.setattr(keyring, "delete_password", delete)
+    monkeypatch.setattr(httpx2.AsyncClient, "send", send)
+
+    config = Config(data_dir=tmp_path)
+    first = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
+    async with running(first) as client:
+        assert (await client.put("/api/credentials/anthropic", json={"key": "private-secret"})).json()["validity"] == "valid"
+    assert "private-secret" not in (tmp_path / "secrets.json").read_text()
+    locked = True
+    second = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
+    async with running(second) as client:
+        failed = await client.get("/api/credentials/anthropic")
+        assert failed.status_code == 503
+        assert "private-secret" not in failed.text
+        assert (await client.get("/api/health")).status_code == 200
+        replacement = await client.put("/api/credentials/anthropic", json={"key": "replacement-secret"})
+        assert replacement.json() == {"present": True, "validity": "valid"}
+    third = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
+    async with running(third) as client:
+        assert (await client.get("/api/credentials/anthropic")).json()["validity"] == "valid"
+        assert (await client.delete("/api/credentials/anthropic")).json()["present"] is False
+    locked = False
+    final = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
+    async with running(final) as client:
+        assert (await client.get("/api/credentials/anthropic")).json()["present"] is False

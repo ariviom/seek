@@ -120,7 +120,9 @@ def test_read_failure_without_copy_reports_unavailable_and_can_recover(tmp_path:
     with pytest.raises(SecretsUnavailable, match="keychain") as error:
         secrets.get("anthropic")
     assert "raw-secret" not in str(error.value)
-    assert secrets.status.store == "file"
+    assert secrets.status.store == "keychain"
+    assert secrets.status.fallback_reason is not None
+    assert "no fallback copy exists" in secrets.status.fallback_reason
     keychain.failure = None
     assert secrets.get("anthropic") == "value"
 

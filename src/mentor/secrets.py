@@ -108,12 +108,14 @@ class KeyringSecrets:
             try:
                 value = keyring.get_password("mentor", account)
             except Exception:
-                reason = self._fallback("read")
                 value = self._cache.get(account)
                 if value is None:
-                    raise SecretsUnavailable(
+                    reason = (
                         "The keychain credential is unavailable and no fallback copy exists. Unlock the keychain or replace the key."
-                    ) from None
+                    )
+                    self._status = SecretStoreStatus("keychain", reason)
+                    raise SecretsUnavailable(reason) from None
+                reason = self._fallback("read")
                 entries[name] = _Entry(store="file", account=account, value=value, reason=reason)
                 self._write(entries)
                 return value

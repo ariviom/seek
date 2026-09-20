@@ -188,6 +188,11 @@ Success is five friends with a Channel of their own choosing, and a conversation
 - Headless Linux may have no keychain, or one that is present but locked with no way to prompt. Any keyring failure —
   missing backend, locked collection, or a refused prompt — falls back to a file in the data directory with owner-only
   permissions, and diagnostics say which store is in use and why.
+  Read-failure boundary (ticket 05 review): a recoverable current credential is copied to that fallback and survives
+  restarts. A successful keychain write does not also create a plaintext backup, preserving story 17. If the keychain
+  becomes unreadable after restart and no fallback copy exists, report the credential unavailable (not absent or
+  invalid), preserve it, and allow unlocking the keychain, replacement through the fallback, or durable deletion.
+  Diagnostics must not claim a working fallback copy exists in that case.
 - **There is deliberately no `ANTHROPIC_API_KEY` fallback.** The systemd unit unsets that variable on purpose, and the
   Claude CLI reports a degraded state when it sees one in Mentor's environment — an environment fallback would make a
   friend who exported a key bill it through their subscription path without knowing. For the same reason, the CLI
