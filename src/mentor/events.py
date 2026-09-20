@@ -66,3 +66,9 @@ class Events:
     def models(self, statuses: Mapping[str, ModelStatus]) -> None:
         """A model's download or loading progressed; statuses are by role, as Health reports them."""
         self._publish({"type": "models", "models": statuses})
+
+    def settings(self) -> None:
+        self._publish({"type": "settings"})
+
+    def credentials(self) -> None:
+        self._publish({"type": "credentials"})

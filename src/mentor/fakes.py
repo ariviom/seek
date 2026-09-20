@@ -16,6 +16,7 @@ from mentor.ports import (
     ModelStatus,
     ModelUnavailable,
     PlaylistNotFound,
+    SecretStoreStatus,
     SourceUnavailable,
     TextDelta,
     Transcript,
@@ -23,6 +24,21 @@ from mentor.ports import (
     VideoListing,
     VideoUnavailable,
 )
+
+
+@dataclass
+class FakeSecrets:
+    values: dict[str, str] = field(default_factory=dict, repr=False)
+    status: SecretStoreStatus = field(default_factory=lambda: SecretStoreStatus("keychain"))
+
+    def get(self, name: str) -> str | None:
+        return self.values.get(name)
+
+    def set(self, name: str, value: str) -> None:
+        self.values[name] = value
+
+    def delete(self, name: str) -> None:
+        self.values.pop(name, None)
 
 
 def _tokens(text: str) -> list[str]:

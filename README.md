@@ -153,7 +153,32 @@ sqlite3 ~/.local/share/mentor/mentor.db ".backup $HOME/mentor-backup.db"
 
 ## Configuration
 
-Settings are read from `config.toml` in the configuration directory above. The file is optional;
+The config file holds operational settings, the database `settings` table holds user preferences,
+and the OS keychain holds secrets (with a private fallback file where necessary). The friends
+settings UI will manage preferences and credentials; these never belong in `config.toml`.
+The API setup slice is available now; engine selection becomes active with the selectable-engine release.
+
+`GET /api/settings` reads preferences; `PATCH /api/settings` updates supplied fields only:
+`engine` accepts `api`, `cli`, or `null` (automatic); `provider` is `anthropic`; `model` is
+`fast` (default) or `deep`. These preferences persist across restarts. Current chat still uses the CLI.
+
+`PUT /api/credentials/anthropic` accepts a JSON `key` field, stores it, and makes one authenticated
+[model-list request](https://platform.claude.com/docs/en/api/models/list) with no retries or generated tokens.
+GET reads presence and last-known validity; DELETE removes the credential without a restart.
+Responses never contain the key. Validity is `valid`, `invalid` after authentication rejection,
+or `unverified` when validation cannot complete (for example, offline or rate limited).
+Health never contacts Anthropic. `ANTHROPIC_API_KEY` is never a credential fallback.
+Successful writes publish `settings` or `credentials` events so clients can reload safe state.
+
+Credentials normally live in the OS keychain via `keyring`. If the keychain is unavailable, locked,
+or refuses access, Mentor uses owner-only `secrets.json` in the data directory. That file also
+records which credential copy is current so an old copy cannot return after replacement or deletion.
+Keep it with the data directory. If a keychain read fails after a restart and no fallback copy exists,
+Mentor reports the credential unavailable until the keychain is unlocked or the key is replaced.
+On macOS, replacing the interpreter during an upgrade can trigger a keychain allow/always-allow prompt.
+Real Mac verification remains deferred until hardware is available.
+
+Operational settings are read from `config.toml` in the configuration directory above. The file is optional;
 startup creates the directory, not a replacement config file. An environment variable `MENTOR_<KEY>`
 overrides any key; for example, `MENTOR_PORT=7400` overrides `port`. Unknown keys are an error.
 

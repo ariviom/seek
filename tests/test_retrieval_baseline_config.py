@@ -48,3 +48,28 @@ def test_snapshot_must_match_checksum_schema_and_embedding_before_a_copy_is_used
     )})
     with pytest.raises(ValueError, match="SQLite"):
         prepare_snapshot(source, tmp_path / "rejected.db", corrupt)
+
+
+@pytest.mark.parametrize("version", [10, 12])
+def test_even_a_matching_manifest_cannot_authorize_an_unsupported_retrieval_schema(
+    tmp_path: Path, version: int,
+) -> None:
+    import hashlib
+    import sqlite3
+
+    from retrieval_baseline import Manifest, prepare_snapshot
+
+    source = tmp_path / "frozen.db"
+    with sqlite3.connect(source) as conn:
+        conn.execute(f"PRAGMA user_version={version}")
+    original = source.read_bytes()
+    manifest = Manifest.model_validate({
+        "snapshot": {"sha256": hashlib.sha256(original).hexdigest(), "schema_version": version},
+        "embedding": {"model": "example/embedding", "dimension": 1024, "revision": "a" * 40},
+        "reranker": {"model": "example/reranker", "revision": "b" * 40},
+    })
+    destination = tmp_path / "rejected.db"
+    with pytest.raises(ValueError, match="schema"):
+        prepare_snapshot(source, destination, manifest)
+    assert not destination.exists()
+    assert source.read_bytes() == original

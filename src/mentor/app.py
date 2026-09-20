@@ -18,6 +18,8 @@ from mentor.channels_api import channels_router
 from mentor.chat import Chat
 from mentor.chat_api import chat_router
 from mentor.config import Config
+from mentor.credentials import Credentials
+from mentor.credentials_api import credentials_router
 from mentor.errors import Conflict, NotFound
 from mentor.events import Events
 from mentor.events_api import events_router
@@ -32,12 +34,16 @@ from mentor.ports import (
     ModelStatus,
     ModelUnavailable,
     Reranker,
+    Secrets,
+    SecretsUnavailable,
     SourceUnavailable,
     TranscriptSource,
 )
 from mentor.ranking import Recency
 from mentor.search import PreferRecent, Search
 from mentor.search_api import search_router
+from mentor.secrets import KeyringSecrets
+from mentor.settings_api import settings_router
 from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
 
@@ -45,6 +51,7 @@ PACKAGE_STATIC_DIR = Path(__file__).parent / "static"
 
 # Exceptions whose messages are written for the user, and the status each maps to.
 ERROR_STATUS: dict[type[Exception], int] = {
+    SecretsUnavailable: 503,
     ChannelNotFound: 422,
     NotFound: 404,
     Conflict: 409,
@@ -127,9 +134,11 @@ def create_app(
     sql_time_limit_seconds: float = 5.0,
     fetch_access_keys: access.FetchKeys = access.fetch_url,
     access_keys_refetch_seconds: float = 60.0,
+    secrets: Secrets | None = None,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
+    credentials = Credentials(secrets if secrets is not None else KeyringSecrets(config.data_dir), events)
     recency: dict[PreferRecent, Recency | None] = {
         "off": None,
         "gentle": Recency(config.gentle_recency_half_life_days, config.gentle_recency_max_penalty_percent / 100),
@@ -187,6 +196,7 @@ def create_app(
 
     app = FastAPI(title="mentor", lifespan=lifespan)
     app.state.mcp = mcp
+    app.state.credentials = credentials
     for exception in ERROR_STATUS:
         app.add_exception_handler(exception, _error_response)
 
@@ -201,6 +211,8 @@ def create_app(
 
     app.include_router(channels_router(database, transcripts, events), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
+    app.include_router(settings_router(database, events), prefix="/api")
+    app.include_router(credentials_router(credentials), prefix="/api")
     app.include_router(syncs_router(database, events, worker.wake), prefix="/api")
     app.include_router(search_router(search, database), prefix="/api")
     app.include_router(chat_router(database, chat, events_keepalive_seconds), prefix="/api")

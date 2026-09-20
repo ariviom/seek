@@ -14,6 +14,7 @@ from mentor.config import HOST, Config, ConfigError, ensure_directories, load_co
 from mentor.errors import NotFound
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.devices import probe_device, select_device
+from mentor.secrets import KeyringSecrets
 from mentor.service import TIMER_NAME, UNIT_NAME, install_service
 from mentor.status_command import format_list, format_status, list_all, status
 from mentor.sync_command import SyncCommandError, answers, sync_channels
@@ -60,7 +61,7 @@ def serve() -> None:
     embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu, selection)
     reranker = CrossEncoderReranker(config.reranker_model, gpu, selection)
     youtube = _youtube(config)
-    app = create_app(config, youtube, embedder, reranker, _chat_engine(config))
+    app = create_app(config, youtube, embedder, reranker, _chat_engine(config), secrets=KeyringSecrets(config.data_dir))
     print(f"Starting Mentor at http://{HOST}:{config.port}/ — watch the startup log for readiness.", flush=True)
     print("Closing this terminal stops Mentor. Press Ctrl+C to stop it.", flush=True)
     # The event stream never ends on its own, so without a timeout shutdown waits for every open browser tab.

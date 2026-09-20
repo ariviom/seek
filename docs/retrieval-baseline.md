@@ -70,7 +70,10 @@ Ensure no scheduled Sync or foreground Mentor can start concurrently. At initial
 `systemctl --user is-active mentor.service` and `/api/health` model readiness.
 
 The runner validates checksum/schema/model identity before copying to a disposable writable
-database. It calls production `Search` and the existing CUDA model wrappers directly; it
+database. The supported retrieval schema remains 11: additive application migrations such
+as the settings table do not change this corpus or cause it to be migrated. The manifest
+and actual snapshot must both match that explicitly supported schema.
+It calls production `Search` and the existing CUDA model wrappers directly; it
 never starts application lifespan or a Sync worker. Time is frozen only at the search clock
 boundary. CUDA precision and ranking implementation remain unchanged. A missing
 `MENTOR_RETRIEVAL_SNAPSHOT` produces an explicit skip when this opt-in test is selected;

@@ -8,11 +8,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from mentor.db import MIGRATIONS
 from mentor.ranking import Recency
 
 from collections.abc import Mapping
 from pathlib import Path
+
+# Search still reads the frozen schema directly. Additive application migrations (such as preferences)
+# do not require changing the corpus; accept only a schema explicitly supported by this runner.
+RETRIEVAL_SCHEMA_VERSION = 11
 
 
 def configured_snapshot(env: Mapping[str, str]) -> Path | None:
@@ -84,8 +87,8 @@ def prepare_snapshot(source: Path, destination: Path, manifest: Manifest) -> Pat
         conn = sqlite3.connect(source.as_uri() + "?mode=ro&immutable=1", uri=True)
         try:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version != manifest.snapshot.schema_version or version != len(MIGRATIONS):
-                raise ValueError("Snapshot schema differs from the manifest or this checkout; do not migrate the baseline")
+            if version != manifest.snapshot.schema_version or version != RETRIEVAL_SCHEMA_VERSION:
+                raise ValueError("Snapshot schema differs from the manifest or supported retrieval schema; do not migrate the baseline")
             model = conn.execute("SELECT name, dimension FROM embedding_model").fetchall()
             if model != [(manifest.embedding.model, manifest.embedding.dimension)]:
                 raise ValueError("Snapshot embedding model/dimension differs from the manifest")

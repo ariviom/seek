@@ -70,6 +70,29 @@ class SourceUnavailable(Exception):
     """The transcript source cannot be reached or is not usable right now."""
 
 
+class SecretsUnavailable(Exception):
+    """The credential store cannot be used. Messages never contain credential or backend exception details."""
+
+
+@dataclass(frozen=True)
+class SecretStoreStatus:
+    store: Literal["keychain", "file"]
+    fallback_reason: str | None = None
+
+
+class Secrets(Protocol):
+    """Blocking credential access. Raises SecretsUnavailable if persistence or retrieval is impossible."""
+
+    @property
+    def status(self) -> SecretStoreStatus: ...
+
+    def get(self, name: str) -> str | None: ...
+
+    def set(self, name: str, value: str) -> None: ...
+
+    def delete(self, name: str) -> None: ...
+
+
 class ModelUnavailable(Exception):
     """The embedding or reranking model cannot be used right now."""
 

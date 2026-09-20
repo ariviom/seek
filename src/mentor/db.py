@@ -280,6 +280,19 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     ALTER TABLE conversations ADD COLUMN workspace_path TEXT;
     ALTER TABLE conversations ADD COLUMN web_access INTEGER NOT NULL DEFAULT 0 CHECK (web_access IN (0, 1));
     """,
+    """
+    -- User preferences only. Operational configuration stays in config.toml; credentials stay in Secrets.
+    -- An absent engine row means automatic selection, distinct from an explicit API or CLI preference.
+    CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        CHECK (
+            (key = 'engine' AND value IN ('api', 'cli')) OR
+            (key = 'provider' AND value = 'anthropic') OR
+            (key = 'model' AND value IN ('fast', 'deep'))
+        )
+    ) WITHOUT ROWID;
+    """,
 ]
 
 
