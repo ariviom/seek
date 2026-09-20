@@ -173,8 +173,9 @@ class ApiEngine:
             yield ChatFailed("Mentor didn't choose a model for this turn; set one in settings and ask again.")
             return
         with suppressed_sdk_logs():
-            # aclosing, because an `async for` that ends early leaves the inner generator suspended: a
-            # stopped turn would keep the SDK stream and its connection open until garbage collection.
+            # aclosing, because an `async for` that ends early leaves the inner generator suspended,
+            # so a stopped turn's SDK stream and connection would close whenever the loop got round to
+            # finalising it rather than when the turn stopped.
             async with contextlib.aclosing(self._turn(request, credential, request.model)) as turn:
                 async for event in turn:
                     yield event

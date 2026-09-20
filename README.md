@@ -340,7 +340,8 @@ rather than flapping. A key is checked once when you store it, and again only by
 engine to `claude-sonnet-5` and `claude-opus-5`, the Claude CLI to its `sonnet` and `opus` aliases. A model set on a
 Conversation is a pin and wins for that Conversation; the rest follow the setting from their next question, including
 mid-thread. A pin travels between engines — a Conversation pinned to `opus` on the Claude CLI asks the API engine for
-`claude-opus-5`, and back again — and a pin neither engine can express is an error rather than a silent change. Note
+`claude-opus-5`, and back again — and a pin the API engine cannot express is refused before the question is saved rather than
+quietly changed (the Claude CLI accepts names Mentor doesn't know, so it does its own rejecting). Note
 that an unpinned Conversation on the Claude CLI now asks for `sonnet` explicitly; letting Claude Code pick its own
 default is no longer an option, because the setting has to mean something on both engines. Each message records the engine and model that produced it, and each question records what its turn
 reported using, so a Conversation can total its tokens. A turn that failed or was stopped keeps what it had already

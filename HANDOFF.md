@@ -35,10 +35,11 @@ engines and the active one, never calling the provider. The rename landed with t
 types, the rail, the health dialog, an engine-aware composer that hides context on the API engine, and the
 rebuilt bundle. `ANTHROPIC_API_KEY` is emptied for the CLI child (the SDK merges over `os.environ` and
 cannot delete a name; an empty value reads as unset, checked against Claude Code 2.1.278) and removed
-outright for its status probe, without touching this process. Verification: 485 tests pass, 4 opt-in
-deselected; mypy 91 files and web typecheck pass. Independent Standards and Spec review found a real
-connection leak on every cancelled turn, a stream that could hang on a failed usage write, and a context
-refusal that mutated the Conversation before refusing; all are fixed with tests that fail without the fix.
+outright for its status probe, without touching this process. Verification: 486 tests pass, 4 opt-in
+deselected; mypy 91 files and web typecheck pass. Independent Standards and Spec review found a
+stopped turn leaving its SDK client for the event loop to finalise rather than closing it, a stream that
+could hang on a failed usage write, and a context refusal that mutated the Conversation before refusing;
+all three are fixed, each with a test that fails without the fix, and a focused re-review closed the round.
 See `.scratch/mentor-build-0/ticket-06-review.md`. **Next: ticket 07, the chat settings UI.** No live
 service deployment or live data changes.
 

@@ -5,6 +5,7 @@ not what either adapter does with the request. That belongs to test_api_chat.py 
 """
 
 import asyncio
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from harness import (
     stream_events,
 )
 
+from mentor import conversations
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.engines import API_MODELS, CLI_MODELS
@@ -117,7 +119,9 @@ async def test_no_ready_engine_disables_chat_and_nothing_else(
     refused = await send(client, conversation["id"], "Which stone?")
 
     assert refused.status_code == 409
-    assert "add an anthropic api key" in refused.json()["detail"].lower()
+    # Both engines' own instructions, so a friend with neither learns where to get a key as well.
+    detail = refused.json()["detail"]
+    assert "Add an Anthropic API key" in detail and "Install Claude Code" in detail
     assert (await client.get("/api/health")).json()["chat"]["active"] is None
     # Everything that does not need a model still answers.
     assert (await client.post("/api/search", json={"query": "sharpen"})).status_code == 200
@@ -461,7 +465,7 @@ async def test_a_conversation_continues_after_a_restart_because_history_comes_fr
 async def test_stopping_the_server_mid_turn_still_records_what_that_turn_cost(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
-    """Shutdown cancels the turn; the accounting it already had is a separate write that must still land."""
+    """Shutdown cancels the turn, and the accounting it already had must still reach the store."""
     api = FakeChatEngine("api", engine_status=ChatEngineStatus("api", "ready"))
     never = asyncio.Event()
 
@@ -500,3 +504,28 @@ async def test_stopping_the_server_mid_turn_still_records_what_that_turn_cost(
         "cache_read_tokens": 0,
         "complete": False,
     }
+
+
+async def test_a_turn_whose_usage_cannot_be_recorded_still_ends_its_stream(
+    client: httpx.AsyncClient, api_engine: FakeChatEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The answer is already saved and streamed. Losing the accounting must not strand the reader, which
+    waits for the stream's terminator and would otherwise never stop."""
+    conversation = await new_group_conversation(client)
+    with_a_key(api_engine)
+    api_engine.script = [UsageReported(TokenUsage(120, 15, 0)), TextDelta("Use a fine stone."), ChatDone(None)]
+
+    def unwritable(conn: object, *args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(conversations, "record_usage", unwritable)
+
+    async with asyncio.timeout(5):
+        response = await send(client, conversation["id"], "Which stone?")
+
+    assert stream_events(response)[-1]["type"] == "done"
+    # The answer is intact; only the usage is missing, and the total says so rather than reading as zero.
+    detail = await conversation_of(client, conversation["id"])
+    assert [m["content"] for m in detail["messages"]] == ["Which stone?", "Use a fine stone."]
+    assert detail["messages"][0]["usage"] is None
+    assert detail["usage"]["complete"] is False

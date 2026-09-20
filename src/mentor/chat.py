@@ -192,9 +192,17 @@ class Chat:
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
-        for task in [*tasks, *self._saving]:
+        for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        for saving in list(self._saving):
+            # A turn cancelled mid-write stopped waiting for this one, so its failure surfaces here.
+            try:
+                await saving
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception("Recording a stopped turn's usage failed")
 
     async def _run(self, turn: Turn, message: str, events: asyncio.Queue[TurnEvent | None]) -> None:
         request = ChatRequest(

@@ -31,11 +31,14 @@ Eight confirmed defects, all fixed:
 - Smaller: an unnecessary `cast`, a quoted forward reference to a class defined above, a missing
   blank line, four `type: ignore`s removable by annotating a test helper, and import ordering.
 
-**The cancellation test found a real leak.** Rewritten to assert the SDK client is closed, it failed:
-`ApiEngine.stream` consumed its inner generator with a bare `async for`, which does not close it when
-the consumer stops early, so a stopped turn kept the Anthropic client and its connection open until
-garbage collection. `Chat` closes that generator on every stop and at shutdown, so this affected every
-cancelled turn. Fixed with `contextlib.aclosing`; the test was confirmed to fail without the fix.
+**The cancellation test found a real bug.** Rewritten to assert the SDK client is closed, it failed:
+`ApiEngine.stream` consumed its inner generator with a bare `async for`, which does not close it when the
+consumer stops early, so a stopped turn's Anthropic client and connection were left to the event loop's
+async-generator finaliser instead of closing when the turn stopped. `Chat` closes that generator on every
+stop and at shutdown, so this affected every cancelled turn. Fixed with `contextlib.aclosing`; the test
+fails without the fix. The focused re-review measured the old behaviour and found the finaliser did close
+the client within two loop iterations, so this was non-deterministic cleanup rather than an unbounded
+leak — the previous test's `await asyncio.sleep(0)` was hiding exactly that.
 
 Two raised items were deliberately left: the `contextvars` token in `suppressed_sdk_logs` is reset in
 the consumer's task, which is fragile only for a caller that never closes the generator (all callers
@@ -80,9 +83,26 @@ scoped invalidation, health never calling the provider, `ANTHROPIC_API_KEY` kept
 its probe without touching this process, additive migration 13 with no shipped migration edited, and no
 ticket 07 scope built.
 
+## Focused re-review
+
+A third agent reviewed `bb34486..0ffdc94` against the findings above and confirmed every one closed,
+with three corrections since applied:
+
+- The claim that all three behaviour bugs had a test failing without the fix was false for the stranded
+  stream, which had none. `test_a_turn_whose_usage_cannot_be_recorded_still_ends_its_stream` now makes
+  `record_usage` raise and times out without the fix.
+- The leak wording overstated what was measured; corrected above and in the code comment.
+- The no-engine message test passed against the old hard-coded string too. It now asserts both engines'
+  instructions appear.
+
+It also noted `Chat.close()` could re-raise a failed usage write out of the lifespan (now logged there
+instead), that the shutdown test does not discriminate the `close()` change it shipped beside (its
+docstring no longer implies it does), and that the README's pin sentence read as if both engines refuse
+an unknown pin up front when only the API engine does — corrected.
+
 ## Verification
 
-- `uv run pytest -q`: 485 passed, 4 opt-in deselected, including the served Playwright smoke test.
+- `uv run pytest -q`: 486 passed, 4 opt-in deselected, including the served Playwright smoke test.
 - `uv run mypy`: 91 source files pass.
 - `pnpm --dir web run typecheck`: passes. Bundle rebuilt into `src/mentor/static/`.
 - Model ids and SDK parameters checked against the Claude API reference and `anthropic` 1.7.0 on
