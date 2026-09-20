@@ -10,7 +10,7 @@ answer links back to the moment in the Video where it was said.
 - Node 22.12 or later and pnpm, to build the web UI during install
 - Inference uses NVIDIA CUDA when available, then Apple Silicon MPS, then CPU. CPU is supported but slower.
 - [Deno](https://deno.com) on PATH: yt-dlp needs it to solve YouTube's JavaScript challenges
-- For the web chat: Claude Code, logged in to your subscription
+- For the web chat: either an Anthropic API key, or Claude Code installed and logged in to your subscription
 - For live backups: the `sqlite3` command
 
 ## Install
@@ -156,11 +156,12 @@ sqlite3 ~/.local/share/mentor/mentor.db ".backup $HOME/mentor-backup.db"
 The config file holds operational settings, the database `settings` table holds user preferences,
 and the OS keychain holds secrets (with a private fallback file where necessary). The friends
 settings UI will manage preferences and credentials; these never belong in `config.toml`.
-The API setup slice is available now; engine selection becomes active with the selectable-engine release.
 
 `GET /api/settings` reads preferences; `PATCH /api/settings` updates supplied fields only:
 `engine` accepts `api`, `cli`, or `null` (automatic); `provider` is `anthropic`; `model` is
-`fast` (default) or `deep`. These preferences persist across restarts. Current chat still uses the CLI.
+`fast` (default) or `deep`. These preferences persist across restarts, and a change reaches your next
+question rather than one already being answered. See [Web chat](#web-chat) for what each engine does
+with them.
 
 `PUT /api/credentials/anthropic` accepts a JSON `key` field, stores it, and makes one authenticated
 [model-list request](https://platform.claude.com/docs/en/api/models/list) with no retries or generated tokens.
@@ -338,7 +339,10 @@ rather than flapping. A key is checked once when you store it, and again only by
 `model` in `PATCH /api/settings` picks `"fast"` or `"deep"`, which each engine maps to its own identifier — the API
 engine to `claude-sonnet-5` and `claude-opus-5`, the Claude CLI to its `sonnet` and `opus` aliases. A model set on a
 Conversation is a pin and wins for that Conversation; the rest follow the setting from their next question, including
-mid-thread. Each message records the engine and model that produced it, and each question records what its turn
+mid-thread. A pin travels between engines — a Conversation pinned to `opus` on the Claude CLI asks the API engine for
+`claude-opus-5`, and back again — and a pin neither engine can express is an error rather than a silent change. Note
+that an unpinned Conversation on the Claude CLI now asks for `sonnet` explicitly; letting Claude Code pick its own
+default is no longer an option, because the setting has to mean something on both engines. Each message records the engine and model that produced it, and each question records what its turn
 reported using, so a Conversation can total its tokens. A turn that failed or was stopped keeps what it had already
 reported and says the total is incomplete rather than claiming to be a bill.
 

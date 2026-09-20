@@ -173,7 +173,7 @@ def _usage(reported: dict[str, object] | None) -> list[ChatEvent]:
 
     A result message with no recognisable counts means unknown usage, which is not a measured zero.
     """
-    if not isinstance(reported, dict):
+    if reported is None:
         return []
     counts = {
         name: value

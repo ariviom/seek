@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Literal
 
 from mentor.db import now_iso, transaction
-from mentor.engines import ModelChoice, resolve_model
+from mentor.engines import NO_API_CONTEXT, ModelChoice, resolve_model
 from mentor.errors import Conflict, NotFound
 from mentor.ports import EngineName, PastMessage, TokenUsage
 from mentor.scope import CHANNEL_IN_SCOPE, SCOPE_NOUN, Scope, ScopeKind, scope_params
@@ -144,12 +144,13 @@ _CONVERSATION_COLUMNS = (
 
 
 def _usage(row: sqlite3.Row) -> MessageUsage | None:
-    if row["input_tokens"] is None and row["output_tokens"] is None and row["cache_read_tokens"] is None:
+    """The turn's usage, or None where nothing was reported; record_usage writes all four columns at once."""
+    if row["usage_complete"] is None:
         return None
     return MessageUsage(
-        input_tokens=row["input_tokens"] or 0,
-        output_tokens=row["output_tokens"] or 0,
-        cache_read_tokens=row["cache_read_tokens"] or 0,
+        input_tokens=row["input_tokens"],
+        output_tokens=row["output_tokens"],
+        cache_read_tokens=row["cache_read_tokens"],
         complete=bool(row["usage_complete"]),
     )
 
@@ -168,25 +169,34 @@ def _message(row: sqlite3.Row) -> Message:
     )
 
 
+# A Conversation's known usage, for one Conversation or grouped across many. A question whose turn
+# reported nothing has usage_complete NULL and makes the total incomplete; an answer never carries usage
+# of its own, so it is exempt.
 _USAGE_TOTALS = """
-    SELECT coalesce(sum(input_tokens), 0) AS input_tokens,
+    SELECT conversation_id,
+           coalesce(sum(input_tokens), 0) AS input_tokens,
            coalesce(sum(output_tokens), 0) AS output_tokens,
            coalesce(sum(cache_read_tokens), 0) AS cache_read_tokens,
-           -- Complete only if every question either reported all of its usage or never started a turn.
-           min(coalesce(usage_complete, role = 'assistant')) AS complete
-    FROM messages WHERE conversation_id = ?
+           min(coalesce(usage_complete, role = 'assistant')) AS usage_complete
+    FROM messages GROUP BY conversation_id
 """
 
 
-def conversation_usage(conn: sqlite3.Connection, conversation_id: int) -> ConversationUsage:
-    row = conn.execute(_USAGE_TOTALS, (conversation_id,)).fetchone()
+def _totals(row: sqlite3.Row) -> ConversationUsage:
     return ConversationUsage(
-        input_tokens=row["input_tokens"],
-        output_tokens=row["output_tokens"],
-        cache_read_tokens=row["cache_read_tokens"],
+        input_tokens=row["input_tokens"] or 0,
+        output_tokens=row["output_tokens"] or 0,
+        cache_read_tokens=row["cache_read_tokens"] or 0,
         # No messages at all: nothing is missing, so the empty total is exact.
-        complete=bool(row["complete"]) if row["complete"] is not None else True,
+        complete=bool(row["usage_complete"]) if row["usage_complete"] is not None else True,
     )
+
+
+def conversation_usage(conn: sqlite3.Connection, conversation_id: int) -> ConversationUsage:
+    row = conn.execute(
+        f"SELECT * FROM ({_USAGE_TOTALS}) WHERE conversation_id = ?", (conversation_id,)
+    ).fetchone()
+    return _totals(row) if row is not None else ConversationUsage(0, 0, 0, True)
 
 
 def _scope(row: sqlite3.Row) -> ConversationScope:
@@ -221,15 +231,9 @@ def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...])
                (SELECT count(*) FROM messages WHERE conversation_id = conversations.id) AS message_count,
                (SELECT max(created_at) FROM messages WHERE conversation_id = conversations.id) AS last_message_at,
                (SELECT max(id) FROM messages WHERE conversation_id = conversations.id) AS last_message_id,
-               (SELECT coalesce(sum(input_tokens), 0) FROM messages
-                WHERE conversation_id = conversations.id) AS input_tokens,
-               (SELECT coalesce(sum(output_tokens), 0) FROM messages
-                WHERE conversation_id = conversations.id) AS output_tokens,
-               (SELECT coalesce(sum(cache_read_tokens), 0) FROM messages
-                WHERE conversation_id = conversations.id) AS cache_read_tokens,
-               (SELECT min(coalesce(usage_complete, role = 'assistant')) FROM messages
-                WHERE conversation_id = conversations.id) AS usage_complete
+               usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.usage_complete
         FROM conversations
+        LEFT JOIN ({_USAGE_TOTALS}) AS usage ON usage.conversation_id = conversations.id
         WHERE {where}
         -- Message ids order activity more finely than second-resolution timestamps; unused Conversations come last.
         ORDER BY coalesce(last_message_id, 0) DESC, id DESC
@@ -246,12 +250,7 @@ def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...])
             title=row["title"] or _title(row["first_question"]),
             message_count=row["message_count"],
             last_message_at=row["last_message_at"],
-            usage=ConversationUsage(
-                input_tokens=row["input_tokens"],
-                output_tokens=row["output_tokens"],
-                cache_read_tokens=row["cache_read_tokens"],
-                complete=bool(row["usage_complete"]) if row["usage_complete"] is not None else True,
-            ),
+            usage=_totals(row),
         )
         for row in rows
     ]
@@ -344,7 +343,8 @@ def begin_turn(
 
     An API turn also clears the stored Claude CLI session here, in the same transaction: the API keeps no
     provider-side session, so a later CLI turn must replay the whole Conversation even if this turn fails
-    or is stopped. A pin this engine cannot express raises before anything is saved.
+    or is stopped. A pin this engine cannot express, or context it cannot serve, raises before anything is
+    saved, so a refused turn leaves neither a stranded question nor a dropped session behind.
     """
     with transaction(conn):
         row = conn.execute(
@@ -356,6 +356,9 @@ def begin_turn(
         if scope.id is None:
             raise Conflict(f"The {SCOPE_NOUN[scope.kind]} {scope.name!r} was deleted, so this Conversation is read-only")
         model = resolve_model(engine, row["model"], choice)
+        context = ConversationContext(workspace=row["workspace_path"], web_access=bool(row["web_access"]))
+        if engine == "api" and (context.workspace is not None or context.web_access):
+            raise Conflict(NO_API_CONTEXT)
         live = Scope(scope.kind, scope.id)
         history = [
             PastMessage(role=m["role"], content=m["content"])
@@ -383,19 +386,18 @@ def begin_turn(
             channel_names=[channel["name"] for channel in channels],
             engine=engine,
             model=model,
-            context=ConversationContext(workspace=row["workspace_path"], web_access=bool(row["web_access"])),
+            context=context,
             claude_session_id=None if engine == "api" else row["claude_session_id"],
             history=history,
         )
 
 
-def record_usage(conn: sqlite3.Connection, turn: Turn, usage: TokenUsage | None, complete: bool) -> None:
+def record_usage(conn: sqlite3.Connection, turn: Turn, usage: TokenUsage, complete: bool) -> None:
     """Records the turn's reported usage against the question that started it, however the turn ended.
 
-    Nothing reported stays NULL: unknown usage is not a measured zero.
+    Only called when something was reported: a turn that reported nothing leaves the columns NULL, because
+    unknown usage is not a measured zero.
     """
-    if usage is None:
-        return
     with transaction(conn):
         conn.execute(
             """

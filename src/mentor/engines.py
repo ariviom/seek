@@ -16,15 +16,24 @@ type ModelChoice = Literal["fast", "deep"]
 API_MODELS: dict[ModelChoice, str] = {"fast": "claude-sonnet-5", "deep": "claude-opus-5"}
 CLI_MODELS: dict[ModelChoice, str] = {"fast": "sonnet", "deep": "opus"}
 
-# A Conversation pinned before engines were selectable holds a Claude CLI alias. A pin is a deliberate
-# choice, so it is translated rather than dropped; anything untranslatable is an error, never a guess.
-_ALIAS_MODELS: dict[str, str] = {
+# A pin made on one engine has to be expressed in the other's vocabulary when the engine changes: a
+# Conversation pinned before engines were selectable holds a Claude CLI alias, and one pinned on the API
+# engine holds a full model id. A pin is a deliberate choice, so it is translated rather than dropped, and
+# anything untranslatable is an error rather than a guess. Ids checked against the Claude API on 2026-09-20.
+_CLI_TO_API: dict[str, str] = {
     "sonnet": API_MODELS["fast"],
     "opus": API_MODELS["deep"],
     "haiku": "claude-haiku-4-5",
 }
+_API_TO_CLI: dict[str, str] = {api: cli for cli, api in _CLI_TO_API.items()}
 
 ENGINE_LABEL: dict[EngineName, str] = {"api": "the Anthropic API", "cli": "the Claude CLI"}
+
+# Read-only project and web context are Claude CLI built-ins, not MCP tools (ADR 0004).
+NO_API_CONTEXT = (
+    "This Conversation was created with project or web access, which only the Claude CLI engine can "
+    "provide. Switch this chat to the Claude CLI, or start a new Conversation without them."
+)
 
 # Model turns (each a response, usually with tool calls) before the answer is cut off. Both engines share it.
 MAX_TURNS = 30
@@ -38,9 +47,10 @@ def resolve_model(engine: EngineName, pin: str | None, choice: ModelChoice) -> s
     if pin is None:
         return API_MODELS[choice] if engine == "api" else CLI_MODELS[choice]
     if engine == "cli":
-        return pin
-    if pin in _ALIAS_MODELS:
-        return _ALIAS_MODELS[pin]
+        # The CLI takes aliases and full names alike, so anything it doesn't know is left to it to reject.
+        return _API_TO_CLI.get(pin, pin)
+    if pin in _CLI_TO_API:
+        return _CLI_TO_API[pin]
     if pin.startswith("claude-"):
         return pin
     raise Conflict(
@@ -55,9 +65,10 @@ def active_engine(
     """The engine a turn would use, or None when nothing is available.
 
     An explicit preference is honoured even when its requirement is missing, so the turn explains what to
-    add instead of quietly running the other engine. Without one, a stored key means the API engine even
-    if that key is invalid: reporting the key is more useful than billing the Claude CLI behind the user's
-    back. Only chat depends on this; search, the Library and Syncs never ask.
+    add instead of quietly running the other engine. Without one, anything but a confirmed absence of a key
+    means the API engine: an invalid key, or a credential store that cannot be read, is worth reporting
+    rather than billing the Claude CLI behind the user's back. Only chat depends on this; search, the
+    Library and Syncs never ask.
     """
     if preference is not None:
         return preference
@@ -74,10 +85,9 @@ def choose_engine(
     """The engine for this turn. Raises Conflict, with what to add, when it cannot answer."""
     engine = active_engine(preference, statuses)
     if engine is None:
-        raise Conflict(
-            "No chat engine is ready: add an Anthropic API key, or install the Claude CLI and log in with "
-            f"`claude`. {statuses['cli'].message or ''}".strip()
-        )
+        # Both engines' own instructions, so the dead end says where to get a key as well as a CLI.
+        missing = " ".join(s.message for s in statuses.values() if s.message)
+        raise Conflict(f"No chat engine is ready. {missing}".strip())
     status = statuses[engine]
     if status.state == "ready":
         return engine

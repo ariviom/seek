@@ -11,13 +11,13 @@ import uvicorn
 from mentor.api_chat import ApiEngine
 from mentor.app import create_app
 from mentor.claude_chat import ClaudeChatEngine
-from mentor.credentials import Credentials
-from mentor.events import Events
 from mentor.config import HOST, Config, ConfigError, ensure_directories, load_config
+from mentor.credentials import Credentials
+from mentor.devices import probe_device, select_device
 from mentor.errors import NotFound
+from mentor.events import Events
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.ports import ChatEngine, EngineName
-from mentor.devices import probe_device, select_device
 from mentor.secrets import KeyringSecrets
 from mentor.service import TIMER_NAME, UNIT_NAME, install_service
 from mentor.status_command import format_list, format_status, list_all, status

@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import httpx2
 import pytest
+from fastapi import FastAPI
 from harness import (
     Json,
     add_channel,
@@ -30,6 +31,7 @@ from mentor.engines import API_MODELS, CLI_MODELS
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
 from mentor.ports import (
     ChatDone,
+    ChatEngineState,
     ChatEngineStatus,
     ChatEvent,
     ChatFailed,
@@ -47,9 +49,11 @@ async def conversation_of(client: httpx.AsyncClient, conversation_id: int) -> Js
     return detail
 
 
-def with_a_key(api_engine: FakeChatEngine, state: str = "ready", message: str | None = None) -> None:
+def with_a_key(
+    api_engine: FakeChatEngine, state: ChatEngineState = "ready", message: str | None = None
+) -> None:
     """The API engine's view of the stored credential, which is what selection reads."""
-    api_engine.engine_status = ChatEngineStatus("api", state, None, message)  # type: ignore[arg-type]
+    api_engine.engine_status = ChatEngineStatus("api", state, None, message)
 
 
 async def wait_for_request(engine: FakeChatEngine) -> None:
@@ -155,20 +159,29 @@ async def test_an_old_cli_alias_pin_is_translated_for_the_api_engine_and_an_unkn
     assert "gpt-4" in refused.json()["detail"]
 
 
-async def test_the_api_engine_never_sees_a_conversation_that_asked_for_project_or_web_context(
-    client: httpx.AsyncClient, api_engine: FakeChatEngine, tmp_path_factory: pytest.TempPathFactory
+async def test_a_conversation_with_project_or_web_context_is_refused_before_the_question_is_saved(
+    client: httpx.AsyncClient,
+    engine: FakeChatEngine,
+    api_engine: FakeChatEngine,
+    config: Config,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
+    """Those tools are Claude CLI built-ins. A Conversation started on the CLI keeps working there, so the
+    refusal must leave its session and its thread exactly as they were."""
     project = tmp_path_factory.mktemp("project")
     group = await add_group(client, "Woodworking", await add_channel(client, "@woodbywright"))
     conversation = await start_conversation(client, group["id"], workspace=str(project))
+    await send(client, conversation["id"], "On the CLI, with my project?")
     with_a_key(api_engine)
-    api_engine.script = [ChatFailed("This Conversation was created with project or web access")]
 
-    response = await send(client, conversation["id"], "What is in my project?")
+    refused = await send(client, conversation["id"], "And now, with a key stored?")
 
-    # The engine still refuses it, and the composer is what stops a friend creating one in the first place.
-    assert stream_events(response)[-1]["type"] == "error"
-    assert [r.workspace for r in api_engine.requests] == [project]
+    assert refused.status_code == 409
+    assert "only the Claude CLI engine can provide" in refused.json()["detail"]
+    assert api_engine.requests == []
+    # Nothing was saved and the Claude session still resumes, so the CLI thread is untouched.
+    assert query(config, "SELECT count(*) FROM messages")[0][0] == 2
+    assert query(config, "SELECT claude_session_id FROM conversations")[0][0] == "session-1"
 
 
 @pytest.mark.parametrize(
@@ -412,7 +425,7 @@ async def test_a_conversation_continues_after_a_restart_because_history_comes_fr
     api = FakeChatEngine("api", engine_status=ChatEngineStatus("api", "ready"))
     api.script = [TextDelta("Use a fine stone."), ChatDone(None)]
 
-    def build() -> object:
+    def build() -> FastAPI:
         return create_app(
             config,
             transcripts,
@@ -424,12 +437,12 @@ async def test_a_conversation_continues_after_a_restart_because_history_comes_fr
             api_engine=api,
         )
 
-    async with running(build()) as client:  # type: ignore[arg-type]
+    async with running(build()) as client:
         group = await add_group(client, "Woodworking", await add_channel(client, "@woodbywright"))
         conversation = await start_conversation(client, group["id"])
         await send(client, conversation["id"], "Which stone?")
 
-    async with running(build()) as client:  # type: ignore[arg-type]
+    async with running(build()) as client:
         await send(client, conversation["id"], "And for a plane iron?")
         reopened = await conversation_of(client, conversation["id"])
 
@@ -443,3 +456,47 @@ async def test_a_conversation_continues_after_a_restart_because_history_comes_fr
         ("user", "api"),
         ("assistant", "api"),
     ]
+
+
+async def test_stopping_the_server_mid_turn_still_records_what_that_turn_cost(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    """Shutdown cancels the turn; the accounting it already had is a separate write that must still land."""
+    api = FakeChatEngine("api", engine_status=ChatEngineStatus("api", "ready"))
+    never = asyncio.Event()
+
+    async def hang(request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        yield UsageReported(TokenUsage(120, 15, 0))
+        yield TextDelta("Half an ans")
+        await never.wait()
+        yield ChatDone(None)
+
+    api.respond = hang
+
+    def build() -> FastAPI:
+        return create_app(
+            config,
+            transcripts,
+            FakeEmbedder(),
+            FakeReranker(),
+            FakeChatEngine("cli"),
+            static_dir=tmp_path / "none",
+            secrets=FakeSecrets(),
+            api_engine=api,
+        )
+
+    async with running(build()) as client:
+        group = await add_group(client, "Woodworking", await add_channel(client, "@woodbywright"))
+        conversation = await start_conversation(client, group["id"])
+        answering = asyncio.create_task(send(client, conversation["id"], "Which stone?"))
+        await wait_for_request(api)
+    await asyncio.gather(answering, return_exceptions=True)
+
+    async with running(build()) as client:
+        [question] = (await conversation_of(client, conversation["id"]))["messages"]
+    assert question["usage"] == {
+        "input_tokens": 120,
+        "output_tokens": 15,
+        "cache_read_tokens": 0,
+        "complete": False,
+    }

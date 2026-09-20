@@ -111,8 +111,8 @@ class _Accounting:
         self.usage = reported if self.usage is None else self.usage + reported
 
     def finish(self) -> None:
-        # A turn that answered without reporting anything used something; say so rather than record a zero.
-        self.complete = self.usage is not None
+        """The turn reached its end, so what it reported is all of it."""
+        self.complete = True
 
 
 class Chat:
@@ -184,11 +184,15 @@ class Chat:
         return events
 
     async def close(self) -> None:
-        """Stops any turns still running, without saving their answers."""
+        """Stops any turns still running, without saving their answers.
+
+        Their accounting is a separate write that the cancelled turn no longer waits for, so shutdown
+        waits for it here instead; a server stopped mid-turn still records what that turn cost.
+        """
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
-        for task in tasks:
+        for task in [*tasks, *self._saving]:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
@@ -232,10 +236,15 @@ class Chat:
             log.exception("Chat turn for Conversation %s failed", turn.conversation_id)
             events.put_nowait({"type": "error", "message": "The chat failed unexpectedly; see the server log"})
         finally:
-            await self._save_usage(turn, accounting)
+            try:
+                await self._save_usage(turn, accounting)
+            except Exception:
+                # The answer is already saved and streamed; losing the accounting must not strand the
+                # reader, which waits for the terminator below and would otherwise never stop.
+                log.exception("Recording usage for Conversation %s failed", turn.conversation_id)
             events.put_nowait(None)
 
-    async def _save_usage(self, turn: Turn, accounting: "_Accounting") -> None:
+    async def _save_usage(self, turn: Turn, accounting: _Accounting) -> None:
         """Records what the turn used, whether it answered, failed, or was stopped.
 
         A task of its own, shielded: a stopped turn is already being cancelled here, and its accounting
@@ -258,7 +267,7 @@ class Chat:
         turn: Turn,
         request: ChatRequest,
         events: asyncio.Queue[TurnEvent | None],
-        accounting: "_Accounting",
+        accounting: _Accounting,
     ) -> bool:
         """Streams one attempt at the turn's answer, saving it when done. True if the session to resume is gone."""
         answer: list[str] = []

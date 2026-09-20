@@ -7,6 +7,8 @@ from harness import running
 
 from mentor.app import create_app
 from mentor.config import Config
+from mentor.credentials import Credentials, CredentialStatus
+from mentor.events import Events
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
 
 
@@ -233,3 +235,32 @@ async def test_locked_keychain_after_restart_allows_safe_replacement_and_deletio
     final = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
     async with running(final) as client:
         assert (await client.get("/api/credentials/anthropic")).json()["present"] is False
+
+
+async def test_a_turns_late_rejection_cannot_undo_a_replacement_or_a_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn holds the credential it started with. By the time the provider rejects it, the user may have
+    replaced or deleted it, and that newer decision wins."""
+
+    async def accept(client: httpx2.AsyncClient, request: httpx2.Request, **kwargs: object) -> httpx2.Response:
+        return httpx2.Response(
+            200, json={"data": [], "has_more": False, "first_id": None, "last_id": None}, request=request
+        )
+
+    monkeypatch.setattr(httpx2.AsyncClient, "send", accept)
+    secrets = FakeSecrets()
+    credentials = Credentials(secrets, Events())
+
+    await credentials.replace("key-a")
+    turn = await credentials.current()
+    assert turn is not None
+    await credentials.replace("key-b")
+    after_replacement = await credentials.invalidate(turn.generation)
+    await credentials.delete()
+    after_deletion = await credentials.invalidate(turn.generation)
+
+    # Key B was validated on its own terms and keeps that, and the deletion stays deleted.
+    assert after_replacement == CredentialStatus(present=True, validity="valid")
+    assert after_deletion == CredentialStatus(present=False, validity="unverified")
+    assert secrets.values == {}

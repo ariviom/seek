@@ -244,7 +244,11 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class TokenUsage:
-    """What one provider request reported. Cache writes are billed as input and counted there."""
+    """The three counts a provider reports that Mentor records: uncached input, output, and cache reads.
+
+    Deliberately not everything that is billed. Writing the cache is charged separately and is not counted
+    here, so a total built from these is a floor, which is why nothing presents one as a bill.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0

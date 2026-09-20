@@ -41,6 +41,7 @@ def suppressed_sdk_logs() -> Iterator[None]:
     finally:
         _using_key.reset(token)
 
+
 Validity = Literal["unverified", "valid", "invalid"]
 
 

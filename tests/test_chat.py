@@ -60,9 +60,10 @@ async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resu
         "tool_calls": [{"name": "search", "arguments": {"query": "tear-out"}, "is_error": False}],
         "citations": [],
         "created_at": "",
-        # The engine and model that produced it; this engine reports no usage, so none is recorded.
+        # The engine and the model it was actually given: the API id this Conversation is pinned to is
+        # translated into the Claude CLI's own alias. This engine reports no usage, so none is recorded.
         "engine": "cli",
-        "model": "claude-sonnet-5",
+        "model": "sonnet",
         "usage": None,
     }
     assert stored_messages(config, conversation["id"])[:2] == [
@@ -70,8 +71,8 @@ async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resu
         ("assistant", "Let me look.\n\nYour Channels don't cover tear-out."),
     ]
     assert [(r.message, r.model, r.resume_session_id) for r in engine.requests] == [
-        ("How do I stop tear-out?", "claude-sonnet-5", None),
-        ("And on figured maple?", "claude-sonnet-5", "session-1"),
+        ("How do I stop tear-out?", "sonnet", None),
+        ("And on figured maple?", "sonnet", "session-1"),
     ]
     assert query(config, "SELECT claude_session_id FROM conversations")[0][0] == "session-1"
 

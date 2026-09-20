@@ -9,18 +9,18 @@ import contextlib
 import json
 from pathlib import Path
 
-import httpx
+import anthropic
 import httpx2
 import pytest
 from api_transport import MESSAGES_URL, Provider, ToolUse, answer
 from harness import running, woodworkers
 
-from mentor.api_chat import INVALID_KEY, NO_CONTEXT, NO_KEY, ApiEngine, replayed
+from mentor.api_chat import INVALID_KEY, NO_KEY, ApiEngine, replayed
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.credentials import Credentials
 from mentor.db import Database
-from mentor.engines import MAX_TURNS
+from mentor.engines import MAX_TURNS, NO_API_CONTEXT
 from mentor.events import Events
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
 from mentor.mcp_server import bound_tool_names, create_scope_server
@@ -167,8 +167,8 @@ async def test_a_conversation_with_project_or_web_context_is_refused_before_any_
     with_project = await collect(engine, request_for(config, group_id, workspace=tmp_path))
     with_web = await collect(engine, request_for(config, group_id, web_access=True))
 
-    assert with_project == [ChatFailed(NO_CONTEXT)]
-    assert with_web == [ChatFailed(NO_CONTEXT)]
+    assert with_project == [ChatFailed(NO_API_CONTEXT)]
+    assert with_web == [ChatFailed(NO_API_CONTEXT)]
     assert provider.bodies == []
 
 
@@ -293,9 +293,11 @@ async def test_usage_already_reported_survives_a_later_request_failing(
     assert isinstance(events[-1], ChatFailed)
 
 
-async def test_stopping_the_turn_closes_the_provider_stream_without_another_request(
+async def test_stopping_the_turn_closes_the_sdk_client_without_making_another_request(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Closing the stream mid-answer has to unwind the turn, not leave its connection open until a
+    collection: `Chat` closes the generator on every stop and on shutdown."""
     group_id = await knowledge_base(config, transcripts, tmp_path)
     provider = Provider(
         script=[
@@ -304,15 +306,24 @@ async def test_stopping_the_turn_closes_the_provider_stream_without_another_requ
         ]
     )
     monkeypatch.setattr(httpx2.AsyncClient, "send", provider.hook())
+    closed: list[bool] = []
+    released = anthropic.AsyncAnthropic.close
+
+    async def record(client: anthropic.AsyncAnthropic) -> None:
+        closed.append(True)
+        await released(client)
+
+    monkeypatch.setattr(anthropic.AsyncAnthropic, "close", record)
     engine = engine_over(FakeSecrets(values={"anthropic": stored()}))
 
     stream = engine.stream(request_for(config, group_id))
     first = await anext(stream)
+    assert closed == []
     await stream.aclose()
-    await asyncio.sleep(0)
 
     assert first == TextDelta("Thinking")
     assert len(provider.bodies) == 1
+    assert closed == [True]
 
 
 async def test_the_key_is_sent_per_request_and_never_taken_from_the_environment(

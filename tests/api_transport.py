@@ -101,8 +101,6 @@ class Provider:
     script: list[bytes | int] = field(default_factory=list)
     bodies: list[Any] = field(default_factory=list)
     requests: list[httpx2.Request] = field(default_factory=list)
-    # Set while a scripted stream is still being read, so a cancelled turn is visible as an unclosed body.
-    streaming: int = 0
 
     def hook(self) -> Callable[..., Awaitable[httpx2.Response]]:
         async def send(
@@ -127,11 +125,7 @@ class Provider:
         return send
 
     async def _body(self, frames: bytes) -> AsyncIterator[bytes]:
-        self.streaming += 1
-        try:
-            # One frame at a time, so a reader that stops early leaves the rest unsent.
-            for frame in frames.split(b"\n\n"):
-                if frame:
-                    yield frame + b"\n\n"
-        finally:
-            self.streaming -= 1
+        # One frame at a time, so a reader that stops early leaves the rest unsent.
+        for frame in frames.split(b"\n\n"):
+            if frame:
+                yield frame + b"\n\n"

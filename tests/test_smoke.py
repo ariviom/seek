@@ -199,6 +199,16 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             await expect(main.get_by_role("form", name="Ask Benches")).to_be_visible()
             await expect(rail.get_by_role("button", name="Chats")).to_have_attribute("aria-current", "page")
 
+            # Health names both engines and which one answers, from the `chat` field that replaced
+            # `claude_cli`: a client still reading the old one would render nothing here.
+            await rail.get_by_role("button", name=re.compile("^Health:")).click()
+            health = page.get_by_role("dialog", name="Server health")
+            await expect(health).to_contain_text("Chat engine")
+            await expect(health).to_contain_text("Anthropic API")
+            await expect(health).to_contain_text("Claude CLI")
+            # The API engine has no key here, and says where to get one rather than just failing.
+            await expect(health).to_contain_text("console.anthropic.com")
+
     assert errors == []
     [chat_request] = engine.requests
     assert (chat_request.workspace, chat_request.web_access) == (tmp_path.resolve(), True)

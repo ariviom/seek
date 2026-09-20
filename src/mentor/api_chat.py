@@ -4,18 +4,19 @@ There is no provider-side session, so every turn replays the Conversation from o
 tool schemas are translated from the scoped MCP server's own listing, so the two engines cannot drift.
 """
 
+import contextlib
 import json
 import logging
 from collections.abc import AsyncGenerator, Sequence
-from typing import cast
 
 import anthropic
 from anthropic.types import MessageParam, ToolParam, ToolResultBlockParam
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent
 
 from mentor.credentials import Credential, Credentials, suppressed_sdk_logs
-from mentor.engines import MAX_TURNS
+from mentor.engines import MAX_TURNS, NO_API_CONTEXT
 from mentor.ports import (
     ChatDone,
     ChatEngineStatus,
@@ -46,11 +47,6 @@ _TRUNCATED = "(Earlier messages in this Conversation were left out.)"
 WHERE_TO_GET_A_KEY = "https://console.anthropic.com/settings/keys"
 NO_KEY = f"Add an Anthropic API key to chat through the API; create one at {WHERE_TO_GET_A_KEY}"
 INVALID_KEY = "The stored Anthropic API key was rejected. Replace it in Mentor's settings."
-# Read-only project and web context are Claude CLI built-ins, not MCP tools (ADR 0004).
-NO_CONTEXT = (
-    "This Conversation was created with project or web access, which only the Claude CLI engine can "
-    "provide. Switch this chat to the Claude CLI, or start a new Conversation without them."
-)
 
 
 async def tool_schemas(tools: MCPServer, allowed: Sequence[str]) -> list[ToolParam]:
@@ -60,13 +56,10 @@ async def tool_schemas(tools: MCPServer, allowed: Sequence[str]) -> list[ToolPar
     """
     permitted = set(allowed)
     schemas: list[ToolParam] = [
-        cast(
-            ToolParam,
-            {
-                "name": tool.name,
-                "description": tool.description or "",
-                "input_schema": tool.input_schema,
-            },
+        ToolParam(
+            name=tool.name,
+            description=tool.description or "",
+            input_schema=tool.input_schema,
         )
         for tool in await tools.list_tools()
         if tool.name in permitted
@@ -102,13 +95,17 @@ def replayed(history: Sequence[PastMessage], message: str) -> list[MessageParam]
     return messages
 
 
-def _result_text(result: object) -> str:
-    content = getattr(result, "content", None) or []
-    parts = [text for block in content if isinstance(text := getattr(block, "text", None), str)]
+def _result_text(result: CallToolResult) -> str:
+    """A tool's answer as the provider wants it: its text blocks, or its structured value if it had none.
+
+    Never empty, because a tool_result block with no content tells the model nothing about what happened.
+    """
+    parts = [block.text for block in result.content if isinstance(block, TextContent)]
     if parts:
         return "\n".join(parts)
-    structured = getattr(result, "structured_content", None)
-    return json.dumps(structured) if structured is not None else ""
+    if result.structured_content is not None:
+        return json.dumps(result.structured_content)
+    return "The tool returned nothing."
 
 
 def failure_message(error: anthropic.APIError, key: str) -> str:
@@ -158,9 +155,9 @@ class ApiEngine:
         return ChatEngineStatus("api", "ready", None)
 
     async def stream(self, request: ChatRequest) -> AsyncGenerator[ChatEvent]:
-        # Refused before any provider work, so an unsupported Conversation costs nothing.
+        # Chat refuses these before saving the question; this is the port's own guarantee, for any caller.
         if request.workspace is not None or request.web_access:
-            yield ChatFailed(NO_CONTEXT)
+            yield ChatFailed(NO_API_CONTEXT)
             return
         try:
             credential = await self._credentials.current()
@@ -176,8 +173,11 @@ class ApiEngine:
             yield ChatFailed("Mentor didn't choose a model for this turn; set one in settings and ask again.")
             return
         with suppressed_sdk_logs():
-            async for event in self._turn(request, credential, request.model):
-                yield event
+            # aclosing, because an `async for` that ends early leaves the inner generator suspended: a
+            # stopped turn would keep the SDK stream and its connection open until garbage collection.
+            async with contextlib.aclosing(self._turn(request, credential, request.model)) as turn:
+                async for event in turn:
+                    yield event
 
     async def _turn(
         self, request: ChatRequest, credential: Credential, model: str
@@ -276,4 +276,7 @@ class ApiEngine:
             result = await tools.call_tool(name, arguments)
         except ToolError as e:
             return str(e), True
-        return _result_text(result), bool(getattr(result, "is_error", False))
+        if not isinstance(result, CallToolResult):
+            # An input-required result: Mentor's own tools never ask for one, and the model cannot answer it.
+            return f"The tool {name} asked for input this chat cannot supply.", True
+        return _result_text(result), bool(result.is_error)

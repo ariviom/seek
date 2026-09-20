@@ -236,5 +236,6 @@ class FakeChatEngine:
             async for event in self.respond(request):
                 yield event
         else:
-            for event in self.script or []:
+            assert self.script is not None
+            for event in self.script:
                 yield event
