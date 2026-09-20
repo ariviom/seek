@@ -5,7 +5,8 @@ All four planning review findings are addressed. Ticket 01 is complete: the real
 passed all ten questions on 2026-09-18. Ticket 02 is accepted for landing with passing Linux CUDA/CPU
 verification; Drew explicitly deferred its Mac checks on 2026-09-19. Ticket 03 is parked for lack of hardware.
 Ticket 04 is complete: platform paths and foreground lifecycle, 394 tests passing and independent review complete.
-Tickets 05–10 remain ready-for-agent; ticket 10's Mac execution steps are also deferred, not passed.
+Ticket 05 is complete: validated secrets and persistent preferences, 442 tests passing, independent review complete.
+Tickets 06–10 remain ready-for-agent; ticket 10's Mac execution steps are also deferred, not passed.
 
 Source: spec 0003 (ready-for-agent), ADRs 0004 and 0005. The spec takes precedence over the desktop roadmap.
 The source documents were committed as `0db90a4` before drafting this breakdown.

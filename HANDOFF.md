@@ -9,12 +9,27 @@ This resolves the older-ticket prerequisite for build 0. Ticket 01 is complete; 
 questions on 2026-09-18. Mentor was temporarily stopped for the run and restored active with both models ready.
 Independent ticket review and a focused re-review are complete, with all four findings addressed in the tickets and
 spec: stale CLI sessions after failed/stopped API turns, retained partial token usage, credential-replacement races,
-and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: ticket 05, secrets and preferences,
-in a fresh worktree off main.** Ticket 04 is complete. On 2026-09-19 Drew corrected the hardware assumption:
+and restart-safe Sync rates. See `.scratch/mentor-build-0/review.md`. **Next: ticket 06, selectable chat engines,
+in a fresh worktree off main.** Tickets 04 and 05 are complete. On 2026-09-19 Drew corrected the hardware assumption:
 no Apple Silicon machine is available, so Mac tests are explicitly deferred. Ticket 02's reviewed implementation
 is accepted for landing with Linux CPU/CUDA evidence; ticket 03 is parked, not completed. Ticket 10's Mac checks
 are likewise deferred. Resume unchecked hardware verification when a real Mac becomes available; do not claim
 MPS execution or Mac installation verified. This decision supersedes earlier Mac closure gates below.
+
+Ticket 05 complete (2026-09-19), implementation `5d68696`, review correction `7775530`:
+`Secrets` is the sole new port, with keyring production storage, private atomic fallback and durable
+routing/tombstones. `Credentials` persists the key, generation and validity together and exposes
+`current()` plus `invalidate(generation)` for ticket 06; late results cannot overwrite replacement/deletion.
+`GET/PUT/DELETE /api/credentials/anthropic` never return the key; entry uses one real SDK model-list call,
+no retries or environment credentials. Health does not probe the provider. The spec clarifies that an
+unreadable keychain after restart cannot supply an uncached credential: report unavailable and allow
+unlock/replacement/deletion, without an unconditional plaintext backup. Settings migration 12 adds typed
+preferences through `GET/PATCH /api/settings`, with `settings` and `credentials` reload events. Engine/model
+preferences are deliberately not applied to chat yet: ticket 06 owns selection and the atomic health/client
+migration. The frozen baseline loader still accepts its original schema 11, without migrating the corpus.
+Verification: 442 tests pass, 4 opt-in deselected; mypy 86 files and web typecheck pass; frozen snapshot
+preparation validation passes. Independent Standards/Spec review and focused re-review have zero remaining
+findings. See `.scratch/mentor-build-0/ticket-05-review.md`. No live service deployment or live data changes.
 
 Ticket 04 complete (2026-09-19), implementation `5971370`: `config.config_dir(env, platform, home)` and
 `data_dir(env, platform, home)` are the pure path functions. `load_config` uses them and accepts platform/home
