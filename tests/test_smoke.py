@@ -386,7 +386,8 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
             # only a floor rather than pretending the failure cost nothing.
             await question.fill("And the top?")
             await composer.get_by_role("button", name="Ask", exact=True).click()
-            await expect(main).to_contain_text("at least 200 in · 40 out · 10 cache read", timeout=15_000)
+            await expect(main).to_contain_text("200 in · 40 out · 10 cache read", timeout=15_000)
+            await expect(main).to_contain_text("Some turns didn’t report theirs")
 
             # Deleting the key takes chat back to where it started, which is how a friend undoes the setup.
             await rail.get_by_role("button", name="Settings").click()

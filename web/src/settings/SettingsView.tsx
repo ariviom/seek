@@ -311,16 +311,21 @@ function KeySection() {
           void saveKey();
         }}
       >
+        {/* Deliberately not type="password": that is what makes a password manager offer to generate one and
+            then save the key as a login. This is a token pasted once and never read back, so it is a text box
+            masked in CSS, with the managers told to keep out of it. */}
         <Input
-          type="password"
-          className="w-full min-w-0 sm:w-80"
+          type="text"
+          className="w-full min-w-0 [-webkit-text-security:disc] sm:w-80"
           aria-label="Anthropic API key"
           placeholder={status?.present ? "Paste a replacement key" : "sk-ant-…"}
           value={key}
           onChange={(event) => setKey(event.target.value)}
           spellCheck={false}
-          // "off" is ignored by Chrome's password manager; this is the value that keeps it out of it.
-          autoComplete="new-password"
+          autoComplete="off"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-bwignore="true"
         />
         <Button type="submit" size="sm" disabled={key.trim() === "" || busy !== null}>
           {busy === "saving" ? "Checking your key…" : status?.present ? "Replace key" : "Save key"}

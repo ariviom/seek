@@ -20,18 +20,18 @@ Ticket 07 complete (2026-09-21): the Settings screen (`web/src/settings/Settings
 bottom cluster, `view=settings`) is the one place a friend sets what is theirs — engine preference, the Anthropic
 key, the default model — with both engines' availability, the key's store (keychain or private file, with the
 reason) and read-only per-model device/precision beside them. `CredentialStatus` gained `store` and
-`fallback_reason`, read from `Secrets.status`; that is the only backend change. `engines.py` remains the only
-place a model is resolved; `web/src/lib/models.ts` is a display copy of its tables, plus the wording every surface
-shares: `Pinned: …` versus
-`Default: …`, so a pin and a following Conversation never read alike, and a default that hasn't been read yet says
-"your default" rather than guessing. The composer closes for every reason the server would refuse a question — no
+`fallback_reason`, read from `Secrets.status`; that is the only backend change. `engines.py` remains the only place
+a model is resolved; `web/src/lib/models.ts` is a display copy of its tables, plus the wording every surface shares:
+`Pinned: …` versus `Default: …`, so a pin and a following Conversation never read alike, and a default that hasn't
+been read yet says "your default" rather than guessing. The key box is deliberately not a password input — that is
+what makes a password manager offer to generate one and file the key as a login. The composer closes for every reason the server would refuse a question — no
 engine, an engine that can't answer right now, or the Anthropic API with project/web context this chat holds — and
 the `EngineNotice` carries the route to Settings; a CLI-context Conversation keeps showing what it holds and says to
 switch engines rather than losing it. `TokenTotals` prints a Conversation's reported input/output/cache reads under
-the chat box, outside the composer so a read-only chat keeps them: "at least" when a turn didn't report what it
-used, "wasn't recorded" for older Conversations, never a price. App holds the settings, keeps a read failure instead
-of swallowing it, and reloads on `settings` events, so an accepted key or a changed default reaches open tabs
-without a reload. A second served Playwright test covers the whole path: keyless Library/Search/Syncs, the closed
+the chat box, outside the composer so a read-only chat keeps them, saying the real total is higher when a turn
+didn't report what it used and "wasn't recorded" for older Conversations, never a price. App holds the settings,
+keeps a read failure instead of swallowing it, and reloads on `settings` events, so an accepted key or a changed
+default reaches open tabs without a reload. A second served Playwright test covers the whole path: keyless Library/Search/Syncs, the closed
 composer, key entry, activation without a reload, the default following from fast to deep on an unpinned
 Conversation while a pinned one holds, a turn that fails after reporting one request's usage, the token readout and
 deleting the key back to the dead end; the bundle build is now a session fixture shared by both smoke tests.

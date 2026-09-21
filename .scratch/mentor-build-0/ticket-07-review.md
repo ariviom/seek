@@ -66,13 +66,24 @@ Standards fixes:
   118-character import; two consecutive `if`s on the same condition; README reflow.
 - Accessibility: the screen had no `<h1>` while every other main-pane page does, and focus was
   dropped on `<body>` when "Open settings" unmounted the button that was clicked. The heading is
-  now the page's `h1` and takes focus when the screen opens. `autoComplete="off"` on the key box
-  became `new-password`, which is the value Chrome's password manager honours.
+  now the page's `h1` and takes focus when the screen opens.
 
 Test coverage added for the branches the ticket names: the smoke test now drives a turn that
-reports one request's usage and then fails, asserting the "at least" total, and deletes the key
+reports one request's usage and then fails, asserting the retained total and its caveat, and deletes the key
 through the confirm dialog, asserting chat goes back to its dead end. Visibility assertions were
 added after each rail click, since the chats pane stays mounted while hidden.
+
+## From Drew's review of the running branch
+
+- The key box was a `type="password"` input, so a password manager offered to generate a password
+  into it and then to save the pasted key as a login. (The review round had made this worse by
+  moving `autocomplete` to `new-password`, which is exactly what invites generation.) It is now a
+  text box masked with `-webkit-text-security`, `autocomplete="off"`, and the 1Password, LastPass
+  and Bitwarden ignore attributes: an API token is not a password and should not be filed as one.
+- The incomplete-usage line read "Tokens: at least 8 in · 10,178 out · 144,640 cache read", where
+  the qualifier appeared to belong to the first count alone and the smallest number. The caveat is
+  now its own sentence after the counts: "Some turns didn't report theirs, so the real total is
+  higher."
 
 ## Deferred, with the owning ticket
 

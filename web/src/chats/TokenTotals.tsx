@@ -17,10 +17,10 @@ export function TokenTotals({ usage }: { usage: TokenUsage | null }) {
   }
   return (
     <p className="text-center text-[11px] text-muted-foreground">
-      {usage.complete ? "Tokens: " : "Tokens: at least "}
-      {formatCount(usage.input_tokens)} in · {formatCount(usage.output_tokens)} out ·{" "}
-      {formatCount(usage.cache_read_tokens)} cache read
-      {usage.complete ? "" : " — some of this chat’s turns didn’t report what they used"}.
+      Tokens: {formatCount(usage.input_tokens)} in · {formatCount(usage.output_tokens)} out ·{" "}
+      {formatCount(usage.cache_read_tokens)} cache read.
+      {/* The caveat is its own sentence: hung on the front it reads as if it qualified the first count alone. */}
+      {!usage.complete && " Some turns didn’t report theirs, so the real total is higher."}
     </p>
   );
 }

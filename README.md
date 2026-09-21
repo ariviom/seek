@@ -365,8 +365,8 @@ that an unpinned Conversation on the Claude CLI now asks for `sonnet` explicitly
 default is no longer an option, because the setting has to mean something on both engines. Each message records the engine and model that produced it, and each question records what its turn
 reported using, so a Conversation can total its tokens. A turn that failed or was stopped keeps what it had already
 reported and says the total is incomplete rather than claiming to be a bill. The chat shows those totals under the
-chat box — input, output and cache reads — marked "at least" when a turn didn't report everything it used, and older
-Conversations say their usage wasn't recorded rather than showing a zero.
+chat box — input, output and cache reads — and says the real total is higher when a turn didn't report what it
+used. Older Conversations say their usage wasn't recorded rather than showing a zero.
 
 The **Add context** control beside the chat box can give a new Conversation read-only access to one local project
 directory, the public web, or both. Those tools are Claude Code built-ins, so they are a Claude CLI capability only:
