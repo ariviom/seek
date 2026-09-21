@@ -120,6 +120,12 @@ mentor list     # Channels, active or paused, with ready, failed, and excluded V
 Both ask the running server. When none answers, they read the knowledge base instead: `mentor status` then says the
 server isn't running (only the server loads the models) and checks both chat engines itself.
 
+When something is wrong, `mentor doctor` prints one block to paste to whoever is helping: versions, platform, paths,
+settings, each model's device and state, both chat engines, yt-dlp and JavaScript runtimes, the database's schema and
+row counts, and the latest stored errors. The API key, YouTube extractor argument values and cookie settings are
+redacted everywhere in it. Without a server it reads what it safely can and says what it couldn't; it never loads a
+model, creates or migrates the database, or contacts a provider.
+
 ## Data
 
 Default directories depend on the platform:
@@ -289,6 +295,8 @@ Access, and requests made on this machine, get through. Restart the service afte
 ## Register mentor with your agents
 
 The MCP endpoint is `http://127.0.0.1:7337/mcp`, exactly: `/mcp/` with a trailing slash answers 405.
+`mentor mcp-config` prints the client configuration for the configured port as JSON on stdout, with registration
+instructions on stderr, so `mentor mcp-config > .mcp.json` saves a project configuration Claude Code reads.
 
 **Claude Code**, at user scope so every session has it:
 

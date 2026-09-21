@@ -25,7 +25,9 @@ class ChatHealth(BaseModel):
     engines: dict[EngineName, ChatEngineStatus]
 
 
-class _Health(BaseModel):
+class Health(BaseModel):
+    """What `/api/health` reports that the command-line tools read."""
+
     models: dict[str, ModelStatus]
     chat: ChatHealth
 
@@ -70,7 +72,7 @@ async def status(config: Config, engines: Mapping[EngineName, ChatEngine]) -> St
     """The engines are asked directly only when no server answers; neither call reaches a provider."""
     url = await asyncio.to_thread(_server_url, config)
     if url is not None:
-        health = _parse(url, TypeAdapter(_Health), await asyncio.to_thread(request, f"{url}api/health"))
+        health = _parse(url, TypeAdapter(Health), await asyncio.to_thread(request, f"{url}api/health"))
         listed = _parse(url, TypeAdapter(list[Sync]), await asyncio.to_thread(request, f"{url}api/syncs"))
         return StatusReport(url, health.models, health.chat, _unfinished(listed))
     stored: list[Sync] = await _read_store(config, lambda conn: syncs.list_syncs(conn), [])

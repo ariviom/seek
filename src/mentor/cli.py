@@ -1,9 +1,13 @@
 import argparse
 import asyncio
+import contextlib
+import io
+import json
 import os
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import uvicorn
@@ -11,11 +15,13 @@ import uvicorn
 from mentor.api_chat import ApiEngine
 from mentor.app import create_app
 from mentor.claude_chat import ClaudeChatEngine
-from mentor.config import HOST, Config, ConfigError, ensure_directories, load_config
+from mentor.config import HOST, Config, ConfigError, config_dir, data_dir, ensure_directories, load_config
 from mentor.credentials import Credentials
 from mentor.devices import probe_device, select_device
+from mentor.doctor import Machine, diagnose
 from mentor.errors import NotFound
 from mentor.events import Events
+from mentor.mcp_config import client_config, guidance
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.ports import ChatEngine, EngineName
 from mentor.secrets import KeyringSecrets
@@ -131,6 +137,35 @@ def show_list() -> None:
         sys.exit(f"mentor: {e}")
 
 
+def doctor() -> None:
+    config_file = config_dir(os.environ, sys.platform, Path.home()) / "config.toml"
+    try:
+        config, problem = load_config(), None
+    except ConfigError as e:
+        # The rest of the report is still worth having, read from the default locations.
+        config, problem = Config(data_dir=data_dir(os.environ, sys.platform, Path.home())), str(e)
+    secrets = KeyringSecrets(config.data_dir)
+    engines: dict[EngineName, ChatEngine] = {
+        "api": ApiEngine(Credentials(secrets, Events())), "cli": _chat_engine(config)
+    }
+    # Whatever a library prints while being asked could carry what the block redacts, so it goes nowhere, and an
+    # unexpected failure is named without its message.
+    try:
+        with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            block = asyncio.run(diagnose(config, config_file, problem, secrets, engines, Machine()))
+    except Exception as e:
+        sys.exit(f"mentor: doctor could not finish ({type(e).__name__})")
+    print(block)
+
+
+def mcp_config() -> None:
+    config = _config()
+    print(json.dumps(client_config(config), indent=2), flush=True)
+    running = answers(f"http://{HOST}:{config.port}/api/syncs", 0)
+    print(guidance(config, running), file=sys.stderr)
+
+
 def _systemctl(args: list[str]) -> None:
     subprocess.run(["systemctl", "--user", *args], check=True)
 
@@ -192,6 +227,10 @@ def main() -> None:
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
     commands.add_parser("status", help="the server, models, chat engines, and running and queued Syncs")
     commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups")
+    commands.add_parser("doctor", help="one pasteable block for support, with every secret redacted")
+    commands.add_parser(
+        "mcp-config", help="the configuration that registers Mentor's tools with Claude Code and similar agents"
+    )
     install_parser = commands.add_parser(
         "install-service", help="run the server as a systemd user service that starts at login"
     )
@@ -213,5 +252,9 @@ def main() -> None:
         show_status()
     elif args.command == "list":
         show_list()
+    elif args.command == "doctor":
+        doctor()
+    elif args.command == "mcp-config":
+        mcp_config()
     elif args.command == "install-service":
         install(args.timer)
