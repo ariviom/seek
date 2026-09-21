@@ -6,6 +6,7 @@ Functions are blocking; run them through Database.run.
 import json
 import sqlite3
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -253,27 +254,49 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         )
 
 
-def _record_counts(conn: sqlite3.Connection, sync_id: int, channel_id: int) -> videos.SyncCounts:
+def _record_counts(
+    conn: sqlite3.Connection, sync_id: int, channel_id: int, queue: Collection[int] | None = None
+) -> videos.SyncCounts:
     """Within a transaction: stores the Sync's per-Video counts as they stand. Only a Sync that is running
-    records them, so a finished one keeps its own after a later Sync takes its Videos over."""
-    counts = videos.sync_counts(conn, sync_id, channel_id)
+    records them, so a finished one keeps its own after a later Sync takes its Videos over.
+
+    A Video leaving the completed count -- a transient failure fetched again, a done Video newly excluded -- can
+    take it below counted_from. The interval the rate is measured over then starts again from here, rather than
+    measuring less work than was done in it."""
+    counts = videos.sync_counts(conn, sync_id, channel_id, queue)
     conn.execute(
         """
-        UPDATE syncs SET completed_videos = ?, failed_videos = ?, remaining_videos = ?, stage_counts = ?
+        UPDATE syncs SET completed_videos = ?, failed_videos = ?, remaining_videos = ?, stage_counts = ?,
+                         started_at = CASE WHEN ? < counted_from THEN ? ELSE started_at END,
+                         counted_from = min(counted_from, ?)
         WHERE id = ?
         """,
-        (counts.completed, counts.failed, counts.remaining, json.dumps(videos.stage_counts(conn, channel_id)), sync_id),
+        (
+            counts.completed,
+            counts.failed,
+            counts.remaining,
+            json.dumps(videos.stage_counts(conn, channel_id)),
+            counts.completed,
+            now_iso(),
+            counts.completed,
+            sync_id,
+        ),
     )
     return counts
 
 
 def update_progress(
-    conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None, finished_video_id: int | None = None
+    conn: sqlite3.Connection,
+    sync_id: int,
+    new_videos: int | None = None,
+    finished_video_id: int | None = None,
+    queue: Collection[int] | None = None,
 ) -> Sync | None:
     """Refreshes the Sync's counts from its Channel's Videos; None if the Sync is gone.
 
     `finished_video_id` names a Video this Sync has just brought to done or failed. Marking it again, when the Video
-    is processed a second time, changes nothing, so it is never counted twice.
+    is processed a second time, changes nothing, so it is never counted twice. `queue` is the Videos the Sync is
+    still to work through, once it has listed them.
     """
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
@@ -283,18 +306,20 @@ def update_progress(
             videos.mark_completed(conn, finished_video_id, sync_id)
         if new_videos is not None:
             conn.execute("UPDATE syncs SET new_videos = ? WHERE id = ?", (new_videos, sync_id))
-        _record_counts(conn, sync_id, row["channel_id"])
+        _record_counts(conn, sync_id, row["channel_id"], queue)
         [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
         return sync
 
 
-def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> Sync | None:
-    """None if the Sync is gone."""
+def finish(
+    conn: sqlite3.Connection, sync_id: int, error: str | None, queue: Collection[int] | None = None
+) -> Sync | None:
+    """None if the Sync is gone. `queue` is as for update_progress."""
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
         if row is None:
             return None
-        _record_counts(conn, sync_id, row["channel_id"])
+        _record_counts(conn, sync_id, row["channel_id"], queue)
         conn.execute(
             "UPDATE syncs SET status = ?, error = ?, finished_at = ? WHERE id = ?",
             ("done" if error is None else "failed", error, now_iso(), sync_id),

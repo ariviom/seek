@@ -6,7 +6,7 @@ estimated finish and per-Video failures, with progress that survives a reload an
 
 **Blocked by:** None — can start once the shared implementation prerequisites are resolved.
 
-**Status:** complete — 508 tests passing (browser smoke included), mypy and web typecheck clean, served bundle
+**Status:** complete — 511 tests passing (browser smoke included), mypy and web typecheck clean, served bundle
 rebuilt. A Sync's completed, failed and remaining counts are derived per Video, so work redone after a restart,
 retry or reindex is counted once.
 

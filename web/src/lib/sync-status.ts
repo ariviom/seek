@@ -44,7 +44,7 @@ export function timeLeft(seconds: number): string {
 // minutes a Video once they don't, which is what a long transcript fetch actually feels like.
 export function rateText(perSecond: number): string {
   const perMinute = perSecond * 60;
-  if (perMinute >= 1) return `${round(perMinute)} videos/min`;
+  if (perMinute >= 1) return `${plural(round(perMinute), "video")}/min`;
   return `${round(1 / perMinute)} min/video`;
 }
 

@@ -503,3 +503,73 @@ def test_marking_a_video_finished_again_does_not_count_it_again(tmp_path: Path) 
     assert once is not None and twice is not None
     assert (once.completed_videos, once.remaining_videos) == (twice.completed_videos, twice.remaining_videos) == (1, 1)
     conn.close()
+
+
+async def test_every_refused_video_of_a_throttled_sync_counts_as_failed_including_the_one_that_stopped_it(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    refused = VideoUnavailable("YouTube is rate limiting requests", permanent=False, throttled=True)
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(f"v-{n}", f"Video {n}", failure=refused) for n in ("one", "two", "three")
+    ]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        [stopped] = await wait_for_syncs(client)
+
+    assert stopped["status"] == "failed"
+    assert (stopped["completed_videos"], stopped["failed_videos"], stopped["remaining_videos"]) == (3, 3, 0)
+    assert stopped["stage_counts"]["failed"] == 3
+
+
+async def test_a_failure_retried_while_a_sync_runs_is_left_to_the_retry_rather_than_to_the_running_sync(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    held = Gate()
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only", permanent=True)),
+        fake_video("v-one", "One", before_fetch=held),
+    ]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        await held.wait_entered()
+        await client.post(f"/api/channels/{channel['id']}/retry-failed")
+        held.released.set()
+        retry, first = await wait_for_syncs(client)
+
+    # The running Sync had already been through the failed Video, so it finished without it rather than
+    # finishing done with work it claimed to have left; the retry queued for it did it.
+    assert (first["status"], first["completed_videos"], first["failed_videos"], first["remaining_videos"]) == (
+        "done", 1, 0, 0
+    )
+    assert (retry["status"], retry["completed_videos"], retry["failed_videos"], retry["remaining_videos"]) == (
+        "done", 1, 1, 0
+    )
+
+
+def test_a_video_leaving_the_completed_count_starts_the_rate_interval_again(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "mentor.db")
+    db.migrate(conn)
+    conn.executescript(
+        """
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO syncs (id, channel_id, status, queued_at, started_at, stage_counts, counted_from)
+            VALUES (4, 3, 'running', '2025-01-01', '2025-01-01T00:00:00+00:00', '{}', 2);
+        INSERT INTO videos (id, channel_id, youtube_video_id, title, pipeline_stage, discovered_at,
+                            failure_stage, failure_reason, failure_permanent, completed_by_sync_id)
+            VALUES (11, 3, 'v-one', 'One', 'done', '2025-01-01T00:00:00+00:00', NULL, NULL, NULL, 4),
+                   (12, 3, 'v-two', 'Two', 'transcript_fetched', '2025-01-01T00:00:00+00:00', NULL, NULL, NULL, 4);
+        """
+    )
+
+    # Video 12 failed transiently before a restart and is being fetched again, so it no longer counts as done.
+    [resumed] = syncs.get_syncs(conn, [4])
+    moved = syncs.update_progress(conn, 4)
+
+    assert moved is not None and resumed.started_at is not None and moved.started_at is not None
+    assert (moved.completed_videos, moved.counted_from) == (1, 1)
+    assert moved.started_at > resumed.started_at
+    conn.close()

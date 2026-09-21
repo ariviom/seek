@@ -125,8 +125,14 @@ class SyncCounts:
     remaining: int
 
 
-def sync_counts(conn: sqlite3.Connection, sync_id: int, channel_id: int) -> SyncCounts:
+def sync_counts(
+    conn: sqlite3.Connection, sync_id: int, channel_id: int, queue: Collection[int] | None = None
+) -> SyncCounts:
     """The Videos this Sync has finished with, of those the ones that failed, and the ones it has yet to reach.
+
+    Once the Sync has listed the Videos it will work through, `queue` holds those it has not finished with, and
+    only they are remaining: a failure a retry clears meanwhile waits for the Sync that retry queued. Before
+    then, remaining is every Video the Sync would pick up now.
 
     A Video counts as finished with only while it is still done or failed: one put back in the queue -- a retry
     clearing its failure, a reindex stepping it back -- returns to the remaining side, so the two never describe
@@ -139,17 +145,19 @@ def sync_counts(conn: sqlite3.Connection, sync_id: int, channel_id: int) -> Sync
             count(*) FILTER (WHERE finished) AS completed,
             count(*) FILTER (WHERE finished AND failure_stage IS NOT NULL) AS failed,
             count(*) FILTER (
-                WHERE NOT finished AND pipeline_stage != 'done'
-                  AND (failure_stage IS NULL OR failure_permanent = 0)
+                WHERE NOT finished AND CASE
+                    WHEN ?2 IS NULL THEN pipeline_stage != 'done' AND (failure_stage IS NULL OR failure_permanent = 0)
+                    ELSE id IN (SELECT value FROM json_each(?2))
+                END
             ) AS remaining
         FROM (
-            SELECT pipeline_stage, failure_stage, failure_permanent,
-                   completed_by_sync_id IS ? AND (pipeline_stage = 'done' OR failure_stage IS NOT NULL)
+            SELECT id, pipeline_stage, failure_stage, failure_permanent,
+                   completed_by_sync_id IS ?1 AND (pipeline_stage = 'done' OR failure_stage IS NOT NULL)
                        AS finished
-            FROM videos WHERE channel_id = ? AND excluded_reason IS NULL
+            FROM videos WHERE channel_id = ?3 AND excluded_reason IS NULL
         )
         """,
-        (sync_id, channel_id),
+        (sync_id, None if queue is None else json.dumps(list(queue)), channel_id),
     )
     counts = row.fetchone()
     return SyncCounts(counts["completed"], counts["failed"], counts["remaining"])

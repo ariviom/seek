@@ -60,6 +60,9 @@ class SyncWorker:
         self._throttled_syncs = 0
         # Videos refused in a row within the running Sync.
         self._throttled_videos = 0
+        # The Videos the running Sync is still to work through, once it has listed them; its remaining work is
+        # these and nothing else, so a failure a retry clears meanwhile is left to the Sync that retry queued.
+        self._queue: list[int] | None = None
 
     def wake(self) -> None:
         self._wake.set()
@@ -137,6 +140,7 @@ class SyncWorker:
         # it), or the lease was lost (the next holder requeues the Sync).
         rules = ExclusionRules(self._min_duration_seconds, sync.filters)
         self._throttled_videos = 0
+        self._queue = None
         try:
             # Shows the Sync running, with any failures a retry cleared when it was claimed.
             if not await self._progress(sync):
@@ -178,11 +182,14 @@ class SyncWorker:
                 pending = await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id))
                 pending = [video for video in pending if video.id not in attempted]
                 if not pending:
+                    self._queue = []
                     break
-                for video in pending:
+                for i, video in enumerate(pending):
+                    self._queue = [v.id for v in pending[i:]]
                     attempted.add(video.id)
                     if not await self._advance(sync, rules, video):
                         return
+                self._queue = []
                 if sync.filters.most_recent is None:
                     break
                 # A Video excluded only once its details arrived frees a place among the most recent N.
@@ -199,8 +206,6 @@ class SyncWorker:
             self._throttled_syncs += 1
             self._cooldown_until = time.monotonic() + wait
             log.warning("Sync %s stopped: %s; no Sync runs for the next %.0f s", sync.id, e, wait)
-            # The last refused Video's failure was recorded without its own event.
-            self._events.videos(sync.channel_id)
         except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
             error = str(e)
         except Exception as e:
@@ -209,7 +214,7 @@ class SyncWorker:
         else:
             error = None
             self._throttled_syncs = 0
-        finished = await self._database.run(lambda conn: syncs.finish(conn, sync.id, error))
+        finished = await self._database.run(lambda conn: syncs.finish(conn, sync.id, error, self._queue))
         if finished is not None:
             self._events.sync(finished)
 
@@ -230,7 +235,7 @@ class SyncWorker:
         def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None]:
             changed = None if video is None else videos.get_video(conn, video.id)
             finished = changed.id if changed is not None and changed.stage in ("done", "failed") else None
-            return syncs.update_progress(conn, sync.id, new_videos, finished), changed
+            return syncs.update_progress(conn, sync.id, new_videos, finished, self._queue), changed
 
         updated, changed = await self._database.run(refresh)
         if changed is not None:
@@ -247,7 +252,12 @@ class SyncWorker:
                 return False
             if stage == "transcript_fetched" and not await self._progress(sync, fetching=video.title):
                 return False
-            outcome = await self._run_stage(rules, video, stage)
+            try:
+                outcome = await self._run_stage(rules, video, stage)
+            except _Throttled:
+                # The refusal that stops the Sync still failed this Video, which the Sync has finished with.
+                await self._progress(sync, video=video)
+                raise
             if outcome == "gone" or not await self._progress(sync, video=video):
                 return False
             if outcome == "stopped":
