@@ -39,7 +39,7 @@ export type CredentialStatus = {
   present: boolean;
   validity: "unverified" | "valid" | "invalid";
   store: "keychain" | "file";
-  // Why the keychain isn't holding the key, when it isn't; shown as it stands.
+  // Why the keychain isn't holding the key, or can't be read, when that is so; shown as it stands.
   fallback_reason: string | null;
 };
 

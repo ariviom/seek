@@ -1,8 +1,5 @@
 import type { TokenUsage } from "@/lib/api";
-
-function count(tokens: number): string {
-  return tokens.toLocaleString();
-}
+import { formatCount } from "@/lib/format";
 
 // What this Conversation's turns reported, and nothing else: no price, no estimate for what a provider never
 // said. `complete` is false when a turn ended before all its usage arrived, or reported none at all — an older
@@ -21,9 +18,9 @@ export function TokenTotals({ usage }: { usage: TokenUsage | null }) {
   return (
     <p className="text-center text-[11px] text-muted-foreground">
       {usage.complete ? "Tokens: " : "Tokens: at least "}
-      {count(usage.input_tokens)} in · {count(usage.output_tokens)} out · {count(usage.cache_read_tokens)} cache
-      read
-      {usage.complete ? "" : " — some of this chat’s turns didn’t report all they used"}.
+      {formatCount(usage.input_tokens)} in · {formatCount(usage.output_tokens)} out ·{" "}
+      {formatCount(usage.cache_read_tokens)} cache read
+      {usage.complete ? "" : " — some of this chat’s turns didn’t report what they used"}.
     </p>
   );
 }

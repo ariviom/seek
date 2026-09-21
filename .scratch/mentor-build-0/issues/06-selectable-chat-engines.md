@@ -73,3 +73,14 @@ checks, rebuild the web bundle and keep the served Playwright smoke test green.
 
 **Atomic delivery:** This is intentionally one larger integration ticket. Do not publish ApiEngine without selection
 and status, or rename health separately from either client and the rebuilt bundle.
+
+**From ticket 07 review (2026-09-21), deferred here:**
+
+- A CLI turn that reports only some of the three counts has the rest recorded as zero.
+  `claude_chat._usage` emits usage when any count is present and fills the others with 0, and
+  `ChatDone` marks the turn complete, so the settings-era token readout can show "0 cache read" as if
+  it were measured. Distinguishing absent from zero needs `TokenUsage` and the message columns to carry
+  unknown per-count usage.
+- A stopped turn's usage can reach the store after the client has already reloaded. `_save_usage`
+  shields its write, but `_run` queues the stream terminator without waiting for it and nothing is
+  published when a message is saved, so the totals can be one reload stale after a stop.

@@ -16,9 +16,10 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { PlaybackControls } from "@/lib/playback";
 import { channelSync, syncingNote } from "@/lib/sync-status";
-import { Composer } from "./Composer";
+import { Composer, type Blocked } from "./Composer";
 import { NewChat } from "./NewChat";
 import { ScopeChip } from "./ScopeChip";
+import { TokenTotals } from "./TokenTotals";
 import { liveScope } from "./scope";
 import { consultedVideos, entryOf, Transcript, type Answer, type Entry } from "./Transcript";
 
@@ -51,8 +52,8 @@ export function ConversationView({
   // Both engines and the one that would answer the next turn, for the composer's models, context controls and
   // its dead end when neither can answer; null until the server has said.
   chat: ChatHealth | null;
-  // The default model setting a chat without a pin follows.
-  defaultChoice: ModelChoice;
+  // The default model setting a chat without a pin follows; null until it has been read.
+  defaultChoice: ModelChoice | null;
   // This Conversation's totals as last listed, which are newer than the detail loaded when it opened.
   usage: TokenUsage | null;
   playback: PlaybackControls;
@@ -248,6 +249,21 @@ export function ConversationView({
   }
 
   const canAsk = !deleted && !loading && !loadFailed && live !== null && (!isNew || live.unavailable === null);
+  // What the server would refuse, worked out before a question is typed rather than after it is sent. Nothing is
+  // blocked while the engines' standing is still unknown.
+  const engine = chat?.active ?? null;
+  const blocked: Blocked | null =
+    chat === null
+      ? null
+      : chat.active === null
+        ? "no_engine"
+        : chat.engines[chat.active].state !== "ready"
+          ? "engine_unready"
+          : chat.active === "api" && (workspace.trim() !== "" || webAccess)
+            ? "context"
+            : null;
+  // The totals as last listed, which are newer than the detail this chat opened with.
+  const totals = usage ?? detail?.usage ?? null;
   const members = live?.members ?? [];
   const syncingNotice = syncingNote(
     members.filter((member) => channelSync(syncs, member.id) !== null).map((member) => member.name),
@@ -280,6 +296,11 @@ export function ConversationView({
           )}
         </div>
       </div>
+      <div className="shrink-0 px-4">
+        <div className="mx-auto max-w-3xl">
+          <TokenTotals usage={totals} />
+        </div>
+      </div>
       {canAsk && (
         <Composer
           name={live.name}
@@ -289,14 +310,13 @@ export function ConversationView({
           draft={draft}
           onDraft={setDraft}
           questionRef={questionBox}
-          engine={chat?.active ?? null}
-          noEngine={chat !== null && chat.active === null}
+          engine={engine}
+          blocked={blocked}
           onOpenSettings={onOpenSettings}
           model={model}
           onModel={setModel}
           modelLocked={!isNew}
           defaultChoice={defaultChoice}
-          usage={usage ?? detail?.usage ?? null}
           workspace={workspace}
           onWorkspace={setWorkspace}
           webAccess={webAccess}

@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, errorText, type CredentialStatus, type EngineName, type Health, type ModelChoice, type Settings } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  api,
+  errorText,
+  type CredentialStatus,
+  type EngineName,
+  type Health,
+  type ModelChoice,
+  type Settings,
+} from "@/lib/api";
 import { useServerEvents } from "@/lib/events";
 import { choiceModelName, choiceNames, modelChoices } from "@/lib/models";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -30,16 +38,22 @@ function Section({ title, description, children }: { title: string; description:
 export function SettingsView({
   health,
   settings,
+  settingsError,
   onSettings,
 }: {
   health: Health | null;
   settings: Settings | null;
+  // Why the preferences couldn't be read, when they couldn't: the selects then say nothing about what is saved.
+  settingsError: string | null;
   // The saved preferences, so the rest of the app follows without a reload.
   onSettings: (settings: Settings) => void;
 }) {
   const [saving, setSaving] = useState<"engine" | "model" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const active = health?.chat.active ?? null;
+  // Arriving here from the composer's dead end, the pane is what the user asked for, so focus follows.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => heading.current?.focus(), []);
 
   async function save(field: "engine" | "model", patch: Partial<Settings>) {
     setSaving(field);
@@ -56,13 +70,18 @@ export function SettingsView({
   return (
     // Named, so what belongs to the friend is one region of the page rather than loose cards.
     <section aria-label="Settings" className="space-y-4">
+      <h1 ref={heading} tabIndex={-1} className="text-lg font-semibold tracking-tight outline-none">
+        Settings
+      </h1>
       <p className="text-sm text-muted-foreground">
         Your preferences, kept on this machine. Ports, directories and ingestion options belong to whoever runs
         Mentor and stay in its config file.
       </p>
-      {error !== null && (
+      {(error ?? settingsError) !== null && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>
+            {error ?? `Your preferences couldn’t be read, so nothing here says what is saved: ${settingsError}`}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -72,33 +91,36 @@ export function SettingsView({
       >
         {/* The trigger shows the choice itself, so its name comes from aria-label rather than a second
             copy of the heading beside it. */}
-        <div className="flex items-center gap-2">
-          <Select
-            value={settings?.engine ?? automatic}
-            disabled={settings === null || saving !== null}
-            onValueChange={(value) =>
-              void save("engine", { engine: value === automatic ? null : (value as EngineName) })
-            }
-          >
-            <SelectTrigger size="sm" aria-label="Chat engine">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={automatic}>Whichever is ready</SelectItem>
-              {engineNames.map((name) => (
-                <SelectItem key={name} value={name}>
-                  {engineLabels[name]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <Select
+          value={settings?.engine ?? automatic}
+          disabled={settings === null || saving !== null}
+          onValueChange={(value) =>
+            void save("engine", { engine: value === automatic ? null : (value as EngineName) })
+          }
+        >
+          <SelectTrigger size="sm" aria-label="Chat engine">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={automatic}>Automatic</SelectItem>
+            {engineNames.map((name) => (
+              <SelectItem key={name} value={name}>
+                {engineLabels[name]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Automatic uses the Anthropic API whenever a key is stored, and the Claude CLI otherwise; it does not
+          switch engines behind your back when the one it picked can’t answer.
+        </p>
         <dl className="grid gap-1 text-xs">
           {engineNames.map((name) => (
             <div key={name} className="flex min-w-0 gap-2">
+              {/* "(active)" is the rail's word for the engine a turn would use, so the two never disagree. */}
               <dt className="w-32 shrink-0 text-muted-foreground">
                 {engineLabels[name]}
-                {name === active && " (answering)"}
+                {name === active && " (active)"}
               </dt>
               <dd className="min-w-0 break-words">
                 {health === null ? "checking…" : describeEngine(health.chat.engines[name])}
@@ -128,25 +150,23 @@ export function SettingsView({
         title="Default model"
         description="What a chat runs unless it pinned a model of its own. A chat following the default picks this up on its next question."
       >
-        <div className="flex items-center gap-2">
-          <Select
-            value={settings?.model ?? "fast"}
-            disabled={settings === null || saving !== null}
-            onValueChange={(value) => void save("model", { model: value as ModelChoice })}
-          >
-            <SelectTrigger size="sm" aria-label="Default model">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {modelChoices.map((choice) => (
-                <SelectItem key={choice} value={choice}>
-                  {choiceNames[choice]}
-                  {active !== null && ` — ${choiceModelName(choice, active)}`}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <Select
+          value={settings?.model ?? "fast"}
+          disabled={settings === null || saving !== null}
+          onValueChange={(value) => void save("model", { model: value as ModelChoice })}
+        >
+          <SelectTrigger size="sm" aria-label="Default model">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {modelChoices.map((choice) => (
+              <SelectItem key={choice} value={choice}>
+                {choiceNames[choice]}
+                {active !== null && ` — ${choiceModelName(choice, active)}`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <p className="text-xs text-muted-foreground">
           {active === null
             ? "The model each choice runs depends on the engine that answers."
@@ -156,7 +176,7 @@ export function SettingsView({
 
       <Section
         title="Models on this machine"
-        description="How search and ingestion are running here. These follow your hardware and aren’t a setting."
+        description="How search and ingestion are running here. The model names come from Mentor's config file; the device and precision follow your hardware."
       >
         <dl className="grid gap-1 text-xs">
           {modelRoles.map((role) => {
@@ -261,9 +281,14 @@ function KeySection() {
       description="Needed for the Anthropic API engine. Mentor stores it outside the knowledge base and never shows it again."
     >
       <p className="text-xs" role="status">
-        {status === null ? "Checking the stored key…" : validityNote(status)}
+        {status !== null
+          ? validityNote(status)
+          : error === null
+            ? "Checking the stored key…"
+            : "The stored key can’t be read. You can still replace it or delete it."}
       </p>
-      {status !== null && (status.store === "file" || status.fallback_reason !== null) && (
+      {/* Only about a key that is there: after a deletion the store may still report the fallback it used. */}
+      {status?.present && (status.store === "file" || status.fallback_reason !== null) && (
         <p className="text-xs text-amber-600 dark:text-amber-500">
           {status.fallback_reason ??
             "The key is in a private file in Mentor’s data directory, readable only by your user account."}
@@ -294,12 +319,14 @@ function KeySection() {
           value={key}
           onChange={(event) => setKey(event.target.value)}
           spellCheck={false}
-          autoComplete="off"
+          // "off" is ignored by Chrome's password manager; this is the value that keeps it out of it.
+          autoComplete="new-password"
         />
         <Button type="submit" size="sm" disabled={key.trim() === "" || busy !== null}>
           {busy === "saving" ? "Checking your key…" : status?.present ? "Replace key" : "Save key"}
         </Button>
-        {status?.present && (
+        {/* Also offered when the store can't be read: a key that cannot be read is exactly one worth deleting. */}
+        {(status === null ? error !== null : status.present) && (
           <Button
             type="button"
             size="sm"

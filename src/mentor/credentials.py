@@ -98,11 +98,12 @@ class Credentials:
             return await self._read()
 
     async def status(self) -> CredentialStatus:
-        current = await self.current()
-        return self._status(current)
+        async with self._lock:
+            return self._status(await self._read())
 
     def _status(self, current: Credential | None) -> CredentialStatus:
-        # Read after the store was last used, so it reports the routing this call actually took.
+        # Called while the lock is held, so the routing reported is the one this call's own read or write
+        # took, not a concurrent replacement's.
         store = self.secrets.status
         return CredentialStatus(
             current is not None,
@@ -157,4 +158,5 @@ class Credentials:
 
     async def delete(self) -> CredentialStatus:
         await asyncio.shield(self._commit(None))
-        return self._status(None)
+        async with self._lock:
+            return self._status(None)

@@ -142,9 +142,16 @@ export function App() {
   }, [loadHealth]);
 
   // The preferences the chats follow: which model an unpinned Conversation runs, and what the settings screen edits.
+  // A failure is kept, not swallowed: nothing may claim a default it hasn't read.
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const loadSettings = useCallback(async () => {
-    await api.settings().then(setSettings, () => undefined);
+    try {
+      setSettings(await api.settings());
+      setSettingsError(null);
+    } catch (error) {
+      setSettingsError(errorText(error));
+    }
   }, []);
   useEffect(() => {
     void loadSettings();
@@ -185,9 +192,11 @@ export function App() {
   useServerEvents((event) => {
     // Models may have progressed while the stream was down, and a key or preference saved since changes who
     // answers, so the composer follows without a reload.
-    if (event.type === "ready" || event.type === "settings" || event.type === "credentials") void loadHealth();
-    // A preference saved in another tab changes which model the chats here follow.
-    if (event.type === "ready" || event.type === "settings") void loadSettings();
+    // A preference saved in another tab changes who answers and which model the chats here follow.
+    if (event.type === "ready" || event.type === "settings" || event.type === "credentials") {
+      void loadHealth();
+      if (event.type !== "credentials") void loadSettings();
+    }
     if (event.type === "models") {
       latestModels.current = event.models;
       modelEvents.current += 1;
@@ -254,7 +263,7 @@ export function App() {
           <span className="truncate">{chat.scope !== null ? "New chat" : summary?.title}</span>
           {summary !== undefined && (
             <Badge variant="outline" className="font-normal text-muted-foreground">
-              {conversationModel(summary.model, settings?.model ?? "fast", health?.chat.active ?? null)}
+              {conversationModel(summary.model, settings?.model ?? null, health?.chat.active ?? null)}
             </Badge>
           )}
         </span>
@@ -285,7 +294,7 @@ export function App() {
           channels={channels}
           syncs={syncs}
           chat={health?.chat ?? null}
-          defaultChoice={settings?.model ?? "fast"}
+          defaultChoice={settings?.model ?? null}
           usage={summary?.usage ?? null}
           playback={playback}
           notices={
@@ -400,7 +409,14 @@ export function App() {
     },
     settings: {
       title: "Settings",
-      main: <SettingsView health={health} settings={settings} onSettings={setSettings} />,
+      main: (
+        <SettingsView
+          health={health}
+          settings={settings}
+          settingsError={settingsError}
+          onSettings={setSettings}
+        />
+      ),
     },
   };
   const section = sections[view];

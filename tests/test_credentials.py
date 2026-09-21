@@ -231,9 +231,14 @@ async def test_locked_keychain_after_restart_allows_safe_replacement_and_deletio
         replacement = await client.put("/api/credentials/anthropic", json={"key": "replacement-secret"})
         # The key went to the private file because the keychain refused it, and the status says so rather
         # than reading as if the keychain had it.
-        stored = replacement.json()
-        assert (stored["present"], stored["validity"], stored["store"]) == (True, "valid", "file")
-        assert "private fallback file" in stored["fallback_reason"]
+        assert replacement.json() == {
+            "present": True,
+            "validity": "valid",
+            "store": "file",
+            "fallback_reason": "The operating system keychain could not write credentials. "
+            "Using the private fallback file.",
+        }
+        assert "replacement-secret" not in replacement.text
     third = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
     async with running(third) as client:
         assert (await client.get("/api/credentials/anthropic")).json()["validity"] == "valid"

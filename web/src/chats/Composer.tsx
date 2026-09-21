@@ -4,12 +4,16 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { EngineName, ModelChoice, TokenUsage } from "@/lib/api";
-import { choiceLabel, conversationModel, engineModels, modelLabel } from "@/lib/models";
+import type { EngineName, ModelChoice } from "@/lib/api";
+import { conversationModel, engineModels, modelLabel } from "@/lib/models";
 import { ChatContext } from "./ChatContext";
-import { TokenTotals } from "./TokenTotals";
 
+// Chosen in place of a model, and sent as null, which leaves the turn on whatever the default setting says.
 const followDefault = "default";
+
+// Why the question box is closed: no engine can answer at all, the engine that would answer can't right now, or
+// it is the Anthropic API and this chat holds context only the Claude CLI can serve.
+export type Blocked = "no_engine" | "engine_unready" | "context";
 
 // The question box with who answers, the model, and Ask/Stop. The send flow itself lives with the conversation.
 export function Composer({
@@ -19,13 +23,12 @@ export function Composer({
   onDraft,
   questionRef,
   engine,
-  noEngine,
+  blocked,
   onOpenSettings,
   model,
   onModel,
   modelLocked,
   defaultChoice,
-  usage,
   workspace,
   onWorkspace,
   webAccess,
@@ -47,16 +50,15 @@ export function Composer({
   questionRef: Ref<HTMLTextAreaElement>;
   // The engine that would answer the next turn, which decides the models on offer; null when none can.
   engine: EngineName | null;
-  // True once the server has said no engine can answer, as opposed to not having said yet.
-  noEngine: boolean;
+  // Why no question can be sent right now, or null when one can. The server refuses each of these too; asking
+  // anyway would only spend a round trip to be told the same thing.
+  blocked: Blocked | null;
   onOpenSettings: () => void;
   model: string | null;
   onModel: (model: string | null) => void;
   modelLocked: boolean;
-  // The default a chat without a pin follows, for saying which model that is.
-  defaultChoice: ModelChoice;
-  // This Conversation's reported totals, or null when nothing has been recorded.
-  usage: TokenUsage | null;
+  // The default a chat without a pin follows, for saying which model that is; null until it is known.
+  defaultChoice: ModelChoice | null;
   workspace: string;
   onWorkspace: (workspace: string) => void;
   webAccess: boolean;
@@ -75,15 +77,14 @@ export function Composer({
   const savedContext = workspace.trim() !== "" || webAccess;
   const offered = engine === null ? [] : engineModels[engine];
   // Named the way the locked label and the header badge name it, so following the default reads the same everywhere.
-  const unpinned = { value: followDefault, label: `Default: ${choiceLabel(defaultChoice, engine)}` };
-  const options =
-    model === null || offered.some((m) => m.value === model)
-      ? [unpinned, ...offered.map((m) => ({ value: m.value, label: modelLabel(m.value, engine) }))]
-      : [
-          unpinned,
-          ...offered.map((m) => ({ value: m.value, label: modelLabel(m.value, engine) })),
-          { value: model, label: modelLabel(model, engine) },
-        ];
+  const options = [
+    { value: followDefault, label: conversationModel(null, defaultChoice, engine) },
+    ...offered.map((m) => ({ value: m.value, label: modelLabel(m.value, engine) })),
+  ];
+  // A pin this engine doesn't offer is still this Conversation's pin, so it stays on the list.
+  if (model !== null && !offered.some((m) => m.value === model)) {
+    options.push({ value: model, label: modelLabel(model, engine) });
+  }
   return (
     <div className="shrink-0 px-4 pb-3">
       <div className="mx-auto max-w-3xl space-y-2">
@@ -93,12 +94,13 @@ export function Composer({
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        {engine === "api" && savedContext && contextLocked && (
+        {blocked === "context" && (
           <Alert>
             <AlertDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span>
-                This chat was started with project or web access, which only the Claude CLI engine provides. Its
-                context is still saved: switch the engine to the Claude CLI to continue here, or start a new chat.
+                {contextLocked
+                  ? "This chat was started with project or web access, which only the Claude CLI engine provides. Its context is still saved: switch the engine to the Claude CLI to continue here, or start a new chat."
+                  : "Project and web access are Claude CLI capabilities, and the Anthropic API would answer this chat. Remove the context, or switch the engine to the Claude CLI."}
               </span>
               <Button type="button" size="sm" variant="outline" onClick={onOpenSettings}>
                 Open settings
@@ -117,7 +119,7 @@ export function Composer({
             className="max-h-60 min-h-14 resize-none border-0 bg-transparent px-3.5 pt-3 shadow-none focus-visible:ring-0 dark:bg-transparent"
             placeholder={`Ask ${name}`}
             value={draft}
-            disabled={noEngine}
+            disabled={blocked !== null}
             onChange={(e) => onDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -167,7 +169,7 @@ export function Composer({
                 <Square className="size-3 fill-current" />
               </Button>
             ) : (
-              <Button type="submit" size="icon-sm" aria-label="Ask" disabled={noEngine || draft.trim() === ""}>
+              <Button type="submit" size="icon-sm" aria-label="Ask" disabled={blocked !== null || draft.trim() === ""}>
                 <ArrowUp />
               </Button>
             )}
@@ -176,7 +178,6 @@ export function Composer({
         {syncingNotice !== null && (
           <p className="text-center text-[11px] text-muted-foreground">{syncingNotice}</p>
         )}
-        <TokenTotals usage={usage} />
         <p className="text-center text-[11px] text-muted-foreground">
           {workspace.trim() !== "" || webAccess
             ? "Channel advice stays cited. Project and web access are read-only."

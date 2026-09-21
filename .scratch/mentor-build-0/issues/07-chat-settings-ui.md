@@ -32,3 +32,9 @@ understand the current Conversation's model and usage without editing a file. (S
 Search/Syncs, settings entry, accepted-key activation without reload, model preference persistence, pinned versus
 unpinned behaviour and token readout. Use fake engines/secrets and deterministic provider responses, not live keys.
 Run web typecheck, rebuild the served bundle and keep existing chat/Citation flows green.
+
+**Deferred from this ticket's review (2026-09-21):** a Conversation pinned to a model the Anthropic API
+cannot express (`engines.resolve_model` raises a Conflict advising another model) has no remedy on screen:
+a saved Conversation's pin is immutable, since `PATCH /api/conversations/{id}` accepts only a title.
+Changing a pin after creation is new API surface. The full round is in
+[the review record](../ticket-07-review.md).

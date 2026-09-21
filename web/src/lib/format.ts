@@ -19,6 +19,11 @@ export function formatWhen(at: string | null): string {
   });
 }
 
+// Grouped the reader's way: these are counts to compare, not identifiers.
+export function formatCount(n: number): string {
+  return n.toLocaleString();
+}
+
 export function plural(n: number, noun: string): string {
   return `${n} ${n === 1 ? noun : `${noun}s`}`;
 }

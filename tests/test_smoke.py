@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import httpx2
 import pytest
-from api_transport import Provider, answer
+from api_transport import Provider, ToolUse, answer
 from harness import Gate, add_channel, add_group, fake_channel, fake_video, said, serving, sync
 from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright, expect
 
@@ -246,14 +246,30 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
     """A friend with neither engine ready reaches chat through the settings screen, without editing a file."""
     # The real API engine over a fake credential store, so entering a key is what makes chat possible, and a
     # scripted provider, so every answer and every token count is deterministic.
+    def answered() -> bytes:
+        return answer(
+            "Plane across the grain: [Wright, 1:05](https://youtube.com/watch?v=bench-flat1&t=1m5s).",
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+        )
+
+    # Three answered turns, then a turn that reports its first request's usage and fails on its second, so the
+    # totals have to show an incomplete count rather than losing what was already reported.
     provider = Provider(
         script=[
+            answered(),
+            answered(),
+            answered(),
             answer(
-                "Plane across the grain: [Wright, 1:05](https://youtube.com/watch?v=bench-flat1&t=1m5s).",
+                "Looking.",
+                tools=[ToolUse("call-1", "search", {"query": "flatten a bench"})],
+                stop_reason="tool_use",
                 input_tokens=100,
                 output_tokens=20,
                 cache_read_tokens=5,
-            )
+            ),
+            500,
         ]
     )
     turns = provider.hook()
@@ -327,6 +343,7 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
 
             # Back in the chat that was a dead end a moment ago: alive, and without a reload.
             await rail.get_by_role("button", name="Chats").click()
+            await expect(composer).to_be_visible()
             await expect(question).to_be_enabled(timeout=15_000)
             await question.fill("How do I flatten a bench?")
             await composer.get_by_role("button", name="Ask", exact=True).click()
@@ -338,6 +355,7 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
 
             # The default model is a preference, and it survives a reload.
             await rail.get_by_role("button", name="Settings").click()
+            await expect(settings).to_be_visible()
             await settings.get_by_label("Default model").click()
             await page.get_by_role("option", name=re.compile("^Deep")).click()
             await expect(settings.get_by_label("Default model")).to_contain_text("Opus 5")
@@ -346,6 +364,7 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
 
             # This Conversation pinned nothing, so its next question follows the new default.
             await rail.get_by_role("button", name="Chats").click()
+            await expect(composer).to_be_visible()
             await expect(composer).to_contain_text("Default: Opus 5 (deep)", timeout=15_000)
             await question.fill("And the legs?")
             await composer.get_by_role("button", name="Ask", exact=True).click()
@@ -363,6 +382,26 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
             )
             await expect(composer).to_contain_text("Pinned: Sonnet 5 (fast)")
 
+            # A turn that fails after the provider reported one request keeps that count, and says the total is
+            # only a floor rather than pretending the failure cost nothing.
+            await question.fill("And the top?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            await expect(main).to_contain_text("at least 200 in · 40 out · 10 cache read", timeout=15_000)
+
+            # Deleting the key takes chat back to where it started, which is how a friend undoes the setup.
+            await rail.get_by_role("button", name="Settings").click()
+            await expect(settings).to_be_visible()
+            await settings.get_by_role("button", name="Delete key").click()
+            confirm = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Delete key"))
+            await confirm.get_by_role("button", name="Delete key").click()
+            await expect(settings).to_contain_text("No key saved yet.", timeout=15_000)
+            await rail.get_by_role("button", name="Chats").click()
+            await expect(question).to_be_disabled(timeout=15_000)
+
     assert errors == []
-    # The unpinned Conversation followed the default from fast to deep; the pinned one ignored it.
-    assert [body["model"] for body in provider.bodies] == ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-5"]
+    # Each turn's first request, in order: the unpinned Conversation followed the default from fast to deep, and
+    # the pinned one stayed on Sonnet 5 however the default moved. The rest are the last turn's tool step and the
+    # SDK's retries of the failure, all on that same pinned model.
+    models = [body["model"] for body in provider.bodies]
+    assert models[:4] == ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-5"]
+    assert set(models[4:]) == {"claude-sonnet-5"}

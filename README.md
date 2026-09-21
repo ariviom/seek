@@ -315,10 +315,12 @@ The gear in the rail opens Settings, which is everything that is yours: which en
 and the default model. It also shows, read-only, what each engine needs before it can answer and which device and
 precision the embedding and reranking models are running at.
 
-Pasting a key validates it there and says whether Anthropic accepted it, rejected it, or didn't answer. The key is
-never shown again, never returned by the server, and never kept in the browser. If the keychain refused it, the screen
-says the key is in the private fallback file and why. Accepting a key brings the chat box to life in every open tab
-without a reload; with no engine ready, the chat box is disabled and points here instead.
+Pasting a key validates it there and says whether Anthropic accepted it, rejected it, or didn't answer. The key
+is never shown again, never returned by the server, and never kept in the browser. If the keychain refused it,
+or cannot be read, the screen says so and still lets you replace or delete the key. Accepting a key brings the
+chat box to life in every open tab without a reload, unless you have chosen the Claude CLI as your engine; and
+whenever the engine that would answer can't, the chat box is disabled and points here instead of failing a
+question you have already typed.
 
 Changing the default model reaches your next question. A chat that pinned its own model keeps it and says
 `Pinned: …`; one following the setting says `Default: …`.
