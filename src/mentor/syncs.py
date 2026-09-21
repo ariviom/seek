@@ -28,10 +28,12 @@ class Sync:
     started_at: str | None
     finished_at: str | None
     new_videos: int
-    # Videos that reached done or failed during this Sync.
+    # Videos this Sync has finished with, done or failed, each counted once however often it was processed.
     completed_videos: int
     # Of those, the ones that failed: completed work, but nothing a question can be answered from.
     failed_videos: int
+    # Videos this Sync still has to get to; with completed_videos, the whole of its work.
+    remaining_videos: int
     # completed_videos as this run of the Sync was claimed. Claiming resets started_at too, so the pair is
     # always a compatible baseline: the work since counted_from took the time since started_at, and no more.
     counted_from: int
@@ -74,6 +76,7 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
             new_videos=row["new_videos"],
             completed_videos=row["completed_videos"],
             failed_videos=row["failed_videos"],
+            remaining_videos=row["remaining_videos"],
             counted_from=row["counted_from"],
             stage_counts=json.loads(row["stage_counts"]),
         )
@@ -228,24 +231,17 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         ).fetchone()
         if row is None:
             return None
-        requeued = 0
         if row["retry_failed"]:
-            requeued += videos.clear_failures(conn, row["id"])
+            videos.clear_failures(conn, row["id"])
         if row["reindex"]:
-            requeued += videos.step_back_for_reindex(conn, row["id"])
-        # Videos put back in the queue are about to be done again, so a resumed retry or reindex stops counting
-        # the ones it had already finished with: counting them and the work still to come would total more
-        # Videos than the Channel has. counted_from lands on the same figure, and moves with started_at, so the
-        # rate measures this run from where it really restarts.
+            videos.step_back_for_reindex(conn, row["id"])
+        # Videos a resumed retry or reindex puts back in the queue leave its completed count as they go, so the
+        # counts are taken after. counted_from lands on the same figure, and moves with started_at, so the rate
+        # measures this run from where it really restarts.
+        counts = _record_counts(conn, row["sync_id"], row["id"])
         conn.execute(
-            """
-            UPDATE syncs SET status = 'running', started_at = ?,
-                             completed_videos = max(0, completed_videos - ?),
-                             failed_videos = max(0, failed_videos - ?),
-                             counted_from = max(0, completed_videos - ?)
-            WHERE id = ?
-            """,
-            (now_iso(), requeued, requeued, requeued, row["sync_id"]),
+            "UPDATE syncs SET status = 'running', started_at = ?, counted_from = ? WHERE id = ?",
+            (now_iso(), counts.completed, row["sync_id"]),
         )
         return ClaimedSync(
             id=row["sync_id"],
@@ -257,36 +253,37 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         )
 
 
-def update_progress(
-    conn: sqlite3.Connection,
-    sync_id: int,
-    new_videos: int | None = None,
-    completed: bool = False,
-    failed: bool = False,
-) -> Sync | None:
-    """Refreshes the Sync's stage counts from its Channel's Videos; None if the Sync is gone.
+def _record_counts(conn: sqlite3.Connection, sync_id: int, channel_id: int) -> videos.SyncCounts:
+    """Within a transaction: stores the Sync's per-Video counts as they stand. Only a Sync that is running
+    records them, so a finished one keeps its own after a later Sync takes its Videos over."""
+    counts = videos.sync_counts(conn, sync_id, channel_id)
+    conn.execute(
+        """
+        UPDATE syncs SET completed_videos = ?, failed_videos = ?, remaining_videos = ?, stage_counts = ?
+        WHERE id = ?
+        """,
+        (counts.completed, counts.failed, counts.remaining, json.dumps(videos.stage_counts(conn, channel_id)), sync_id),
+    )
+    return counts
 
-    `completed` counts one more Video as finished with, so it is passed once per Video that reached done or failed.
-    `failed` says that Video failed, which is completed work that left nothing to search.
+
+def update_progress(
+    conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None, finished_video_id: int | None = None
+) -> Sync | None:
+    """Refreshes the Sync's counts from its Channel's Videos; None if the Sync is gone.
+
+    `finished_video_id` names a Video this Sync has just brought to done or failed. Marking it again, when the Video
+    is processed a second time, changes nothing, so it is never counted twice.
     """
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
         if row is None:
             return None
-        conn.execute(
-            """
-            UPDATE syncs SET stage_counts = ?, new_videos = coalesce(?, new_videos),
-                             completed_videos = completed_videos + ?, failed_videos = failed_videos + ?
-            WHERE id = ?
-            """,
-            (
-                json.dumps(videos.stage_counts(conn, row["channel_id"])),
-                new_videos,
-                int(completed),
-                int(completed and failed),
-                sync_id,
-            ),
-        )
+        if finished_video_id is not None:
+            videos.mark_completed(conn, finished_video_id, sync_id)
+        if new_videos is not None:
+            conn.execute("UPDATE syncs SET new_videos = ? WHERE id = ?", (new_videos, sync_id))
+        _record_counts(conn, sync_id, row["channel_id"])
         [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
         return sync
 
@@ -297,15 +294,10 @@ def finish(conn: sqlite3.Connection, sync_id: int, error: str | None) -> Sync | 
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
         if row is None:
             return None
+        _record_counts(conn, sync_id, row["channel_id"])
         conn.execute(
-            "UPDATE syncs SET status = ?, error = ?, finished_at = ?, stage_counts = ? WHERE id = ?",
-            (
-                "done" if error is None else "failed",
-                error,
-                now_iso(),
-                json.dumps(videos.stage_counts(conn, row["channel_id"])),
-                sync_id,
-            ),
+            "UPDATE syncs SET status = ?, error = ?, finished_at = ? WHERE id = ?",
+            ("done" if error is None else "failed", error, now_iso(), sync_id),
         )
         [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
         return sync

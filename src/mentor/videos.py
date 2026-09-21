@@ -116,6 +116,50 @@ def get_video(conn: sqlite3.Connection, video_id: int) -> Video | None:
     return None if row is None else _video(row)
 
 
+@dataclass(frozen=True)
+class SyncCounts:
+    """What a Sync has finished with and what it has left, counted in Videos rather than in events."""
+
+    completed: int
+    failed: int
+    remaining: int
+
+
+def sync_counts(conn: sqlite3.Connection, sync_id: int, channel_id: int) -> SyncCounts:
+    """The Videos this Sync has finished with, of those the ones that failed, and the ones it has yet to reach.
+
+    A Video counts as finished with only while it is still done or failed: one put back in the queue -- a retry
+    clearing its failure, a reindex stepping it back -- returns to the remaining side, so the two never describe
+    the same Video at once and their sum is the work this Sync is doing. Videos left alone by this Sync -- done
+    already, excluded, or permanently failed and not retried here -- are on neither side.
+    """
+    row = conn.execute(
+        """
+        SELECT
+            count(*) FILTER (WHERE finished) AS completed,
+            count(*) FILTER (WHERE finished AND failure_stage IS NOT NULL) AS failed,
+            count(*) FILTER (
+                WHERE NOT finished AND pipeline_stage != 'done'
+                  AND (failure_stage IS NULL OR failure_permanent = 0)
+            ) AS remaining
+        FROM (
+            SELECT pipeline_stage, failure_stage, failure_permanent,
+                   completed_by_sync_id IS ? AND (pipeline_stage = 'done' OR failure_stage IS NOT NULL)
+                       AS finished
+            FROM videos WHERE channel_id = ? AND excluded_reason IS NULL
+        )
+        """,
+        (sync_id, channel_id),
+    )
+    counts = row.fetchone()
+    return SyncCounts(counts["completed"], counts["failed"], counts["remaining"])
+
+
+def mark_completed(conn: sqlite3.Connection, video_id: int, sync_id: int) -> None:
+    """Within a transaction: records that this Sync is the one that last finished with the Video."""
+    conn.execute("UPDATE videos SET completed_by_sync_id = ? WHERE id = ?", (sync_id, video_id))
+
+
 def stage_counts(conn: sqlite3.Connection, channel_id: int) -> dict[str, int]:
     rows = conn.execute(
         f"SELECT {_STAGE_SQL} AS stage, count(*) AS n FROM videos WHERE channel_id = ? GROUP BY stage", (channel_id,)
@@ -356,20 +400,17 @@ def record_failure(
         return cursor.rowcount == 1
 
 
-def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> int:
+def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> None:
     """Within a transaction: every segmented, embedded, or done Video of the Channel goes back to
     transcript_fetched, so the Sync cuts and embeds it again from its stored Transcript. Its Segments stay until
-    they are replaced, but leave search at once, since only a done Video's are searchable.
-
-    Returns how many Videos went back."""
-    cursor = conn.execute(
+    they are replaced, but leave search at once, since only a done Video's are searchable."""
+    conn.execute(
         """
         UPDATE videos SET pipeline_stage = 'transcript_fetched'
         WHERE channel_id = ? AND pipeline_stage IN ('segmented', 'embedded', 'done')
         """,
         (channel_id,),
     )
-    return cursor.rowcount
 
 
 def clear_failure(conn: sqlite3.Connection, video_id: int) -> int:
@@ -385,15 +426,12 @@ def clear_failure(conn: sqlite3.Connection, video_id: int) -> int:
     return int(row["channel_id"])
 
 
-def clear_failures(conn: sqlite3.Connection, channel_id: int) -> int:
-    """Within a transaction: every failed Video of the Channel resumes from its last completed stage.
-
-    Returns how many Videos stopped being failed."""
-    cursor = conn.execute(
+def clear_failures(conn: sqlite3.Connection, channel_id: int) -> None:
+    """Within a transaction: every failed Video of the Channel resumes from its last completed stage."""
+    conn.execute(
         """
         UPDATE videos SET failure_stage = NULL, failure_reason = NULL, failure_permanent = NULL
         WHERE channel_id = ? AND failure_stage IS NOT NULL
         """,
         (channel_id,),
     )
-    return cursor.rowcount

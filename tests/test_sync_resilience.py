@@ -18,6 +18,7 @@ from harness import (
     wait_for_syncs,
 )
 
+from mentor import db, syncs
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
@@ -388,6 +389,7 @@ async def test_a_failed_video_is_completed_work_that_leaves_nothing_to_search_an
     assert first["stage_counts"]["done"] == 2
     # The retry's work is the one Video it was queued for, not the Channel's three.
     assert (retried["completed_videos"], retried["failed_videos"]) == (1, 0)
+    assert first["remaining_videos"] == retried["remaining_videos"] == 0
     assert retried["stage_counts"] == first["stage_counts"] | {"done": 3, "failed": 0}
 
 
@@ -416,8 +418,88 @@ async def test_a_retry_resumed_after_a_restart_does_not_count_the_videos_it_is_a
         videos = await list_videos(client, channel["id"])
 
     assert (retry["status"], retry["completed_videos"], retry["failed_videos"]) == ("running", 2, 2)
+    assert retry["remaining_videos"] == 1
     # Resuming cleared those two failures to try them again, so they stopped being work this Sync had done.
     # Counting them as well as the three Videos still to come would have claimed five of a three-Video Channel.
     assert (resumed["status"], resumed["completed_videos"], resumed["failed_videos"]) == ("done", 3, 3)
-    assert resumed["counted_from"] == 0
+    assert (resumed["counted_from"], resumed["remaining_videos"]) == (0, 0)
     assert [v["stage"] for v in videos.values()] == ["failed"] * 3
+
+
+async def test_a_reindex_resumed_after_a_restart_counts_each_video_once_and_never_more_than_the_channel_has(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    held = Gate()
+    channel_videos = fake_channel(transcripts, "UC-wright").videos
+    channel_videos += [fake_video("v-one", "One"), fake_video("v-two", "Two"), fake_video("v-three", "Three")]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        await wait_for_syncs(client)
+        # A reindex that has re-cut the three indexed Videos and is fetching a new one when the process stops.
+        channel_videos.append(fake_video("v-new", "New", before_fetch=held))
+        await client.post(f"/api/channels/{channel['id']}/syncs", json={"reindex": True})
+        await held.wait_entered()
+        [interrupted, _] = (await client.get("/api/syncs")).json()
+    held.released.set()
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        resumed, _ = await wait_for_syncs(client, timeout=10)
+        videos = await list_videos(client, channel["id"])
+
+    assert (interrupted["status"], interrupted["completed_videos"], interrupted["remaining_videos"]) == ("running", 3, 1)
+    # Resuming stepped the three back again and re-cut them, so each was processed twice by this Sync. Counting
+    # the events would have claimed seven Videos done of a four-Video Channel.
+    assert (resumed["status"], resumed["completed_videos"], resumed["remaining_videos"]) == ("done", 4, 0)
+    assert (resumed["failed_videos"], resumed["counted_from"]) == (0, 0)
+    assert [v["stage"] for v in videos.values()] == ["done"] * 4
+
+
+async def test_a_video_left_failed_by_an_earlier_sync_is_work_the_next_one_still_has_to_do(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    held = Gate()
+    flaky = fake_video("v-flaky", "Flaky", failure=VideoUnavailable("Timed out", permanent=False))
+    fake_channel(transcripts, "UC-wright").videos += [fake_video("v-one", "One"), flaky]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        [first] = await wait_for_syncs(client)
+        flaky.failure = None
+        flaky.before_fetch = held
+        await start_sync(client, channel["id"])
+        await held.wait_entered()
+        [running_sync, _] = (await client.get("/api/syncs")).json()
+        held.released.set()
+        finished, first_after = await wait_for_syncs(client)
+
+    assert (first["completed_videos"], first["failed_videos"], first["remaining_videos"]) == (2, 1, 0)
+    # The transient failure is retried by the next Sync, so it is that Sync's whole remaining work even while the
+    # Video still shows as failed; the Video already done is no part of it.
+    assert (running_sync["completed_videos"], running_sync["remaining_videos"]) == (0, 1)
+    assert (finished["completed_videos"], finished["failed_videos"], finished["remaining_videos"]) == (1, 0, 0)
+    # A finished Sync keeps its own counts after a later one takes its Video over.
+    assert first_after == first
+
+
+def test_marking_a_video_finished_again_does_not_count_it_again(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "mentor.db")
+    db.migrate(conn)
+    conn.executescript(
+        """
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO videos (id, channel_id, youtube_video_id, title, pipeline_stage, discovered_at)
+            VALUES (11, 3, 'v-one', 'One', 'done', '2025-01-01T00:00:00+00:00'),
+                   (12, 3, 'v-two', 'Two', 'discovered', '2025-01-01T00:00:00+00:00');
+        INSERT INTO syncs (id, channel_id, status, queued_at, stage_counts) VALUES (4, 3, 'running', '2025-01-01', '{}');
+        """
+    )
+
+    once = syncs.update_progress(conn, 4, finished_video_id=11)
+    twice = syncs.update_progress(conn, 4, finished_video_id=11)
+
+    assert once is not None and twice is not None
+    assert (once.completed_videos, once.remaining_videos) == (twice.completed_videos, twice.remaining_videos) == (1, 1)
+    conn.close()

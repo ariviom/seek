@@ -104,10 +104,12 @@ export type Sync = {
   started_at: string | null;
   finished_at: string | null;
   new_videos: number;
-  // Videos that reached done or failed during this Sync.
+  // Videos this Sync has finished with, done or failed, each counted once however often it was processed.
   completed_videos: number;
   // Of those, the ones that failed: completed work, but nothing a question can be answered from.
   failed_videos: number;
+  // Videos this Sync still has to get to; with completed_videos, the whole of its work.
+  remaining_videos: number;
   // completed_videos when this run of the Sync was claimed, which is also when started_at was set. The work
   // since counted_from took the time since started_at, so the two always measure the same interval.
   counted_from: number;

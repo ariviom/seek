@@ -6,25 +6,27 @@ estimated finish and per-Video failures, with progress that survives a reload an
 
 **Blocked by:** None — can start once the shared implementation prerequisites are resolved.
 
-**Status:** ready-for-agent
+**Status:** complete — 508 tests passing (browser smoke included), mypy and web typecheck clean, served bundle
+rebuilt. A Sync's completed, failed and remaining counts are derived per Video, so work redone after a restart,
+retry or reindex is counted once.
 
-- [ ] Add concise start-with-a-small-Channel advice at the moment of adding one, explaining that a large catalogue
+- [x] Add concise start-with-a-small-Channel advice at the moment of adding one, explaining that a large catalogue
   takes time. Do not perform a paced listing to promise a pre-ingestion Video count.
-- [ ] Reuse the existing persisted Sync progress and live updates. Display an explicit observed processing rate
+- [x] Reuse the existing persisted Sync progress and live updates. Display an explicit observed processing rate
   alongside approximate time remaining, with clear units and a warm-up state until enough observations exist.
-- [ ] Distinguish Videos processed from Videos ready to answer: a failed Video counts as completed work but not as
+- [x] Distinguish Videos processed from Videos ready to answer: a failed Video counts as completed work but not as
   a searchable success. Retry-failed runs account for their remaining failed Videos, avoiding impossible totals.
-- [ ] Keep Library/Channel/Sync views consistent about the running Sync, counts and failure state. Reload preserves
+- [x] Keep Library/Channel/Sync views consistent about the running Sync, counts and failure state. Reload preserves
   progress; no rate or ETA is fabricated while queued, during discovery without a useful total, or after failure.
-- [ ] On process restart, use compatible count/time baselines for rate and ETA. The current lease recovery resets
+- [x] On process restart, use compatible count/time baselines for rate and ETA. The current lease recovery resets
   `started_at` while retaining `completed_videos`; never divide retained pre-restart work by fresh elapsed time.
   Preserve a compatible interval or warm up a new observed interval without erasing total completion progress.
-- [ ] Verify foreground shutdown/restart resumes persisted unfinished stages without discarding completed work.
+- [x] Verify foreground shutdown/restart resumes persisted unfinished stages without discarding completed work.
   Preserve ordinary per-Video failure isolation and existing deliberate whole-Sync behaviour for source-wide
   throttling or other shared failures; "one Video failed" must not imply every source failure is ignored.
-- [ ] Keep per-Video failure reasons and existing retry actions discoverable. A friend can leave ingestion running
+- [x] Keep per-Video failure reasons and existing retry actions discoverable. A friend can leave ingestion running
   without holding the browser tab open.
-- [ ] Scope fixes to these spec requirements. Existing unrelated v2 polish findings are not silently folded into
+- [x] Scope fixes to these spec requirements. Existing unrelated v2 polish findings are not silently folded into
   this ticket; v2 ticket 06 is explicitly parked, with friend-workflow blockers addressed by their owning criteria.
 
 **Verification:** Reuse/extend API and event-stream tests for progress, per-Video failure and restart recovery, and

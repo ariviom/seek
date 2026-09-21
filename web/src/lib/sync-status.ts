@@ -53,11 +53,9 @@ function round(n: number): number {
 }
 
 function tally(sync: Sync): { processed: number; ready: number; failed: number; remaining: number; total: number } {
-  const counts = sync.stage_counts;
-  // The Videos this Sync still has to get through; the Channel's earlier failures are not among them, so they
-  // can't inflate a total this Sync will never reach. A retry-failed Sync cleared them before it started, which
-  // puts them back in the stages below and so back in this count.
-  const remaining = counts.discovered + counts.transcript_fetched + counts.segmented + counts.embedded;
+  // Both counted per Video by the server, so a Video processed twice is never in them twice and the total never
+  // exceeds the Channel's Videos. A retry-failed Sync puts the failures it clears back among the remaining.
+  const remaining = sync.remaining_videos;
   const processed = sync.completed_videos;
   const failed = sync.failed_videos;
   return { processed, ready: processed - failed, failed, remaining, total: processed + remaining };

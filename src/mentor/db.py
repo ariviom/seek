@@ -307,12 +307,18 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     ALTER TABLE messages ADD COLUMN usage_complete INTEGER CHECK (usage_complete IN (0, 1));
     """,
     """
-    -- Where the interval a Sync's rate is measured over begins. Recovering a Sync a stopped process left
-    -- running clears started_at but keeps completed_videos, so a rate taken from completed_videos alone
-    -- would divide work done before the restart by time measured after it.
-    ALTER TABLE syncs ADD COLUMN counted_from INTEGER NOT NULL DEFAULT 0;
-    -- How many of the Videos this Sync finished with failed: work completed, but nothing more to search.
+    -- The Sync that last finished with this Video, so a Sync counts a Video it processes twice -- a transient
+    -- failure it retries after a restart, a reindex that steps it back -- once, and stops counting it at all
+    -- while it is back in the queue. Counting the events instead totalled more Videos than a Channel has.
+    ALTER TABLE videos ADD COLUMN completed_by_sync_id INTEGER REFERENCES syncs(id) ON DELETE SET NULL;
+    CREATE INDEX videos_completed_by_sync_id ON videos(completed_by_sync_id);
+    -- Of the Videos a Sync has finished with, the ones that failed; and the ones it still has to get to.
     ALTER TABLE syncs ADD COLUMN failed_videos INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE syncs ADD COLUMN remaining_videos INTEGER NOT NULL DEFAULT 0;
+    -- Where the interval a Sync's rate is measured over begins. Recovering a Sync a stopped process left
+    -- running clears started_at but keeps its completed Videos, so a rate taken from the total alone would
+    -- divide work done before the restart by time measured after it.
+    ALTER TABLE syncs ADD COLUMN counted_from INTEGER NOT NULL DEFAULT 0;
     """,
 ]
 

@@ -12,6 +12,7 @@ from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscr
 
 SCHEMA_8 = 8
 SCHEMA_9 = 9
+SCHEMA_13 = 13
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -171,6 +172,32 @@ def test_migration_10_counts_no_completed_videos_for_the_syncs_already_recorded(
 
     assert user_version(conn) == len(db.MIGRATIONS)
     assert [tuple(row) for row in conn.execute("SELECT id, completed_videos FROM syncs")] == [(4, 0)]
+    conn.close()
+
+
+def test_migration_14_credits_no_video_to_the_syncs_already_recorded(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "mentor.db")
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_13])
+        db.migrate(conn)
+    conn.executescript(
+        """
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO videos (id, channel_id, youtube_video_id, title, pipeline_stage, discovered_at)
+            VALUES (11, 3, 'v-wright', 'Sharpening chisels', 'done', '2025-01-01T00:00:00+00:00');
+        INSERT INTO syncs (id, channel_id, status, queued_at, stage_counts, completed_videos)
+            VALUES (4, 3, 'done', '2025-01-01', '{}', 1);
+        """
+    )
+
+    db.migrate(conn)
+
+    assert user_version(conn) == len(db.MIGRATIONS)
+    # A finished Sync keeps the count it recorded; no Video is credited to it, since none was recorded then.
+    assert [tuple(row) for row in conn.execute(
+        "SELECT id, completed_videos, failed_videos, remaining_videos, counted_from FROM syncs"
+    )] == [(4, 1, 0, 0, 0)]
+    assert [tuple(row) for row in conn.execute("SELECT id, completed_by_sync_id FROM videos")] == [(11, None)]
     conn.close()
 
 
