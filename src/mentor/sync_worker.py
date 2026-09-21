@@ -230,7 +230,8 @@ class SyncWorker:
         def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None]:
             changed = None if video is None else videos.get_video(conn, video.id)
             completed = changed is not None and changed.stage in ("done", "failed")
-            return syncs.update_progress(conn, sync.id, new_videos, completed), changed
+            failed = changed is not None and changed.stage == "failed"
+            return syncs.update_progress(conn, sync.id, new_videos, completed, failed), changed
 
         updated, changed = await self._database.run(refresh)
         if changed is not None:

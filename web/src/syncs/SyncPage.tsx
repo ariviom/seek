@@ -3,7 +3,7 @@ import { api, errorText, type Sync } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { plural } from "@/lib/format";
-import { isRunning, syncProgress, timeLeft, useNow } from "@/lib/sync-status";
+import { isRunning, syncDetails, syncProgress, useNow } from "@/lib/sync-status";
 import { StageRule } from "./StageRule";
 import { syncStatus, when } from "./useSyncs";
 
@@ -41,12 +41,17 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
         <p className="mt-0.5 text-xs text-muted-foreground">
           {syncStatus[sync.status].label} · {when(sync)}
           {sync.new_videos > 0 && ` · ${plural(sync.new_videos, "new video")}`}
-          {progress !== null && ` · ${progress.completed} of ${progress.total} ready`}
-          {progress !== null && progress.secondsLeft !== null && ` · about ${timeLeft(progress.secondsLeft)} left`}
+          {progress !== null && syncDetails(progress).map((detail) => ` · ${detail}`)}
         </p>
         {sync.status === "running" && sync.fetching !== null && (
           <p className="mt-1 truncate text-xs text-muted-foreground" title={sync.fetching}>
             Fetching “{sync.fetching}”
+          </p>
+        )}
+        {progress !== null && (
+          // The work happens in the server this page is served from, not in the page.
+          <p className="mt-1 text-xs text-muted-foreground">
+            Syncing carries on while mentor is running; you can close this tab.
           </p>
         )}
       </div>

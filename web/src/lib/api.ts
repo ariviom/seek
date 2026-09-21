@@ -104,8 +104,13 @@ export type Sync = {
   started_at: string | null;
   finished_at: string | null;
   new_videos: number;
-  // Videos that reached done or failed during this Sync; with started_at it gives the rate.
+  // Videos that reached done or failed during this Sync.
   completed_videos: number;
+  // Of those, the ones that failed: completed work, but nothing a question can be answered from.
+  failed_videos: number;
+  // completed_videos when this run of the Sync was claimed, which is also when started_at was set. The work
+  // since counted_from took the time since started_at, so the two always measure the same interval.
+  counted_from: number;
   stage_counts: Record<Stage, number>;
   // The title of the Video being fetched, on the event a running Sync publishes as it starts fetching it.
   fetching: string | null;

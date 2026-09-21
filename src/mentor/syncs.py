@@ -28,8 +28,13 @@ class Sync:
     started_at: str | None
     finished_at: str | None
     new_videos: int
-    # Videos that reached done or failed during this Sync; with started_at it gives the rate.
+    # Videos that reached done or failed during this Sync.
     completed_videos: int
+    # Of those, the ones that failed: completed work, but nothing a question can be answered from.
+    failed_videos: int
+    # completed_videos as this run of the Sync was claimed. Claiming resets started_at too, so the pair is
+    # always a compatible baseline: the work since counted_from took the time since started_at, and no more.
+    counted_from: int
     stage_counts: dict[str, int]
     # The title of the Video being fetched, on the event published as a running Sync starts fetching it.
     fetching: str | None = None
@@ -68,6 +73,8 @@ def _select(conn: sqlite3.Connection, where: str, params: tuple[object, ...]) ->
             finished_at=row["finished_at"],
             new_videos=row["new_videos"],
             completed_videos=row["completed_videos"],
+            failed_videos=row["failed_videos"],
+            counted_from=row["counted_from"],
             stage_counts=json.loads(row["stage_counts"]),
         )
         for row in rows
@@ -221,7 +228,12 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         ).fetchone()
         if row is None:
             return None
-        conn.execute("UPDATE syncs SET status = 'running', started_at = ? WHERE id = ?", (now_iso(), row["sync_id"]))
+        # counted_from moves with started_at, so a Sync resumed after a restart measures a fresh interval
+        # without losing the Videos it had already finished with.
+        conn.execute(
+            "UPDATE syncs SET status = 'running', started_at = ?, counted_from = completed_videos WHERE id = ?",
+            (now_iso(), row["sync_id"]),
+        )
         if row["retry_failed"]:
             videos.clear_failures(conn, row["id"])
         if row["reindex"]:
@@ -237,11 +249,16 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
 
 
 def update_progress(
-    conn: sqlite3.Connection, sync_id: int, new_videos: int | None = None, completed: bool = False
+    conn: sqlite3.Connection,
+    sync_id: int,
+    new_videos: int | None = None,
+    completed: bool = False,
+    failed: bool = False,
 ) -> Sync | None:
     """Refreshes the Sync's stage counts from its Channel's Videos; None if the Sync is gone.
 
     `completed` counts one more Video as finished with, so it is passed once per Video that reached done or failed.
+    `failed` says that Video failed, which is completed work that left nothing to search.
     """
     with transaction(conn):
         row = conn.execute("SELECT channel_id FROM syncs WHERE id = ?", (sync_id,)).fetchone()
@@ -250,10 +267,16 @@ def update_progress(
         conn.execute(
             """
             UPDATE syncs SET stage_counts = ?, new_videos = coalesce(?, new_videos),
-                             completed_videos = completed_videos + ?
+                             completed_videos = completed_videos + ?, failed_videos = failed_videos + ?
             WHERE id = ?
             """,
-            (json.dumps(videos.stage_counts(conn, row["channel_id"])), new_videos, int(completed), sync_id),
+            (
+                json.dumps(videos.stage_counts(conn, row["channel_id"])),
+                new_videos,
+                int(completed),
+                int(completed and failed),
+                sync_id,
+            ),
         )
         [sync] = _select(conn, "WHERE syncs.id = ?", (sync_id,))
         return sync

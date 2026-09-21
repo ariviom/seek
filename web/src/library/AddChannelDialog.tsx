@@ -2,7 +2,14 @@ import { useState, type FormEvent } from "react";
 import { api, errorText, type Channel, type ChannelProposal } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
 export function AddChannelDialog({
@@ -66,6 +73,11 @@ export function AddChannelDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add a channel</DialogTitle>
+          {/* Said here, where it can still change the choice: how long the first Sync takes is decided now. */}
+          <DialogDescription>
+            Start with a small channel. Mentor fetches and indexes every video it finds, so a large back catalogue
+            can take hours. You can add more once you have seen how the first one goes.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={proposal === null ? lookUp : add} className="grid gap-3">
           <label className="grid gap-1.5 text-sm">

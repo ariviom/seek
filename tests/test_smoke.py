@@ -15,7 +15,7 @@ from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright
 from mentor.app import create_app
 from mentor.config import Config
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import ChatDone, ChatEngineStatus, TextDelta
+from mentor.ports import ChatDone, ChatEngineStatus, TextDelta, VideoUnavailable
 
 WEB = Path(__file__).parents[1] / "web"
 
@@ -406,3 +406,68 @@ async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
     models = [body["model"] for body in provider.bodies]
     assert models[:4] == ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-5"]
     assert set(models[4:]) == {"claude-sonnet-5"}
+
+
+async def test_adding_a_channel_advises_starting_small_and_a_running_sync_reports_what_is_ready(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+    tmp_path: Path,
+) -> None:
+    # Held across browser assertions rather than API calls, so the holds outlast a page load.
+    first = Gate(seconds=30)
+    last = Gate(seconds=30)
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-one", "Winding sticks", before_fetch=first, cues=said("Check it with winding sticks")),
+        fake_video("v-two", "Jack plane", cues=said("Plane across the grain")),
+        fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only video", permanent=True)),
+        fake_video("v-three", "Sharpening", cues=said("Hone the chisel")),
+        fake_video("v-four", "Finishing", before_fetch=last, cues=said("Then oil it")),
+    ]
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
+
+    async with serving(app) as base_url:
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("button", name="Add channel").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
+            # The advice is there to be read while the choice of Channel is still open.
+            await expect(add).to_contain_text("Start with a small channel")
+            await add.get_by_label("YouTube channel URL or handle").fill("@woodbywright")
+            await add.get_by_role("button", name="Look up").click()
+            await add.get_by_role("button", name="Add", exact=True).click()
+
+            videos_card = main.locator("section").filter(has=page.get_by_role("heading", name="Videos"))
+            await main.get_by_role("button", name="Sync now").click()
+            # Discovery has found the work, but one Video in nothing is claimed about how fast it will go.
+            await expect(videos_card).to_contain_text("0 of 5 videos", timeout=15_000)
+            await expect(videos_card).to_contain_text("measuring speed")
+            first.released.set()
+
+            # Four Videos have been worked through; the one that failed is not among those a question can use.
+            await expect(videos_card).to_contain_text("4 of 5 videos", timeout=15_000)
+            await expect(videos_card).to_contain_text("3 ready, 1 failed")
+
+            # A reload shows the same Sync at the same point, now with an observed rate behind its estimate.
+            await page.reload()
+            await expect(videos_card).to_contain_text("4 of 5 videos", timeout=15_000)
+            await expect(videos_card).to_contain_text("3 ready, 1 failed")
+            await expect(videos_card).to_contain_text(re.compile(r"(videos/min|min/video)"))
+            await expect(videos_card).to_contain_text(re.compile(r"about .+ left"))
+
+            # The failure keeps its reason and its own retry, so one unavailable Video is a thing a friend can act on.
+            await main.get_by_role("button", name="Videos", exact=True).click()
+            failed_row = main.get_by_role("row").filter(has_text="Members stream")
+            await expect(failed_row).to_contain_text("Members-only video")
+            await expect(failed_row.get_by_role("button", name="Retry")).to_be_visible()
+
+            last.released.set()
+            await expect(videos_card).to_contain_text("last synced", timeout=15_000)
+
+    assert errors == []

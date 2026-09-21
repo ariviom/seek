@@ -84,7 +84,7 @@ def test_settings_migration_preserves_existing_database(config: Config, monkeypa
             db.migrate(conn)
         conn.execute("INSERT INTO channels (youtube_channel_id, name) VALUES ('UC-existing', 'Existing')")
         db.migrate(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
         assert conn.execute("SELECT name FROM channels").fetchone()[0] == "Existing"
         assert conn.execute("SELECT * FROM settings").fetchall() == []
         for key, value in [("engine", "other"), ("provider", "openai"), ("model", "opus"), ("api_key", "secret")]:

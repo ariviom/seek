@@ -330,3 +330,62 @@ async def test_one_permanently_failed_video_can_be_retried(
     assert (after["stage"], after["failure_stage"], after["reason"]) == ("done", None, None)
     assert fetched(transcripts).count("v-members") == 2
     assert unknown.status_code == 404
+
+
+async def test_a_sync_resumed_after_a_restart_keeps_its_completed_videos_and_measures_a_fresh_interval(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    held_before = Gate()
+    held_after = Gate()
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-one", "One"),
+        fake_video("v-two", "Two"),
+        fake_video("v-three", "Three", before_fetch=held_before),
+        fake_video("v-four", "Four", before_fetch=held_after),
+    ]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        await held_before.wait_entered()
+        [interrupted] = (await client.get("/api/syncs")).json()
+    held_before.released.set()
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        # The Sync is running again and has just finished the Video the stopped process was holding.
+        await held_after.wait_entered()
+        [resumed] = (await client.get("/api/syncs")).json()
+        held_after.released.set()
+        [finished] = await wait_for_syncs(client)
+        videos = await list_videos(client, channel["id"])
+
+    assert (interrupted["status"], interrupted["completed_videos"], interrupted["counted_from"]) == ("running", 2, 0)
+    # The two Videos finished before the restart are still counted, and the interval the rate is measured over
+    # starts where this run does: one Video in, which is too few to claim a rate from.
+    assert (resumed["status"], resumed["completed_videos"], resumed["counted_from"]) == ("running", 3, 2)
+    # Same ISO 8601 UTC format throughout, so the strings order as the times do.
+    assert resumed["started_at"] >= interrupted["started_at"]
+    assert (finished["status"], finished["completed_videos"], finished["failed_videos"]) == ("done", 4, 0)
+    assert [v["stage"] for v in videos.values()] == ["done"] * 4
+
+
+async def test_a_failed_video_is_completed_work_that_leaves_nothing_to_search_and_retrying_it_counts_only_it(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    members = fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only video", permanent=True))
+    fake_channel(transcripts, "UC-wright").videos += [fake_video("v-one", "One"), members, fake_video("v-two", "Two")]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        [first] = await wait_for_syncs(client)
+        members.failure = None
+        await client.post(f"/api/channels/{channel['id']}/retry-failed")
+        retried, _ = await wait_for_syncs(client)
+
+    # All three Videos were worked through; only two of them can answer anything.
+    assert (first["completed_videos"], first["failed_videos"]) == (3, 1)
+    assert first["stage_counts"]["done"] == 2
+    # The retry's work is the one Video it was queued for, not the Channel's three.
+    assert (retried["completed_videos"], retried["failed_videos"]) == (1, 0)
+    assert retried["stage_counts"] == first["stage_counts"] | {"done": 3, "failed": 0}

@@ -3,12 +3,18 @@ import type { Sync } from "@/lib/api";
 import { plural } from "@/lib/format";
 
 // What a Sync is doing now, read off the record so a reload shows the same thing: how many Videos it has finished
-// with, how many are left, and how long that will take at the rate it has managed so far.
+// with, how many of those can be searched, how many are left, and how fast the work is going.
 export type SyncProgress = {
   label: string;
-  completed: number;
+  // Videos this Sync has finished with, whether they were indexed or failed.
+  processed: number;
+  // Of those, the ones a question can now be answered from.
+  ready: number;
+  failed: number;
   total: number;
   remaining: number;
+  // Videos per second over the interval the Sync is measuring, or null while it is still warming up.
+  rate: number | null;
   secondsLeft: number | null;
   fetching: string | null;
 };
@@ -34,40 +40,74 @@ export function timeLeft(seconds: number): string {
   return `${hours < 10 ? Number(hours.toFixed(1)) : Math.round(hours)} h`;
 }
 
-function tally(sync: Sync): { completed: number; remaining: number; total: number } {
+// The observed rate, in the unit that reads best: Videos a minute while they come faster than that, and
+// minutes a Video once they don't, which is what a long transcript fetch actually feels like.
+export function rateText(perSecond: number): string {
+  const perMinute = perSecond * 60;
+  if (perMinute >= 1) return `${round(perMinute)} videos/min`;
+  return `${round(1 / perMinute)} min/video`;
+}
+
+function round(n: number): number {
+  return n < 10 ? Number(n.toFixed(1)) : Math.round(n);
+}
+
+function tally(sync: Sync): { processed: number; ready: number; failed: number; remaining: number; total: number } {
   const counts = sync.stage_counts;
+  // The Videos this Sync still has to get through; the Channel's earlier failures are not among them, so they
+  // can't inflate a total this Sync will never reach. A retry-failed Sync cleared them before it started, which
+  // puts them back in the stages below and so back in this count.
   const remaining = counts.discovered + counts.transcript_fetched + counts.segmented + counts.embedded;
-  const completed = sync.completed_videos;
-  return { completed, remaining, total: completed + remaining };
+  const processed = sync.completed_videos;
+  const failed = sync.failed_videos;
+  return { processed, ready: processed - failed, failed, remaining, total: processed + remaining };
 }
 
 export function syncProgress(sync: Sync, now: number): SyncProgress {
-  const { completed, remaining, total } = tally(sync);
+  const { processed, ready, failed, remaining, total } = tally(sync);
+  // Only a running Sync is going at any rate at all. Both ends of the measurement moved together when this run
+  // was claimed, so a Sync resumed after a restart warms up again rather than crediting old work to new time.
+  const measured = processed - sync.counted_from;
   const elapsed = sync.started_at === null ? 0 : (now - Date.parse(sync.started_at)) / 1000;
-  const secondsLeft =
-    completed >= ENOUGH_FOR_A_RATE && elapsed > 0 && remaining > 0 ? (remaining * elapsed) / completed : null;
+  const rate =
+    sync.status === "running" && measured >= ENOUGH_FOR_A_RATE && elapsed > 0 ? measured / elapsed : null;
+  const secondsLeft = rate !== null && remaining > 0 ? remaining / rate : null;
 
   const progress: Omit<SyncProgress, "label"> = {
-    completed,
+    processed,
+    ready,
+    failed,
     total,
     remaining,
+    rate,
     secondsLeft,
     fetching: sync.fetching,
   };
   if (sync.status === "queued") return { ...progress, label: "Queued" };
   if (sync.status === "failed") return { ...progress, label: `Sync failed: ${sync.error ?? "unknown error"}` };
   if (sync.status === "done") return { ...progress, label: "Synced" };
-  const parts = [`Syncing · ${completed} of ${total} ready`];
-  if (secondsLeft !== null) parts.push(`about ${timeLeft(secondsLeft)} left`);
+  const parts = ["Syncing", ...syncDetails(progress)];
   if (sync.fetching !== null) parts.push(`fetching “${sync.fetching}”`);
   return { ...progress, label: parts.join(" · ") };
+}
+
+// What a running Sync has to report, in the order it matters. Every view composes its line from these, so the
+// Library, the Channel and the Sync never disagree about the same Sync.
+export function syncDetails(progress: Omit<SyncProgress, "label">): string[] {
+  // Nothing is counted or estimated until discovery has found the Videos there are to get through.
+  if (progress.total === 0) return ["looking for new videos"];
+  const parts = [`${progress.processed} of ${progress.total} videos`];
+  if (progress.failed > 0) parts.push(`${progress.ready} ready, ${progress.failed} failed`);
+  if (progress.remaining > 0) parts.push(progress.rate === null ? "measuring speed" : rateText(progress.rate));
+  if (progress.secondsLeft !== null) parts.push(`about ${timeLeft(progress.secondsLeft)} left`);
+  return parts;
 }
 
 // The compact form for a list row: counts only, so it needs no clock.
 export function syncCounts(sync: Sync): string {
   if (sync.status === "queued") return "Queued";
-  const { completed, total } = tally(sync);
-  return `Syncing ${completed}/${total}`;
+  const { processed, total } = tally(sync);
+  return total === 0 ? "Syncing" : `Syncing ${processed}/${total}`;
 }
 
 // How many Videos a scope can already answer from while some of its Channels sync.

@@ -67,15 +67,20 @@ type Json = dict[str, Any]
 
 
 class Gate:
-    """Holds a fake (a fetch or a model load) on its worker thread until released."""
+    """Holds a fake (a fetch or a model load) on its worker thread until released.
 
-    def __init__(self) -> None:
+    `seconds` bounds the hold so a test that never releases it still ends; a browser-driven test needs longer
+    than an API one, which is the only reason to raise it.
+    """
+
+    def __init__(self, seconds: float = 5) -> None:
         self.entered = threading.Event()
         self.released = threading.Event()
+        self._seconds = seconds
 
     def __call__(self) -> None:
         self.entered.set()
-        self.released.wait(timeout=5)
+        self.released.wait(timeout=self._seconds)
 
     async def wait_entered(self) -> None:
         assert await asyncio.to_thread(self.entered.wait, 5)

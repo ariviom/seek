@@ -306,6 +306,14 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     -- 0 when the turn ended before the provider reported everything, so a total built from it is a floor.
     ALTER TABLE messages ADD COLUMN usage_complete INTEGER CHECK (usage_complete IN (0, 1));
     """,
+    """
+    -- Where the interval a Sync's rate is measured over begins. Recovering a Sync a stopped process left
+    -- running clears started_at but keeps completed_videos, so a rate taken from completed_videos alone
+    -- would divide work done before the restart by time measured after it.
+    ALTER TABLE syncs ADD COLUMN counted_from INTEGER NOT NULL DEFAULT 0;
+    -- How many of the Videos this Sync finished with failed: work completed, but nothing more to search.
+    ALTER TABLE syncs ADD COLUMN failed_videos INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 
