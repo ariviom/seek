@@ -228,16 +228,25 @@ def claim_next(conn: sqlite3.Connection, holder: str) -> ClaimedSync | None:
         ).fetchone()
         if row is None:
             return None
-        # counted_from moves with started_at, so a Sync resumed after a restart measures a fresh interval
-        # without losing the Videos it had already finished with.
-        conn.execute(
-            "UPDATE syncs SET status = 'running', started_at = ?, counted_from = completed_videos WHERE id = ?",
-            (now_iso(), row["sync_id"]),
-        )
+        requeued = 0
         if row["retry_failed"]:
-            videos.clear_failures(conn, row["id"])
+            requeued += videos.clear_failures(conn, row["id"])
         if row["reindex"]:
-            videos.step_back_for_reindex(conn, row["id"])
+            requeued += videos.step_back_for_reindex(conn, row["id"])
+        # Videos put back in the queue are about to be done again, so a resumed retry or reindex stops counting
+        # the ones it had already finished with: counting them and the work still to come would total more
+        # Videos than the Channel has. counted_from lands on the same figure, and moves with started_at, so the
+        # rate measures this run from where it really restarts.
+        conn.execute(
+            """
+            UPDATE syncs SET status = 'running', started_at = ?,
+                             completed_videos = max(0, completed_videos - ?),
+                             failed_videos = max(0, failed_videos - ?),
+                             counted_from = max(0, completed_videos - ?)
+            WHERE id = ?
+            """,
+            (now_iso(), requeued, requeued, requeued, row["sync_id"]),
+        )
         return ClaimedSync(
             id=row["sync_id"],
             channel_id=row["id"],

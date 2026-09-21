@@ -389,3 +389,35 @@ async def test_a_failed_video_is_completed_work_that_leaves_nothing_to_search_an
     # The retry's work is the one Video it was queued for, not the Channel's three.
     assert (retried["completed_videos"], retried["failed_videos"]) == (1, 0)
     assert retried["stage_counts"] == first["stage_counts"] | {"done": 3, "failed": 0}
+
+
+async def test_a_retry_resumed_after_a_restart_does_not_count_the_videos_it_is_about_to_retry_again(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    held = Gate()
+    members = fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only", permanent=True))
+    age = fake_video("v-age", "Axe safety", failure=VideoUnavailable("Age-restricted", permanent=True))
+    live = fake_video("v-live", "Live Q&A", failure=VideoUnavailable("Premieres in 3 days", permanent=True))
+    fake_channel(transcripts, "UC-wright").videos += [members, age, live]
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+        await start_sync(client, channel["id"])
+        await wait_for_syncs(client)
+        # A retry that hits the same failures again, stopped partway through by the process going down.
+        live.before_fetch = held
+        await client.post(f"/api/channels/{channel['id']}/retry-failed")
+        await held.wait_entered()
+        [retry, _] = (await client.get("/api/syncs")).json()
+    held.released.set()
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        resumed, _ = await wait_for_syncs(client, timeout=10)
+        videos = await list_videos(client, channel["id"])
+
+    assert (retry["status"], retry["completed_videos"], retry["failed_videos"]) == ("running", 2, 2)
+    # Resuming cleared those two failures to try them again, so they stopped being work this Sync had done.
+    # Counting them as well as the three Videos still to come would have claimed five of a three-Video Channel.
+    assert (resumed["status"], resumed["completed_videos"], resumed["failed_videos"]) == ("done", 3, 3)
+    assert resumed["counted_from"] == 0
+    assert [v["stage"] for v in videos.values()] == ["failed"] * 3

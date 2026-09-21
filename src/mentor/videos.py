@@ -356,17 +356,20 @@ def record_failure(
         return cursor.rowcount == 1
 
 
-def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> None:
+def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> int:
     """Within a transaction: every segmented, embedded, or done Video of the Channel goes back to
     transcript_fetched, so the Sync cuts and embeds it again from its stored Transcript. Its Segments stay until
-    they are replaced, but leave search at once, since only a done Video's are searchable."""
-    conn.execute(
+    they are replaced, but leave search at once, since only a done Video's are searchable.
+
+    Returns how many Videos went back."""
+    cursor = conn.execute(
         """
         UPDATE videos SET pipeline_stage = 'transcript_fetched'
         WHERE channel_id = ? AND pipeline_stage IN ('segmented', 'embedded', 'done')
         """,
         (channel_id,),
     )
+    return cursor.rowcount
 
 
 def clear_failure(conn: sqlite3.Connection, video_id: int) -> int:
@@ -382,12 +385,15 @@ def clear_failure(conn: sqlite3.Connection, video_id: int) -> int:
     return int(row["channel_id"])
 
 
-def clear_failures(conn: sqlite3.Connection, channel_id: int) -> None:
-    """Within a transaction: every failed Video of the Channel resumes from its last completed stage."""
-    conn.execute(
+def clear_failures(conn: sqlite3.Connection, channel_id: int) -> int:
+    """Within a transaction: every failed Video of the Channel resumes from its last completed stage.
+
+    Returns how many Videos stopped being failed."""
+    cursor = conn.execute(
         """
         UPDATE videos SET failure_stage = NULL, failure_reason = NULL, failure_permanent = NULL
         WHERE channel_id = ? AND failure_stage IS NOT NULL
         """,
         (channel_id,),
     )
+    return cursor.rowcount
