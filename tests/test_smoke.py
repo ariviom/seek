@@ -458,7 +458,7 @@ async def test_adding_a_channel_advises_starting_small_and_a_running_sync_report
             await page.reload()
             await expect(videos_card).to_contain_text("4 of 5 videos", timeout=15_000)
             await expect(videos_card).to_contain_text("3 ready, 1 failed")
-            await expect(videos_card).to_contain_text(re.compile(r"(videos/min|min/video)"))
+            await expect(videos_card).to_contain_text(re.compile(r"(videos?/min|min/video)"))
             await expect(videos_card).to_contain_text(re.compile(r"about .+ left"))
 
             # The failure keeps its reason and its own retry, so one unavailable Video is a thing a friend can act on.
