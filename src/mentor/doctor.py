@@ -18,12 +18,13 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from mentor import db
-from mentor.config import HOST, Config
+from mentor.config import HOST, Config, ConfigError, load_config
 from mentor.credentials import Credentials, CredentialStatus
 from mentor.devices import DeviceProbe, probe_device, select_device
 from mentor.engines import active_engine
 from mentor.events import Events
 from mentor.ports import ChatEngine, EngineName, ModelStatus, Secrets, SecretsUnavailable
+from mentor.service import unit_environment
 from mentor.settings import Settings, read_settings
 from mentor.status_command import ChatHealth, Health
 from mentor.sync_command import SyncCommandError, answers, request
@@ -37,6 +38,7 @@ _SHORTEST_SECRET = 4
 JS_RUNTIMES = ("deno", "node", "bun")
 # How many failed Videos and failed Syncs to show; the counts cover the rest.
 RECENT = 5
+NO_DATABASE = "none yet; `mentor serve` creates it on first start"
 _COUNTED = ("channels", "groups", "videos", "segments", "syncs", "conversations", "messages")
 
 
@@ -92,7 +94,7 @@ class _Live:
 
 @dataclass
 class _Stored:
-    """What the knowledge base on disk holds, read without changing it."""
+    """What the knowledge base on disk holds, as a read-only connection sees it."""
 
     schema: int
     counts: dict[str, int] = field(default_factory=dict)
@@ -110,14 +112,24 @@ async def diagnose(
     secrets: Secrets,
     engines: Mapping[EngineName, ChatEngine],
     machine: Machine = Machine(),
+    service_unit: Path | None = None,
 ) -> str:
     """The whole report, already redacted.
 
     `config_problem` is why the config couldn't be loaded, in which case `config` holds the defaults. `engines`
-    are asked only when no server answers, as `mentor status` does; neither reaches a provider.
+    are asked only when no server answers, as `mentor status` does; neither reaches a provider. `service_unit` is
+    the installed service's unit, whose environment can give the server settings this shell doesn't have.
+
+    Text that a server or a Sync wrote is withheld when the secrets it could quote can't all be known.
     """
     key, key_problem = await _stored_key(secrets)
-    redact = Redactor([*config_secrets(config), *([key] if key else [])])
+    service_secrets, service_problem = _service_secrets(service_unit)
+    redact = Redactor([*config_secrets(config), *service_secrets, *([key] if key else [])])
+    withhold = None
+    if config_problem is not None:
+        withhold = "withheld until the config file can be read"
+    elif service_problem is not None:
+        withhold = f"withheld because {service_problem}"
     live, live_problem = await _live(config)
     stored = await asyncio.to_thread(_read_database, config.database_path)
 
@@ -132,12 +144,12 @@ async def diagnose(
     lines += _paths(config, config_file, config_problem)
     lines += _operational(config)
     lines += _preferences(live, stored)
-    lines += await _section("Models", _models(config, live, machine))
-    lines += _secret_store(live, secrets, key_problem)
-    lines += await _section("Chat", _chat(live, stored, engines))
+    lines += await _section("Models", _models(config, live, machine, withhold))
+    lines += _secret_store(live, secrets, key_problem, withhold)
+    lines += await _section("Chat", _chat(live, stored, engines, withhold))
     lines += await _section("YouTube", _youtube(machine))
     lines += _database(stored)
-    lines += _recent_errors(live, stored, withhold=config_problem is not None)
+    lines += _recent_errors(live, stored, withhold)
     return redact("\n".join(lines))
 
 
@@ -147,6 +159,26 @@ async def _section(title: str, lines: Awaitable[list[str]]) -> list[str]:
         return await lines
     except Exception as e:
         return [f"{title}: could not be inspected ({type(e).__name__}: {e})"]
+
+
+def _service_secrets(unit: Path | None) -> tuple[list[str], str | None]:
+    """What the installed service's own settings could quote, or why they can't be known.
+
+    install_service records the shell's MENTOR_* and XDG_* variables in the unit, so the server may run with an
+    extractor argument, a cookie file or a config file this shell no longer has.
+    """
+    if unit is None:
+        return [], None
+    try:
+        environment = unit_environment(unit)
+    except (OSError, ValueError, KeyError):
+        return [], "the installed service's unit could not be read"
+    if not environment:
+        return [], None
+    try:
+        return config_secrets(load_config(environment)), None
+    except ConfigError:
+        return [], "the installed service's configuration could not be read"
 
 
 async def _stored_key(secrets: Secrets) -> tuple[str | None, str | None]:
@@ -192,12 +224,15 @@ def _paths(config: Config, config_file: Path, problem: str | None) -> list[str]:
         state = f"could not be read, so defaults are shown: {problem}"
     else:
         state = "present" if config_file.exists() else "absent, so defaults apply"
-    return [
+    lines = [
         "Paths:",
         f"  config file: {config_file} ({state})",
         f"  data directory: {config.data_dir}",
         f"  database: {config.database_path}",
     ]
+    if problem is not None:
+        lines.append("  these paths, the port and the settings below are defaults; a running server may use others")
+    return lines
 
 
 def _operational(config: Config) -> list[str]:
@@ -217,7 +252,8 @@ def _operational(config: Config) -> list[str]:
         f"  YouTube browser cookies: {'set (redacted)' if config.youtube_cookies_from_browser else 'not set'}",
         f"  YouTube extractor arguments: {extractor}",
         f"  recency: gentle {config.gentle_recency_half_life_days} days / "
-        f"{config.gentle_recency_max_penalty_percent}%, strong {config.strong_recency_half_life_days} days / {config.strong_recency_max_penalty_percent}%",
+        f"{config.gentle_recency_max_penalty_percent}%, strong {config.strong_recency_half_life_days} days / "
+        f"{config.strong_recency_max_penalty_percent}%",
         f"  Claude CLI path: {config.claude_cli_path or 'from PATH'}",
         f"  allowed hosts: {hosts}; Cloudflare Access {access}; listening on {config.listen_host}",
     ]
@@ -226,9 +262,11 @@ def _operational(config: Config) -> list[str]:
 def _preferences(live: _Live | None, stored: _Stored | str) -> list[str]:
     if live is not None:
         settings: Settings | str = live.settings
-    elif isinstance(stored, str):
+    elif stored == NO_DATABASE:
         # Nothing stored means nothing chosen yet.
         settings = Settings()
+    elif isinstance(stored, str):
+        settings = "the database could not be read"
     else:
         settings = stored.settings
     if isinstance(settings, str):
@@ -237,18 +275,23 @@ def _preferences(live: _Live | None, stored: _Stored | str) -> list[str]:
     return [f"Preferences: engine {engine}, provider {settings.provider}, model {settings.model}"]
 
 
-def _model_line(role: str, model: ModelStatus) -> str:
+def _model_line(role: str, model: ModelStatus, withhold: str | None) -> str:
     text = f"  {role}: {model.state} ({model.name})"
     if model.device is not None:
         text += f", {model.device} / {model.precision}"
     if model.fallback_reason:
-        text += f"; CPU fallback: {model.fallback_reason}"
+        text += f"; CPU fallback: {_text(model.fallback_reason, withhold)}"
     return text
 
 
-async def _models(config: Config, live: _Live | None, machine: Machine) -> list[str]:
+def _text(text: str, withhold: str | None) -> str:
+    """Text a server or a Sync wrote, unless it could quote a secret the redaction doesn't know."""
+    return text if withhold is None else f"[{withhold}]"
+
+
+async def _models(config: Config, live: _Live | None, machine: Machine, withhold: str | None) -> list[str]:
     if live is not None:
-        return ["Models:", *(_model_line(role, model) for role, model in live.health.models.items())]
+        return ["Models:", *(_model_line(role, model, withhold) for role, model in live.health.models.items())]
     lines = [
         "Models: state unavailable, since only a running server loads them",
         f"  embedding: {config.embedding_model}",
@@ -263,11 +306,14 @@ async def _models(config: Config, live: _Live | None, machine: Machine) -> list[
     return lines
 
 
-def _secret_store(live: _Live | None, secrets: Secrets, key_problem: str | None) -> list[str]:
+def _secret_store(
+    live: _Live | None, secrets: Secrets, key_problem: str | None, withhold: str | None
+) -> list[str]:
     if live is not None:
         if isinstance(live.credentials, str):
-            return [f"Secret store: unavailable ({live.credentials})"]
-        store, reason = live.credentials.store, live.credentials.fallback_reason
+            return [f"Secret store: unavailable ({_text(live.credentials, withhold)})"]
+        store = live.credentials.store
+        reason = live.credentials.fallback_reason and _text(live.credentials.fallback_reason, withhold)
     else:
         store, reason = secrets.status.store, secrets.status.fallback_reason
     lines = [f"Secret store: {'OS keychain' if store == 'keychain' else 'private fallback file'}"]
@@ -279,20 +325,25 @@ def _secret_store(live: _Live | None, secrets: Secrets, key_problem: str | None)
 
 
 async def _chat(
-    live: _Live | None, stored: _Stored | str, engines: Mapping[EngineName, ChatEngine]
+    live: _Live | None, stored: _Stored | str, engines: Mapping[EngineName, ChatEngine], withhold: str | None
 ) -> list[str]:
     if live is not None:
         chat = live.health.chat
+        # The server's own messages; the ones asked for below are this process's.
+        messages: dict[EngineName, str | None] = {
+            name: engine.message and _text(engine.message, withhold) for name, engine in chat.engines.items()
+        }
     else:
         statuses = {name: await engine.status() for name, engine in engines.items()}
         preference = None if isinstance(stored, str) or isinstance(stored.settings, str) else stored.settings.engine
         chat = ChatHealth(active=active_engine(preference, statuses), engines=statuses)
+        messages = {name: engine.message for name, engine in statuses.items()}
     lines = [f"Chat: {chat.active or 'no engine ready'}"]
     for name, engine in chat.engines.items():
         where = f" ({engine.cli_path})" if engine.cli_path else ""
         lines.append(f"  {name}: {engine.state}{where}")
-        if engine.message:
-            lines.append(f"    {engine.message}")
+        if messages[name]:
+            lines.append(f"    {messages[name]}")
     return lines
 
 
@@ -309,10 +360,11 @@ async def _youtube(machine: Machine) -> list[str]:
 def _read_database(path: Path) -> _Stored | str:
     """The knowledge base's schema, counts, preferences and failures, or why they couldn't be read.
 
-    Opened read-only, so a missing file stays missing and an older schema stays unmigrated.
+    Opened read-only, so a missing file stays missing and an older schema stays unmigrated. SQLite may still add
+    its -wal and -shm files beside a database in WAL mode, as any reader does.
     """
     if not path.exists():
-        return "none yet; `mentor serve` creates it on first start"
+        return NO_DATABASE
     try:
         conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
     except sqlite3.Error as e:
@@ -379,16 +431,16 @@ def _database(stored: _Stored | str) -> list[str]:
     return [f"Database: {schema}", f"  rows: {counts or 'none readable'}"]
 
 
-def _recent_errors(live: _Live | None, stored: _Stored | str, withhold: bool) -> list[str]:
+def _recent_errors(live: _Live | None, stored: _Stored | str, withhold: str | None) -> list[str]:
     lines: list[str] = []
     if live is not None:
-        lines += [f"  {role} model: {m.error}" for role, m in live.health.models.items() if m.error]
+        lines += [f"  {role} model: {_text(m.error, withhold)}" for role, m in live.health.models.items() if m.error]
     if not isinstance(stored, str):
-        if withhold and (stored.failed_video_count or stored.failed_sync_count):
-            # Without the config, the cookie and extractor values to redact are unknown.
+        if withhold is not None and (stored.failed_video_count or stored.failed_sync_count):
+            # The cookie and extractor values to redact are unknown.
             lines.append(
                 f"  {stored.failed_video_count} failed Videos and {stored.failed_sync_count} failed Syncs; their "
-                "messages are withheld until the config file can be read"
+                f"messages are {withhold}"
             )
         else:
             if stored.failed_video_count:

@@ -37,6 +37,48 @@ def _quoted(value: str) -> str:
     return f'"{escaped}"'
 
 
+def _unquoted(word: str) -> str:
+    """The value _quoted wrote. Raises ValueError for anything else."""
+    if len(word) < 2 or word[0] != '"' or word[-1] != '"':
+        raise ValueError("not a quoted word")
+    body = word[1:-1]
+    value: list[str] = []
+    i = 0
+    while i < len(body):
+        if body[i] in "\\%":
+            pair = body[i : i + 2]
+            value.append({"\\\\": "\\", '\\"': '"', "\\n": "\n", "%%": "%"}[pair])
+            i += 2
+        else:
+            value.append(body[i])
+            i += 1
+    return "".join(value)
+
+
+def unit_dir(home: Path) -> Path:
+    """The directory systemd searches for user units unless its manager was given another XDG_CONFIG_HOME."""
+    return home / ".config" / "systemd" / "user"
+
+
+def unit_environment(unit_path: Path) -> dict[str, str]:
+    """The variables an installed unit sets, as install_service wrote them; empty when none is installed.
+
+    Raises OSError if the unit can't be read, and ValueError or KeyError if it isn't in the form written here.
+    """
+    try:
+        text = unit_path.read_text()
+    except FileNotFoundError:
+        return {}
+    environment = {}
+    for line in text.splitlines():
+        if line.startswith("Environment="):
+            key, separator, value = _unquoted(line.removeprefix("Environment=")).partition("=")
+            if not separator:
+                raise ValueError("not a variable assignment")
+            environment[key] = value
+    return environment
+
+
 def install_service(
     config: Config,
     env: Mapping[str, str],

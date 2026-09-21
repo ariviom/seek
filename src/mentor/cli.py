@@ -25,7 +25,7 @@ from mentor.mcp_config import client_config, guidance
 from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from mentor.ports import ChatEngine, EngineName
 from mentor.secrets import KeyringSecrets
-from mentor.service import TIMER_NAME, UNIT_NAME, install_service
+from mentor.service import TIMER_NAME, UNIT_NAME, install_service, unit_dir
 from mentor.status_command import format_list, format_status, list_all, status
 from mentor.sync_command import SyncCommandError, answers, sync_channels
 from mentor.youtube import YouTubeSettings, YouTubeTranscriptSource
@@ -148,12 +148,14 @@ def doctor() -> None:
     engines: dict[EngineName, ChatEngine] = {
         "api": ApiEngine(Credentials(secrets, Events())), "cli": _chat_engine(config)
     }
-    # Whatever a library prints while being asked could carry what the block redacts, so it goes nowhere, and an
-    # unexpected failure is named without its message.
+    # Whatever Python code prints to stderr while being asked (prints, warnings, log records) could carry what the
+    # block redacts, so it is discarded; output a native library writes straight to the file descriptor is not.
+    # An unexpected failure is named without its message.
     try:
         with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            block = asyncio.run(diagnose(config, config_file, problem, secrets, engines, Machine()))
+            service_unit = unit_dir(Path.home()) / UNIT_NAME
+            block = asyncio.run(diagnose(config, config_file, problem, secrets, engines, Machine(), service_unit))
     except Exception as e:
         sys.exit(f"mentor: doctor could not finish ({type(e).__name__})")
     print(block)
@@ -185,12 +187,10 @@ def install(sync_schedule: str | None) -> None:
     config = _config()
     if sync_schedule is not None:
         _check_schedule(sync_schedule)
-    # The directory systemd searches for user units unless its manager was given another XDG_CONFIG_HOME.
-    unit_dir = Path.home() / ".config" / "systemd" / "user"
     try:
         # The script as this shell found it, e.g. ~/.local/bin/mentor for a uv tool install.
         installed = install_service(
-            config, os.environ, Path(sys.argv[0]).absolute(), unit_dir, _systemctl, sync_schedule
+            config, os.environ, Path(sys.argv[0]).absolute(), unit_dir(Path.home()), _systemctl, sync_schedule
         )
     except (OSError, subprocess.CalledProcessError) as e:
         sys.exit(f"mentor: could not install the service: {e}")

@@ -6,7 +6,7 @@ supports streamable HTTP over loopback. Both commands explain the situation when
 
 **Blocked by:** 02 — Inference devices; 06 — Selectable chat engines (which includes preferences and platform paths).
 
-**Status:** complete — 497 tests passing, mypy clean.
+**Status:** complete — 500 tests passing, mypy clean.
 
 - [x] `mentor doctor` prints Mentor/Python versions, platform, per-model device/precision/state/fallback, resolved
   config/data locations, effective preferences and operational settings, secret-store kind/reason, both engine

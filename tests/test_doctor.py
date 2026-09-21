@@ -19,8 +19,17 @@ from mentor.credentials import Credentials
 from mentor.devices import DeviceProbe
 from mentor.doctor import Machine, diagnose
 from mentor.events import Events
+from mentor.service import UNIT_NAME, install_service
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import ChatEngine, EngineName, ModelStatus, SecretStoreStatus, SecretsUnavailable, VideoUnavailable
+from mentor.ports import (
+    ChatEngine,
+    ChatEngineStatus,
+    EngineName,
+    ModelStatus,
+    SecretStoreStatus,
+    SecretsUnavailable,
+    VideoUnavailable,
+)
 
 # Distinctive values, so finding any of them anywhere in the output is a leak.
 KEY = "SEEDED-anthropic-key-5b1e0c"
@@ -238,6 +247,7 @@ async def test_doctor_reports_an_unreadable_or_older_database_without_migrating_
     config.database_path.write_bytes(b"not a database" * 100)
     report = await diagnose(config, tmp_path / "config.toml", None, FakeSecrets(), engines(), machine())
     assert "Database: could not be read (file is not a database)" in report.splitlines()
+    assert "Preferences: unavailable (the database could not be read)" in report.splitlines()
     assert "Chat: api" in report
 
     config.database_path.unlink()
@@ -345,3 +355,90 @@ def test_an_unreadable_config_still_prints_the_report_and_withholds_stored_error
     assert PO_TOKEN not in out
     assert "(could not be read, so defaults are shown:" in out
     assert "  1 failed Videos and 0 failed Syncs; their messages are withheld until the config file can be read" in out
+
+
+UNIT_TOKEN = "UNIT-ONLY-token-4471"
+
+
+def failed_video_quoting(config: Config, reason: str) -> None:
+    def write(conn: sqlite3.Connection) -> None:
+        db.migrate(conn)
+        conn.execute("INSERT INTO channels (youtube_channel_id, name) VALUES ('UC-x', 'X')")
+        conn.execute(
+            "INSERT INTO videos (channel_id, youtube_video_id, title, failure_stage, failure_reason, discovered_at) "
+            "VALUES (1, 'v', 'V', 'transcript_fetched', ?, 'now')",
+            (reason,),
+        )
+
+    asyncio.run(db.Database(config.database_path).run(write))
+
+
+def test_secrets_only_the_installed_service_knows_are_redacted_too(tmp_path: Path) -> None:
+    # The shell that installed the service had settings this one doesn't.
+    config = Config(data_dir=tmp_path / "data", port=free_port())
+    unit_cookie = tmp_path / "UNIT-ONLY-cookies.txt"
+    installed = install_service(
+        config,
+        {
+            "PATH": "/nonexistent",
+            "MENTOR_YOUTUBE_EXTRACTOR_ARGS": f'po_token = ["web+{UNIT_TOKEN}"]',
+            "MENTOR_YOUTUBE_COOKIE_FILE": str(unit_cookie),
+        },
+        Path("/usr/bin/mentor"),
+        tmp_path / "units",
+        lambda args: None,
+    )
+    failed_video_quoting(config, f"token {UNIT_TOKEN} and cookies {unit_cookie} refused")
+
+    report = asyncio.run(diagnose(
+        config, tmp_path / "config.toml", None, FakeSecrets(), engines(), machine(), installed.unit_path
+    ))
+
+    assert UNIT_TOKEN not in report
+    assert str(unit_cookie) not in report
+    # Nothing suggests the redaction is missing anything, so the message itself is kept.
+    assert "    Video v (V): token [redacted] and cookies [redacted] refused" in report.splitlines()
+
+
+def test_an_unreadable_service_unit_withholds_what_a_sync_wrote(tmp_path: Path) -> None:
+    config = Config(data_dir=tmp_path / "data", port=free_port())
+    unit = tmp_path / "units" / UNIT_NAME
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=MENTOR_YOUTUBE_COOKIE_FILE=unquoted\n")
+    failed_video_quoting(config, f"token {UNIT_TOKEN} refused")
+
+    report = asyncio.run(diagnose(config, tmp_path / "config.toml", None, FakeSecrets(), engines(), machine(), unit))
+
+    assert UNIT_TOKEN not in report
+    assert (
+        "  1 failed Videos and 0 failed Syncs; their messages are withheld because the installed service's unit "
+        "could not be read"
+    ) in report.splitlines()
+
+
+async def test_with_an_unreadable_config_the_live_servers_own_text_is_withheld(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    secrets = stored_key()
+    secrets.status = SecretStoreStatus("file", f"fell back after {PO_TOKEN}")
+    api = FakeChatEngine("api", engine_status=ChatEngineStatus("api", "unknown", None, f"store said {PO_TOKEN}"))
+    app = create_app(
+        config, transcripts, FakeEmbedder(), LeakyReranker(), FakeChatEngine("cli"), static_dir=tmp_path / "none",
+        secrets=secrets, api_engine=api,
+    )
+    async with serving(app) as url:
+        # Defaults stand in for the config that couldn't be read; the port happens to match the server's.
+        defaults = Config(data_dir=config.data_dir, port=int(url.rsplit(":", 1)[1].rstrip("/")))
+        report = await diagnose(defaults, tmp_path / "config.toml", "bad TOML", secrets, engines(), machine())
+
+    assert PO_TOKEN not in report
+    lines = report.splitlines()
+    withheld = "[withheld until the config file can be read]"
+    for expected in [
+        "  these paths, the port and the settings below are defaults; a running server may use others",
+        f"  reranker: failed (fake-reranker), cpu / float32; CPU fallback: {withheld}",
+        f"  {withheld}",
+        f"    {withheld}",
+        f"  reranker model: {withheld}",
+    ]:
+        assert expected in lines
