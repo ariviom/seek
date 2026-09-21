@@ -154,8 +154,9 @@ sqlite3 ~/.local/share/mentor/mentor.db ".backup $HOME/mentor-backup.db"
 ## Configuration
 
 The config file holds operational settings, the database `settings` table holds user preferences,
-and the OS keychain holds secrets (with a private fallback file where necessary). The friends
-settings UI will manage preferences and credentials; these never belong in `config.toml`.
+and the OS keychain holds secrets (with a private fallback file where necessary). The Settings screen
+in the app (the gear in the rail) manages the preferences and the key; these never belong in `config.toml`,
+and nothing in `config.toml` is editable from the app.
 
 `GET /api/settings` reads preferences; `PATCH /api/settings` updates supplied fields only:
 `engine` accepts `api`, `cli`, or `null` (automatic); `provider` is `anthropic`; `model` is
@@ -165,7 +166,8 @@ with them.
 
 `PUT /api/credentials/anthropic` accepts a JSON `key` field, stores it, and makes one authenticated
 [model-list request](https://platform.claude.com/docs/en/api/models/list) with no retries or generated tokens.
-GET reads presence and last-known validity; DELETE removes the credential without a restart.
+GET reads presence, last-known validity, and whether the key is in the keychain or the private fallback
+file, with the reason; DELETE removes the credential without a restart.
 Responses never contain the key. Validity is `valid`, `invalid` after authentication rejection,
 or `unverified` when validation cannot complete (for example, offline or rate limited).
 Health never contacts Anthropic. `ANTHROPIC_API_KEY` is never a credential fallback.
@@ -307,10 +309,25 @@ Connectors → Add custom connector, enter `https://mentor.example.com/mcp`.
 The tools are `list_groups`, `list_channels`, `search` (scoped to a `group` or a list of `channels`), `expand`,
 `get_video`, and `sql`.
 
+## Settings
+
+The gear in the rail opens Settings, which is everything that is yours: which engine answers, the Anthropic API key,
+and the default model. It also shows, read-only, what each engine needs before it can answer and which device and
+precision the embedding and reranking models are running at.
+
+Pasting a key validates it there and says whether Anthropic accepted it, rejected it, or didn't answer. The key is
+never shown again, never returned by the server, and never kept in the browser. If the keychain refused it, the screen
+says the key is in the private fallback file and why. Accepting a key brings the chat box to life in every open tab
+without a reload; with no engine ready, the chat box is disabled and points here instead.
+
+Changing the default model reaches your next question. A chat that pinned its own model keeps it and says
+`Pinned: …`; one following the setting says `Default: …`.
+
 ## Web chat
 
 A chat in a Group or a Channel answers through one of two engines: the **Anthropic API**, using a key you store in
-`PUT /api/credentials/anthropic`, or your own **Claude CLI**, using the Claude Code login you already have. Both get
+Settings (or `PUT /api/credentials/anthropic`), or your own **Claude CLI**, using the Claude Code login you already
+have. Both get
 the same scoped Mentor tools, the same grounded-advisor prompt, and the same streamed answers with Citations.
 
 Chat is the only thing an engine gates. Search, the Library, Syncs and the MCP tools work without either.
@@ -345,12 +362,15 @@ quietly changed (the Claude CLI accepts names Mentor doesn't know, so it does it
 that an unpinned Conversation on the Claude CLI now asks for `sonnet` explicitly; letting Claude Code pick its own
 default is no longer an option, because the setting has to mean something on both engines. Each message records the engine and model that produced it, and each question records what its turn
 reported using, so a Conversation can total its tokens. A turn that failed or was stopped keeps what it had already
-reported and says the total is incomplete rather than claiming to be a bill.
+reported and says the total is incomplete rather than claiming to be a bill. The chat shows those totals under the
+chat box — input, output and cache reads — marked "at least" when a turn didn't report everything it used, and older
+Conversations say their usage wasn't recorded rather than showing a zero.
 
 The **Add context** control beside the chat box can give a new Conversation read-only access to one local project
 directory, the public web, or both. Those tools are Claude Code built-ins, so they are a Claude CLI capability only:
 the control is hidden while the API engine is active, and the API engine refuses such a Conversation before making any
-request rather than answering without them. Context is fixed after the first question so a resumed Claude session keeps
+request rather than answering without them. A Conversation that already has context keeps showing what it holds even
+on the API engine, with a line saying to switch this chat to the Claude CLI or start a new one; nothing is removed. Context is fixed after the first question so a resumed Claude session keeps
 the same working directory and capabilities. Project access exposes only file reading, listing, and search within the
 selected directory; web access exposes Claude Code's web search and fetch tools. User settings, plugins, skills, other
 MCP servers, file editing, and shell commands stay disabled. Channel-derived advice still needs Mentor's timestamped

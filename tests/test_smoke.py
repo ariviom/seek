@@ -1,18 +1,59 @@
-import asyncio
 import re
 import subprocess
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from harness import Gate, fake_channel, fake_video, said, serving
-from playwright.async_api import ConsoleMessage, Locator, async_playwright, expect
+import httpx
+import httpx2
+import pytest
+from api_transport import Provider, answer
+from harness import Gate, add_channel, add_group, fake_channel, fake_video, said, serving, sync
+from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright, expect
 
 from mentor.app import create_app
 from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import ChatDone, TextDelta
+from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from mentor.ports import ChatDone, ChatEngineStatus, TextDelta
 
 WEB = Path(__file__).parents[1] / "web"
+
+
+@pytest.fixture(scope="session")
+def bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The web bundle, built once per session, so no test can run a stale one."""
+    built = tmp_path_factory.mktemp("bundle")
+    subprocess.run(
+        ["pnpm", "exec", "vite", "build", "--outDir", str(built), "--emptyOutDir", "--logLevel", "error"],
+        cwd=WEB,
+        check=True,
+    )
+    return built
+
+
+@asynccontextmanager
+async def browsing(base_url: str) -> AsyncIterator[tuple[Page, list[str]]]:
+    """A page on the served app, collecting its console and page errors.
+
+    Every request that isn't to the server is aborted, so nothing outside it is loaded, YouTube included.
+    """
+    async with async_playwright() as playwright:
+        async with await playwright.chromium.launch() as browser:
+            page = await browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+
+            def console(message: ConsoleMessage) -> None:
+                if message.type == "error":
+                    errors.append(message.text)
+
+            page.on("console", console)
+            await page.route(
+                "**/*",
+                lambda route: route.continue_() if route.request.url.startswith(base_url) else route.abort(),
+            )
+            yield page, errors
 
 
 async def embedded_at(player: Locator) -> tuple[str, str, list[str]]:
@@ -28,16 +69,9 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
     embedder: FakeEmbedder,
     reranker: FakeReranker,
     engine: FakeChatEngine,
+    bundle: Path,
     tmp_path: Path,
 ) -> None:
-    # Built fresh, so the test never runs a stale bundle.
-    bundle = tmp_path / "bundle"
-    await asyncio.to_thread(
-        subprocess.run,
-        ["pnpm", "exec", "vite", "build", "--outDir", str(bundle), "--emptyOutDir", "--logLevel", "error"],
-        cwd=WEB,
-        check=True,
-    )
     # The first fetch is held, so the live status is on screen long enough to read.
     gate = Gate()
     fake_channel(transcripts, "UC-wright").videos.append(
@@ -60,22 +94,9 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
     ]
     app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
 
-    async with serving(app) as base_url, async_playwright() as playwright:
-        async with await playwright.chromium.launch() as browser:
-            page = await browser.new_page()
-            errors: list[str] = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-
-            def console(message: ConsoleMessage) -> None:
-                if message.type == "error":
-                    errors.append(message.text)
-
-            page.on("console", console)
-            # Only the players' attributes are asserted, so nothing outside the server is loaded, YouTube included.
-            await page.route(
-                "**/*",
-                lambda route: route.continue_() if route.request.url.startswith(base_url) else route.abort(),
-            )
+    async with serving(app) as base_url:
+        # Only the players' attributes are asserted, so nothing outside the server is needed.
+        async with browsing(base_url) as (page, errors):
             await page.goto(base_url)
 
             rail = page.get_by_role("navigation", name="Sections")
@@ -212,3 +233,136 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
     assert errors == []
     [chat_request] = engine.requests
     assert (chat_request.workspace, chat_request.web_access) == (tmp_path.resolve(), True)
+
+
+async def test_setting_up_chat_in_the_app_and_seeing_what_a_conversation_used(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    bundle: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A friend with neither engine ready reaches chat through the settings screen, without editing a file."""
+    # The real API engine over a fake credential store, so entering a key is what makes chat possible, and a
+    # scripted provider, so every answer and every token count is deterministic.
+    provider = Provider(
+        script=[
+            answer(
+                "Plane across the grain: [Wright, 1:05](https://youtube.com/watch?v=bench-flat1&t=1m5s).",
+                input_tokens=100,
+                output_tokens=20,
+                cache_read_tokens=5,
+            )
+        ]
+    )
+    turns = provider.hook()
+
+    async def send(client: httpx2.AsyncClient, request: httpx2.Request, **kwargs: object) -> httpx2.Response:
+        # Entering a key lists models once; everything else is a chat turn.
+        if request.url.path == "/v1/models":
+            return httpx2.Response(
+                200, json={"data": [], "has_more": False, "first_id": None, "last_id": None}, request=request
+            )
+        return await turns(client, request, **kwargs)
+
+    monkeypatch.setattr(httpx2.AsyncClient, "send", send)
+    cli = FakeChatEngine(
+        "cli", engine_status=ChatEngineStatus("cli", "missing", None, "The Claude CLI was not found on PATH")
+    )
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("bench-flat1", "Flattening a Workbench", cues=said("Plane across the grain with a jack plane"))
+    )
+    app = create_app(config, transcripts, embedder, reranker, cli, static_dir=bundle, secrets=FakeSecrets())
+
+    async with serving(app) as base_url:
+        # The Channel is seeded through the API: this test is about what happens after there is something to ask.
+        async with httpx.AsyncClient(base_url=base_url) as seed:
+            channel = await add_channel(seed, "@woodbywright", "Wright")
+            await sync(seed, channel)
+            await add_group(seed, "Benches", channel)
+
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            rail = page.get_by_role("navigation", name="Sections")
+            main = page.get_by_role("main")
+
+            # Everything that doesn't need an engine works with no key at all.
+            await rail.get_by_role("button", name="Library").click()
+            await expect(page.get_by_role("complementary", name="Library")).to_contain_text("Wright")
+            await rail.get_by_role("button", name="Syncs").click()
+            await expect(
+                page.get_by_role("complementary", name="Syncs").get_by_role("button").filter(has_text="Wright")
+            ).to_have_count(1)
+            await page.keyboard.press("ControlOrMeta+k")
+            search = page.get_by_role("complementary", name="Search")
+            await search.get_by_label("Question", exact=True).fill("plane across the grain")
+            await search.get_by_role("button", name="Search", exact=True).click()
+            await expect(main.get_by_role("list", name="Results for plane across the grain")).to_contain_text(
+                "Flattening a Workbench"
+            )
+
+            # Chat is the one dead end, and it is a signpost: the question box is disabled and says where to go.
+            await rail.get_by_role("button", name="Chats").click()
+            chats = page.get_by_role("complementary", name="Chats")
+            await chats.get_by_role("button", name="New chat", exact=True).click()
+            await page.get_by_role("menuitem", name="Benches").click()
+            composer = main.get_by_role("form", name="Ask Benches")
+            question = composer.get_by_label("Question for Benches")
+            await expect(question).to_be_disabled()
+            await expect(composer.get_by_role("button", name="Ask", exact=True)).to_be_disabled()
+            await main.get_by_role("button", name="Open settings").click()
+
+            # The settings screen says what each engine needs, before anything has been chosen.
+            settings = main.get_by_role("region", name="Settings")
+            await expect(settings).to_contain_text("console.anthropic.com")
+            await expect(settings).to_contain_text("The Claude CLI was not found on PATH")
+
+            await settings.get_by_label("Anthropic API key").fill("sk-ant-smoke-test-key")
+            await settings.get_by_role("button", name="Save key").click()
+            await expect(settings).to_contain_text("Key accepted", timeout=15_000)
+            # Nothing reads the key back into the page.
+            await expect(settings.get_by_label("Anthropic API key")).to_have_value("")
+            assert "sk-ant-smoke-test-key" not in await page.content()
+
+            # Back in the chat that was a dead end a moment ago: alive, and without a reload.
+            await rail.get_by_role("button", name="Chats").click()
+            await expect(question).to_be_enabled(timeout=15_000)
+            await question.fill("How do I flatten a bench?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            await expect(main.get_by_role("list", name="Conversation")).to_contain_text(
+                "Plane across the grain", timeout=15_000
+            )
+            # What the provider reported for this Conversation, counted rather than priced.
+            await expect(main).to_contain_text("100 in · 20 out · 5 cache read", timeout=15_000)
+
+            # The default model is a preference, and it survives a reload.
+            await rail.get_by_role("button", name="Settings").click()
+            await settings.get_by_label("Default model").click()
+            await page.get_by_role("option", name=re.compile("^Deep")).click()
+            await expect(settings.get_by_label("Default model")).to_contain_text("Opus 5")
+            await page.reload()
+            await expect(settings.get_by_label("Default model")).to_contain_text("Opus 5", timeout=15_000)
+
+            # This Conversation pinned nothing, so its next question follows the new default.
+            await rail.get_by_role("button", name="Chats").click()
+            await expect(composer).to_contain_text("Default: Opus 5 (deep)", timeout=15_000)
+            await question.fill("And the legs?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            await expect(main).to_contain_text("200 in · 40 out · 10 cache read", timeout=15_000)
+
+            # A pinned Conversation keeps its own model whatever the default becomes, and says which it is.
+            await chats.get_by_role("button", name="New chat", exact=True).click()
+            await page.get_by_role("menuitem", name="Benches").click()
+            await composer.get_by_label("Model").click()
+            await page.get_by_role("option", name="Sonnet 5 (fast)").click()
+            await question.fill("What about the vise?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            await expect(main.get_by_role("list", name="Conversation")).to_contain_text(
+                "Plane across the grain", timeout=15_000
+            )
+            await expect(composer).to_contain_text("Pinned: Sonnet 5 (fast)")
+
+    assert errors == []
+    # The unpinned Conversation followed the default from fast to deep; the pinned one ignored it.
+    assert [body["model"] for body in provider.bodies] == ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-5"]

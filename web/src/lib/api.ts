@@ -30,6 +30,19 @@ export type ChatEngineStatus = {
 // `active` is the engine the next turn would use; null is the one case where chat can't answer at all.
 export type ChatHealth = { active: EngineName | null; engines: Record<EngineName, ChatEngineStatus> };
 
+// Preferences a friend owns, kept apart from the operational settings in the config file. A null engine
+// leaves the choice to Mentor; `model` is the default a Conversation follows unless it pinned one.
+export type ModelChoice = "fast" | "deep";
+export type Settings = { engine: EngineName | null; provider: "anthropic"; model: ModelChoice };
+// The stored key is never returned: only whether one is there, how it fared, and where it is kept.
+export type CredentialStatus = {
+  present: boolean;
+  validity: "unverified" | "valid" | "invalid";
+  store: "keychain" | "file";
+  // Why the keychain isn't holding the key, when it isn't; shown as it stands.
+  fallback_reason: string | null;
+};
+
 export type Health = {
   status: string;
   models: Models;
@@ -233,6 +246,13 @@ async function request<T>(
 
 export const api = {
   health: () => request<Health>("health"),
+  settings: () => request<Settings>("settings"),
+  // Only the fields given change; an explicit null engine restores Mentor's own choice.
+  updateSettings: (patch: Partial<Settings>) => request<Settings>("settings", { method: "PATCH", body: patch }),
+  credentialStatus: () => request<CredentialStatus>("credentials/anthropic"),
+  // The key goes one way: the server validates and stores it, and never gives it back.
+  saveKey: (key: string) => request<CredentialStatus>("credentials/anthropic", { method: "PUT", body: { key } }),
+  deleteKey: () => request<CredentialStatus>("credentials/anthropic", { method: "DELETE" }),
   listChannels: () => request<Channel[]>("channels"),
   resolveChannel: (channel: string) =>
     request<ChannelProposal>("channels/resolve", { method: "POST", body: { channel } }),

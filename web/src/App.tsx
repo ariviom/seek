@@ -8,6 +8,7 @@ import {
   type Group,
   type Health,
   type Scope,
+  type Settings,
 } from "@/lib/api";
 import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
 import { useMediaQuery } from "@/lib/media";
@@ -31,7 +32,8 @@ import {
   ServerNotice,
 } from "@/shell/Notices";
 import { Rail } from "@/shell/Rail";
-import { modelLabel } from "./chats/Composer";
+import { conversationModel } from "@/lib/models";
+import { SettingsView } from "./settings/SettingsView";
 import { ConversationView } from "./chats/ConversationView";
 import { Folders, NewChatMenu, useConversations } from "./chats/Folders";
 import { Lightbox } from "./chats/Lightbox";
@@ -139,6 +141,15 @@ export function App() {
     void loadHealth();
   }, [loadHealth]);
 
+  // The preferences the chats follow: which model an unpinned Conversation runs, and what the settings screen edits.
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const loadSettings = useCallback(async () => {
+    await api.settings().then(setSettings, () => undefined);
+  }, []);
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
   // The server being unreachable is the notice, so it opens the Dialog that carries it.
   const serverError = state.kind === "error" ? state.message : null;
   useEffect(() => {
@@ -175,6 +186,8 @@ export function App() {
     // Models may have progressed while the stream was down, and a key or preference saved since changes who
     // answers, so the composer follows without a reload.
     if (event.type === "ready" || event.type === "settings" || event.type === "credentials") void loadHealth();
+    // A preference saved in another tab changes which model the chats here follow.
+    if (event.type === "ready" || event.type === "settings") void loadSettings();
     if (event.type === "models") {
       latestModels.current = event.models;
       modelEvents.current += 1;
@@ -227,9 +240,10 @@ export function App() {
   const sources = sourcesOf(chatCitations);
 
   // Each section's list column and main pane.
+  // Settings has no list of its own, so its column is left out rather than shown empty.
   const sections: Record<
     typeof view,
-    { title: string; header?: ReactNode; actions?: ReactNode; list: ReactNode; main: ReactNode }
+    { title: string; header?: ReactNode; actions?: ReactNode; list?: ReactNode; main: ReactNode }
   > = {
     chats: {
       title: "Chats",
@@ -240,7 +254,7 @@ export function App() {
           <span className="truncate">{chat.scope !== null ? "New chat" : summary?.title}</span>
           {summary !== undefined && (
             <Badge variant="outline" className="font-normal text-muted-foreground">
-              {modelLabel(summary.model, health?.chat.active ?? null)}
+              {conversationModel(summary.model, settings?.model ?? "fast", health?.chat.active ?? null)}
             </Badge>
           )}
         </span>
@@ -270,13 +284,15 @@ export function App() {
           groups={groups}
           channels={channels}
           syncs={syncs}
-          engine={health?.chat.active ?? null}
+          chat={health?.chat ?? null}
+          defaultChoice={settings?.model ?? "fast"}
+          usage={summary?.usage ?? null}
           playback={playback}
           notices={
             health !== null && (
               <>
                 {!liveUpdatesStopped && <ModelNotice models={health.models} />}
-                <EngineNotice chat={health.chat} />
+                <EngineNotice chat={health.chat} onOpenSettings={() => changeView("settings")} />
               </>
             )
           }
@@ -290,6 +306,7 @@ export function App() {
             changeView("library");
             select({ group: groupId, channel: undefined, tab: "groups" });
           }}
+          onOpenSettings={() => changeView("settings")}
         />
       ) : (
         <div className="mx-auto max-w-3xl px-6 py-6">
@@ -381,13 +398,18 @@ export function App() {
       main:
         selection.sync === undefined ? <SyncsEmpty /> : <SyncPage syncId={selection.sync} syncs={syncs} />,
     },
+    settings: {
+      title: "Settings",
+      main: <SettingsView health={health} settings={settings} onSettings={setSettings} />,
+    },
   };
   const section = sections[view];
-  const listColumn = (
-    <ListColumn title={section.title} actions={section.actions}>
-      {section.list}
-    </ListColumn>
-  );
+  const listColumn =
+    section.list === undefined ? undefined : (
+      <ListColumn title={section.title} actions={section.actions}>
+        {section.list}
+      </ListColumn>
+    );
   const inspectorTitle = inspected[view];
 
   return (
@@ -401,12 +423,12 @@ export function App() {
         serverError={serverError}
         onShowHealth={() => setHealthOpen(true)}
       />
-      {wide && <div className="flex h-full">{listColumn}</div>}
+      {wide && listColumn !== undefined && <div className="flex h-full">{listColumn}</div>}
       <main className="flex min-w-0 flex-1 flex-col">
         <MainHeader
           title={section.header || section.title}
           list={
-            wide
+            wide || listColumn === undefined
               ? undefined
               : {
                   key: `${view}:${JSON.stringify(selection)}:${chat.opening}:${listChoices}`,

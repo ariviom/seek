@@ -1,4 +1,4 @@
-import { Library, MessageSquare, Monitor, Moon, RefreshCw, Search, Sun } from "lucide-react";
+import { Library, MessageSquare, Monitor, Moon, RefreshCw, Search, Settings, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -108,7 +108,19 @@ export function Rail({
           )}
         </Button>
       ))}
+      {/* Settings sits with the theme and the health dot: it is what the user owns, not another section of
+          the knowledge base. */}
       <div className="flex flex-row items-center gap-1 md:mt-auto md:flex-col">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Settings"
+          aria-current={view === "settings" ? "page" : undefined}
+          className={view === "settings" ? "bg-accent text-accent-foreground" : ""}
+          onClick={() => onView("settings")}
+        >
+          <Settings />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Theme">

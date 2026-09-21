@@ -1,4 +1,5 @@
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import type { ChatEngineStatus, ChatHealth, EngineName, Models, ModelStatus } from "@/lib/api";
 
 type ServerState = { kind: "loading" } | { kind: "ok" } | { kind: "error"; message: string };
@@ -72,8 +73,13 @@ export function ModelNotice({ models }: { models: Models }) {
 }
 
 // Only chat needs an engine, so nothing here says the app is broken. With no active engine both engines' messages
-// show, since either one satisfied brings chat back.
-export function EngineNotice({ chat }: { chat: ChatHealth }) {
+// show, since either one satisfied brings chat back, and the way to satisfy either is one click away.
+export function EngineNotice({ chat, onOpenSettings }: { chat: ChatHealth; onOpenSettings: () => void }) {
+  const toSettings = (
+    <Button type="button" size="sm" variant="outline" className="mt-1 text-foreground" onClick={onOpenSettings}>
+      Open settings
+    </Button>
+  );
   if (chat.active === null) {
     return (
       <div role="alert" className="space-y-1 text-sm text-destructive">
@@ -85,14 +91,18 @@ export function EngineNotice({ chat }: { chat: ChatHealth }) {
             </li>
           ))}
         </ul>
+        {toSettings}
       </div>
     );
   }
   const status = chat.engines[chat.active];
   if (status.state === "ready") return null;
   return (
-    <p role="alert" className="text-sm text-destructive">
-      {engineLabels[chat.active]}: {describeEngine(status)}
-    </p>
+    <div role="alert" className="space-y-1 text-sm text-destructive">
+      <p>
+        {engineLabels[chat.active]}: {describeEngine(status)}
+      </p>
+      {toSettings}
+    </div>
   );
 }

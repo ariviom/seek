@@ -8,7 +8,9 @@ Ticket 04 is complete: platform paths and foreground lifecycle, 394 tests passin
 Ticket 05 is complete: validated secrets and persistent preferences, 442 tests passing, independent review complete.
 Ticket 06 is complete: both chat engines behind one port with per-turn selection, provenance and usage, and the
 health rename landed atomically across the CLI, the web client and the rebuilt bundle.
-Tickets 07–10 remain ready-for-agent; ticket 10's Mac execution steps are also deferred, not passed.
+Ticket 07 is complete: the Settings screen owns the engine, the key and the default model, and a Conversation shows
+what it has used.
+Tickets 08–10 remain ready-for-agent; ticket 10's Mac execution steps are also deferred, not passed.
 
 Source: spec 0003 (ready-for-agent), ADRs 0004 and 0005. The spec takes precedence over the desktop roadmap.
 The source documents were committed as `0db90a4` before drafting this breakdown.

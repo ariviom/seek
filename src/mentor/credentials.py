@@ -56,6 +56,10 @@ class Credential:
 class CredentialStatus:
     present: bool
     validity: Validity
+    # Where the key is kept, and what stopped the keychain from keeping it, so the settings screen can
+    # explain a private-file fallback instead of quietly using one.
+    store: Literal["keychain", "file"] = "keychain"
+    fallback_reason: str | None = None
 
 
 class Credentials:
@@ -97,9 +101,15 @@ class Credentials:
         current = await self.current()
         return self._status(current)
 
-    @staticmethod
-    def _status(current: Credential | None) -> CredentialStatus:
-        return CredentialStatus(current is not None, current.validity if current else "unverified")
+    def _status(self, current: Credential | None) -> CredentialStatus:
+        # Read after the store was last used, so it reports the routing this call actually took.
+        store = self.secrets.status
+        return CredentialStatus(
+            current is not None,
+            current.validity if current else "unverified",
+            store.store,
+            store.fallback_reason,
+        )
 
     async def replace(self, key: str) -> CredentialStatus:
         credential = Credential(str(uuid4()), key)

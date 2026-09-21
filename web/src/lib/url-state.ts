@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type View = "chats" | "search" | "library" | "syncs";
+export type View = "chats" | "search" | "library" | "syncs" | "settings";
 export type Selection = {
   conversation?: number;
   channel?: number;
@@ -9,7 +9,7 @@ export type Selection = {
   tab?: "channels" | "groups";
 };
 
-const views: View[] = ["chats", "search", "library", "syncs"];
+const views: View[] = ["chats", "search", "library", "syncs", "settings"];
 const ids = ["conversation", "channel", "group", "sync"] as const;
 
 function readView(params: URLSearchParams): View {

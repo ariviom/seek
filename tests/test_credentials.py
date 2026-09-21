@@ -11,6 +11,9 @@ from mentor.credentials import Credentials, CredentialStatus
 from mentor.events import Events
 from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
 
+# Where a status says the key is kept, when the keychain took it.
+IN_KEYCHAIN = {"store": "keychain", "fallback_reason": None}
+
 
 async def test_key_is_validated_once_without_environment_credentials_and_survives_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -66,7 +69,7 @@ async def test_provider_failure_does_not_echo_key_or_mislabel_transient_failure(
     async with running(app) as client:
         response = await client.put("/api/credentials/anthropic", json={"key": key})
         assert response.status_code == 200
-        assert response.json() == {"present": True, "validity": validity}
+        assert response.json() == {"present": True, "validity": validity, **IN_KEYCHAIN}
         assert key not in response.text
         assert (await client.get("/api/credentials/anthropic")).json() == response.json()
     assert calls == 1
@@ -95,7 +98,7 @@ async def test_network_failure_is_unverified_and_never_logs_provider_echo(
     app = create_app(Config(data_dir=tmp_path), FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=FakeSecrets())
     async with running(app) as client:
         response = await client.put("/api/credentials/anthropic", json={"key": "private-secret"})
-        assert response.json() == {"present": True, "validity": "unverified"}
+        assert response.json() == {"present": True, "validity": "unverified", **IN_KEYCHAIN}
     assert "private-secret" not in caplog.text
 
 
@@ -129,10 +132,10 @@ async def test_late_validation_and_turn_rejections_cannot_overwrite_replacement_
             assert "old-secret" not in repr(old)
             if replacement:
                 response = await client.put("/api/credentials/anthropic", json={"key": "new-secret"})
-                expected = {"present": True, "validity": "valid"}
+                expected = {"present": True, "validity": "valid", **IN_KEYCHAIN}
             else:
                 response = await client.delete("/api/credentials/anthropic")
-                expected = {"present": False, "validity": "unverified"}
+                expected = {"present": False, "validity": "unverified", **IN_KEYCHAIN}
             assert response.json() == expected
             release.set()
             assert (await old_request).json() == expected
@@ -150,7 +153,7 @@ async def test_late_validation_and_turn_rejections_cannot_overwrite_replacement_
             await old_request
     async with running(create_app(Config(data_dir=tmp_path), FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=store)) as client:
         state = (await client.get("/api/credentials/anthropic")).json()
-        assert state == ({"present": True, "validity": "invalid"} if replacement else expected)
+        assert state == ({"present": True, "validity": "invalid", **IN_KEYCHAIN} if replacement else expected)
 
 
 async def test_canceled_key_write_cannot_complete_after_a_later_deletion(tmp_path: Path) -> None:
@@ -175,7 +178,7 @@ async def test_canceled_key_write_cannot_complete_after_a_later_deletion(tmp_pat
             deletion = asyncio.create_task(client.delete("/api/credentials/anthropic"))
         finally:
             gate.released.set()
-        assert (await deletion).json() == {"present": False, "validity": "unverified"}
+        assert (await deletion).json() == {"present": False, "validity": "unverified", **IN_KEYCHAIN}
         assert (await client.get("/api/credentials/anthropic")).json()["present"] is False
         assert (await stream.until(lambda e: e["type"] == "credentials"))[-1] == {"type": "credentials"}
 
@@ -226,7 +229,11 @@ async def test_locked_keychain_after_restart_allows_safe_replacement_and_deletio
         assert "private-secret" not in failed.text
         assert (await client.get("/api/health")).status_code == 200
         replacement = await client.put("/api/credentials/anthropic", json={"key": "replacement-secret"})
-        assert replacement.json() == {"present": True, "validity": "valid"}
+        # The key went to the private file because the keychain refused it, and the status says so rather
+        # than reading as if the keychain had it.
+        stored = replacement.json()
+        assert (stored["present"], stored["validity"], stored["store"]) == (True, "valid", "file")
+        assert "private fallback file" in stored["fallback_reason"]
     third = create_app(config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), secrets=KeyringSecrets(tmp_path))
     async with running(third) as client:
         assert (await client.get("/api/credentials/anthropic")).json()["validity"] == "valid"

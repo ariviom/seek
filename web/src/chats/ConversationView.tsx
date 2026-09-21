@@ -3,13 +3,15 @@ import {
   api,
   errorText,
   type Channel,
+  type ChatHealth,
   type ChatStreamEvent,
   type Citation,
   type ConversationDetail,
-  type EngineName,
   type Group,
+  type ModelChoice,
   type Scope,
   type Sync,
+  type TokenUsage,
 } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { PlaybackControls } from "@/lib/playback";
@@ -30,12 +32,15 @@ export function ConversationView({
   groups,
   channels,
   syncs,
-  engine,
+  chat,
+  defaultChoice,
+  usage,
   playback,
   notices,
   onChanged,
   onCitations,
   onEditGroup,
+  onOpenSettings,
 }: {
   conversationId: number | null;
   scope: Scope | null;
@@ -43,14 +48,20 @@ export function ConversationView({
   groups: Group[] | null;
   channels: Channel[] | null;
   syncs: Sync[] | null;
-  // The engine that would answer the next turn, for the composer's models and context controls.
-  engine: EngineName | null;
+  // Both engines and the one that would answer the next turn, for the composer's models, context controls and
+  // its dead end when neither can answer; null until the server has said.
+  chat: ChatHealth | null;
+  // The default model setting a chat without a pin follows.
+  defaultChoice: ModelChoice;
+  // This Conversation's totals as last listed, which are newer than the detail loaded when it opened.
+  usage: TokenUsage | null;
   playback: PlaybackControls;
   notices: ReactNode;
   // After each turn, also a failed one: the Conversation exists and holds the question.
   onChanged: (conversationId: number) => void;
   onCitations: (citations: Citation[]) => void;
   onEditGroup: (groupId: number) => void;
+  onOpenSettings: () => void;
 }) {
   // Loaded once: later changes to the prop are this chat's own new Conversation, already on screen.
   const [initialId] = useState(openedId);
@@ -278,10 +289,14 @@ export function ConversationView({
           draft={draft}
           onDraft={setDraft}
           questionRef={questionBox}
-          engine={engine}
+          engine={chat?.active ?? null}
+          noEngine={chat !== null && chat.active === null}
+          onOpenSettings={onOpenSettings}
           model={model}
           onModel={setModel}
           modelLocked={!isNew}
+          defaultChoice={defaultChoice}
+          usage={usage ?? detail?.usage ?? null}
           workspace={workspace}
           onWorkspace={setWorkspace}
           webAccess={webAccess}
