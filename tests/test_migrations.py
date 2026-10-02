@@ -13,6 +13,7 @@ from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscr
 SCHEMA_8 = 8
 SCHEMA_9 = 9
 SCHEMA_13 = 13
+SCHEMA_14 = 14
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -198,6 +199,45 @@ def test_migration_14_credits_no_video_to_the_syncs_already_recorded(tmp_path: P
         "SELECT id, completed_videos, failed_videos, remaining_videos, counted_from FROM syncs"
     )] == [(4, 1, 0, 0, 0)]
     assert [tuple(row) for row in conn.execute("SELECT id, completed_by_sync_id FROM videos")] == [(11, None)]
+    conn.close()
+
+
+def test_migrations_15_and_16_add_storyboards_and_let_frames_be_turned_off(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "mentor.db")
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_14])
+        db.migrate(conn)
+    conn.executescript(
+        """
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO videos (id, channel_id, youtube_video_id, title, pipeline_stage, discovered_at)
+            VALUES (11, 3, 'v-wright', 'Sharpening chisels', 'done', '2025-01-01T00:00:00+00:00');
+        INSERT INTO settings (key, value) VALUES ('engine', 'api'), ('model', 'deep');
+        """
+    )
+
+    db.migrate(conn)
+
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert foreign_keys_on(conn)
+    # No row for the Video ingested before frames were kept: it has no storyboard, honestly.
+    assert conn.execute("SELECT count(*) FROM storyboards").fetchone()[0] == 0
+    # The preferences already saved survive the settings rebuild, and the new one is allowed beside them.
+    assert sorted(tuple(row) for row in conn.execute("SELECT key, value FROM settings")) == [
+        ("engine", "api"), ("model", "deep")
+    ]
+    conn.execute("INSERT INTO settings (key, value) VALUES ('thumbnails', 'off')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO settings (key, value) VALUES ('thumbnails_elsewhere', 'off')")
+    # A storyboard belongs to its Video and goes when it does.
+    conn.execute(
+        """
+        INSERT INTO storyboards (video_id, columns, rows, width, height, fps, url_template, fragment_count, fetched_at)
+        VALUES (11, 3, 3, 320, 180, 0.1, 'https://i.ytimg.com/sb/v/M{index}.jpg?sqp=s', 4, '2026-10-02T00:00:00+00:00')
+        """
+    )
+    conn.execute("DELETE FROM videos WHERE id = 11")
+    assert conn.execute("SELECT count(*) FROM storyboards").fetchone()[0] == 0
     conn.close()
 
 

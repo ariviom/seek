@@ -33,7 +33,13 @@ export type ChatHealth = { active: EngineName | null; engines: Record<EngineName
 // Preferences a friend owns, kept apart from the operational settings in the config file. A null engine
 // leaves the choice to Mentor; `model` is the default a Conversation follows unless it pinned one.
 export type ModelChoice = "fast" | "deep";
-export type Settings = { engine: EngineName | null; provider: "anthropic"; model: ModelChoice };
+export type Settings = {
+  engine: EngineName | null;
+  provider: "anthropic";
+  model: ModelChoice;
+  // Whether search results and an answer's sources show frames of the moment they cite.
+  thumbnails: boolean;
+};
 // The stored key is never returned: only whether one is there, how it fared, and where it is kept.
 export type CredentialStatus = {
   present: boolean;
@@ -143,6 +149,14 @@ export type SearchResult = {
   score: number;
   url: string;
 };
+
+// One tile of a storyboard sheet: the moment it shows, and where in that sheet's grid it is cropped from.
+export type Frame = { seconds: number; url: string; column: number; row: number };
+// A Video's frames of one cited moment, all cropped out of the same `columns` by `rows` grid. A Video with no
+// stored geometry simply isn't in the answer, which is how a strip knows to show nothing.
+export type VideoFrames = { columns: number; rows: number; video_id: number; seconds: number; frames: Frame[] };
+// The frames one strip wants: `count` of them from `seconds` on, at the Video's own storyboard interval.
+export type Moment = { video_id: number; seconds: number; count: number };
 
 // The Transcript around a Segment: its own span, and the timed lines from before it to after it.
 export type Expansion = {
@@ -287,6 +301,8 @@ export const api = {
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
+  // Reads geometry already stored; it never makes Mentor fetch anything from YouTube.
+  frames: (moments: Moment[]) => request<VideoFrames[]>("frames", { method: "POST", body: { moments } }),
   createConversation: (scope: Scope, model: string | null, context: ChatContext) =>
     request<Conversation>(`${scope.kind}s/${scope.id}/conversations`, {
       method: "POST",

@@ -1,5 +1,6 @@
 import re
 import subprocess
+from itertools import groupby
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,7 +10,17 @@ import httpx
 import httpx2
 import pytest
 from api_transport import Provider, ToolUse, answer
-from harness import Gate, add_channel, add_group, fake_channel, fake_video, said, serving, sync
+from harness import (
+    Gate,
+    add_channel,
+    add_group,
+    fake_channel,
+    fake_storyboard,
+    fake_video,
+    said,
+    serving,
+    sync,
+)
 from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright, expect
 
 from mentor.app import create_app
@@ -18,6 +29,10 @@ from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets
 from mentor.ports import ChatDone, ChatEngineStatus, TextDelta, VideoUnavailable
 
 WEB = Path(__file__).parents[1] / "web"
+# A storyboard sheet as the page would load one: three by three tiles of 320x180.
+QUESTION = "plane across the grain"
+SHEET = b'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#444"/></svg>'
+
 
 
 @pytest.fixture(scope="session")
@@ -53,7 +68,17 @@ async def browsing(base_url: str) -> AsyncIterator[tuple[Page, list[str]]]:
                 "**/*",
                 lambda route: route.continue_() if route.request.url.startswith(base_url) else route.abort(),
             )
+            # Storyboard sheets are answered here with a grid-sized image, since the page must be able to load one
+            # and must not load it from YouTube. Registered last, which is what gives it priority over the abort.
+            await page.route("**/sb/**", lambda route: route.fulfill(body=SHEET, content_type="image/svg+xml"))
             yield page, errors
+
+
+async def peek_width(peek: Locator) -> float:
+    """The width of the card a frame opens, which is one fixed size for every storyboard tier."""
+    box = await peek.bounding_box()
+    assert box is not None
+    return float(box["width"])
 
 
 async def embedded_at(player: Locator) -> tuple[str, str, list[str]]:
@@ -471,3 +496,127 @@ async def test_adding_a_channel_advises_starting_small_and_a_running_sync_report
             await expect(videos_card).to_contain_text("last synced", timeout=15_000)
 
     assert errors == []
+
+
+async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them_off(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+) -> None:
+    # Long enough to be cut into several Segments, so a run of results from one Video shares one strip.
+    planing = said(*(["Plane across the grain", "Then check it flat"] * 12))
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-bench", "Flattening a bench", cues=planing, storyboard=fake_storyboard()),
+        # The tier a quarter of Videos offer: its frames upscale soft in the preview, which is not resized for them.
+        fake_video(
+            "v-plane",
+            "Setting a plane",
+            cues=said("Plane across the grain on a test board"),
+            storyboard=fake_storyboard(columns=5, rows=5, width=160, height=90),
+        ),
+        # No storyboard: this one shows no frames and keeps its title wherever it appears.
+        fake_video("v-vlog", "A week in the shop", cues=said("Plane across the yard")),
+    ]
+    engine.script = [
+        TextDelta("Plane across the grain: **[Wright, 0:20](https://youtube.com/watch?v=v-bench&t=20s)**."),
+        ChatDone("session-1"),
+    ]
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
+
+    async with serving(app) as base_url:
+        # The Channel and Group are set up over the API: what this test is about starts at the search results.
+        async with httpx.AsyncClient(base_url=base_url) as api:
+            wright = await add_channel(api, "@woodbywright", "Wright")
+            await sync(api, wright)
+            await add_group(api, "Benches", wright)
+            # The ranking the page will be given, so what the rows do with it can be checked against it.
+            ranked = (await api.post("/api/search", json={"query": QUESTION, "prefer_recent": "gentle"})).json()
+        # Which Videos have frames, and the consecutive runs the ranking fell into: one strip per run.
+        framed = {result["video_id"] for result in ranked if result["youtube_video_id"] in ("v-bench", "v-plane")}
+        bench = next(result["video_id"] for result in ranked if result["youtube_video_id"] == "v-bench")
+        runs = [video_id for video_id, _ in groupby(result["video_id"] for result in ranked)]
+        strips = sum(1 for video_id in runs if video_id in framed)
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            rail = page.get_by_role("navigation", name="Sections")
+            main = page.get_by_role("main")
+
+            await rail.get_by_role("button", name="Search").click()
+            search = page.get_by_role("complementary", name="Search")
+            await search.get_by_label("Question", exact=True).fill(QUESTION)
+            await search.get_by_role("button", name="Search", exact=True).click()
+            results = main.get_by_role("list", name=f"Results for {QUESTION}")
+            await expect(results.locator("[aria-label^='Frame at']")).to_have_count(5 * strips)
+
+            # Grouping is of consecutive results only: every result the ranking returned is still a row, in order.
+            assert await results.locator("li > p").all_text_contents() == [result["text"] for result in ranked]
+            # One title line per run of the Video's results, so the rows a strip covers stop repeating it.
+            await expect(results.get_by_text("Flattening a bench", exact=True)).to_have_count(runs.count(bench))
+            # The Video with no storyboard shows no frames and goes on naming itself in every row.
+            vlog = results.get_by_role("listitem").filter(has_text="A week in the shop")
+            await expect(vlog).to_have_count(sum(1 for result in ranked if result["youtube_video_id"] == "v-vlog"))
+            await expect(vlog.locator("[aria-label^='Frame at']")).to_have_count(0)
+
+            # Hover opens the frame under the cursor, at one width whatever tier the Video has.
+            frames = results.locator("[aria-label^='Frame at']")
+            await frames.nth(1).hover()
+            peek = page.get_by_role("tooltip")
+            await expect(peek).to_contain_text("Flattening a bench")
+            wide = await peek_width(peek)
+            await page.mouse.move(0, 0)
+            await expect(peek).to_be_hidden()
+            soft = results.get_by_role("listitem").filter(has_text="Setting a plane").first
+            await soft.locator("[aria-label^='Frame at']").first.hover()
+            await expect(peek).to_contain_text("Setting a plane")
+            # The 160x90 tier gets the same card as the 320x180 one and upscales soft in it, rather than a
+            # card that changes size with the Video.
+            assert await peek_width(peek) == wide
+            await page.mouse.move(0, 0)
+            await expect(peek).to_be_hidden()
+
+            # Keyboard focus opens the same preview, so the frames are not a pointer-only affordance.
+            await frames.first.focus()
+            await expect(peek).to_be_visible()
+
+            # The Sources column of a chat carries a strip per cited Video, and its rows lead with the moment.
+            await rail.get_by_role("button", name="Chats").click()
+            chats = page.get_by_role("complementary", name="Chats")
+            await chats.get_by_role("button", name="New chat in Benches").click()
+            composer = main.get_by_role("form", name="Ask Benches")
+            await composer.get_by_label("Question for Benches").fill("How do I flatten a bench?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            sources = page.get_by_role("complementary", name="Sources")
+            cited = sources.get_by_role("button", name="Play Flattening a bench at 0:20")
+            await expect(cited).to_have_count(1)
+            row = sources.get_by_role("listitem").first
+            await expect(row).to_contain_text("0:20")
+            await expect(row).not_to_contain_text("Flattening a bench")
+
+            # One preference, in the panel's own header, governing this column and the search view both.
+            await sources.get_by_role("switch", name="Thumbnails").click()
+            await expect(sources.locator("[aria-label^='Play Flattening']")).to_have_count(0)
+            await expect(row).to_contain_text("Flattening a bench")
+
+            # It survives a reload, and search is governed by it too.
+            await page.reload()
+            await rail.get_by_role("button", name="Search").click()
+            await search.get_by_label("Question", exact=True).fill(QUESTION)
+            await search.get_by_role("button", name="Search", exact=True).click()
+            await expect(results.locator("[aria-label^='Frame at']")).to_have_count(0)
+            await expect(results.get_by_role("listitem").filter(has_text="Flattening a bench")).not_to_have_count(0)
+
+            # Switched on again from Settings, which is where a friend who never opens a chat would find it.
+            await rail.get_by_role("button", name="Settings", exact=True).click()
+            await main.get_by_role("switch", name="Thumbnails").click()
+            await page.reload()
+            await rail.get_by_role("button", name="Search").click()
+            await search.get_by_label("Question", exact=True).fill(QUESTION)
+            await search.get_by_role("button", name="Search", exact=True).click()
+            await expect(results.locator("[aria-label^='Frame at']")).not_to_have_count(0)
+
+    assert errors == []
+    # Frames are stored geometry only: showing them asked YouTube for nothing beyond the Videos' own ingestion.
+    assert [method for method, _ in transcripts.calls if method == "fetch_storyboard"] == []

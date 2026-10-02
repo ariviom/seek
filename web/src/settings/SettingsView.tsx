@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { useServerEvents } from "@/lib/events";
 import { choiceModelName, choiceNames, modelChoices } from "@/lib/models";
+import { ThumbnailsToggle } from "@/components/Frames";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -171,6 +172,17 @@ export function SettingsView({
           {active === null
             ? "The model each choice runs depends on the engine that answers."
             : `On the ${engineLabels[active]}: fast runs ${choiceModelName("fast", active)}, deep runs ${choiceModelName("deep", active)}.`}
+        </p>
+      </Section>
+
+      <Section
+        title="Thumbnails"
+        description="Frames of the moment a search result or a source cites, so a result can be recognised before it is played. Also switchable from the Sources panel of a chat."
+      >
+        <ThumbnailsToggle settings={settings} onSettings={onSettings} />
+        <p className="text-xs text-muted-foreground">
+          The frames come from YouTube's own scrubber previews, stored while a Video is ingested. They are an index,
+          not evidence: too small to read what is on screen, and a Video that has none simply shows its title.
         </p>
       </Section>
 

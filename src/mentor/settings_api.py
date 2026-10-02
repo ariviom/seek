@@ -20,7 +20,9 @@ def settings_router(database: Database, events: Events) -> APIRouter:
             body = Settings.model_validate_json(await request.body())
         except ValidationError:
             raise HTTPException(
-                422, "Use engine (api, cli or null), provider (anthropic) and model (fast or deep)."
+                422,
+                "Use engine (api, cli or null), provider (anthropic), model (fast or deep) and thumbnails "
+                "(true or false).",
             ) from None
         updated = await database.run(lambda conn: write_settings(conn, body))
         if body.model_fields_set:

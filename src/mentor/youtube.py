@@ -26,6 +26,7 @@ from mentor.ports import (
     Cue,
     PlaylistNotFound,
     SourceUnavailable,
+    Storyboard,
     Transcript,
     VideoDetails,
     VideoListing,
@@ -190,6 +191,24 @@ class YouTubeTranscriptSource:
             raise VideoUnavailable(
                 refused.error.message, permanent=False, details=refused.details, throttled=True
             ) from None
+        except _Failed as failed:
+            if failed.error.kind in ("throttled", "unreachable"):
+                raise SourceUnavailable(failed.error.message) from None
+            raise VideoUnavailable(failed.error.message, permanent=failed.error.permanent) from None
+
+    def fetch_storyboard(self, video_id: str) -> Storyboard | None:
+        """The storyboard geometry alone, from the same extraction fetch_video performs, without its captions.
+
+        Paced and retried exactly as a Sync's calls are; the backfill that uses it runs in its own process, so it
+        shares neither the pace nor the lock with a Sync the server is running.
+        """
+        url = f"{_YOUTUBE}/watch?v={video_id}"
+
+        def fetch(ydl: Any, _: _Log) -> Storyboard | None:
+            return storyboard(ydl.sanitize_info(ydl.extract_info(url, download=False, process=False)))
+
+        try:
+            return self._call(fetch, sync=True)
         except _Failed as failed:
             if failed.error.kind in ("throttled", "unreachable"):
                 raise SourceUnavailable(failed.error.message) from None
@@ -398,6 +417,61 @@ def video_details(info: Mapping[str, Any]) -> VideoDetails:
         duration_seconds=duration,
         description=info.get("description") or "",
         chapters=chapters,
+        storyboard=storyboard(info),
+    )
+
+
+# The best storyboard yt-dlp exposes; the tiers below it are smaller copies of the same frames.
+_BEST_SHEET = "sb0"
+# A sheet URL's path ends in the sheet's number: .../storyboard3_L3/M0.jpg.
+_SHEET_PATH = re.compile(r"(?P<prefix>.*/)M(?P<index>\d+)(?P<suffix>\.[A-Za-z0-9]+)")
+
+
+def _sheet_template(urls: Sequence[str]) -> str | None:
+    """The one URL every sheet shares, with {index} where its number goes; None if they don't all share one.
+
+    The signature (sqp/sigh) is a query parameter, and a sheet fetched without it is refused, so a template is
+    only honest while every sheet carries the same one. Measured over 25 Videos they always did -- but a Video
+    whose sheets disagree is better treated as having no storyboard than stored under a template that 403s.
+    """
+    templates = set()
+    for index, url in enumerate(urls):
+        parts = urllib.parse.urlsplit(url)
+        match = _SHEET_PATH.fullmatch(parts.path)
+        if match is None or int(match["index"]) != index:
+            return None
+        templates.add(parts._replace(path=f"{match['prefix']}M{{index}}{match['suffix']}").geturl())
+    return templates.pop() if len(templates) == 1 else None
+
+
+def storyboard(info: Mapping[str, Any]) -> Storyboard | None:
+    """The geometry of the Video's best scrubber storyboard, or None when the extraction offers none this can use.
+
+    Costs no request of its own: the storyboard formats come with the metadata and captions a Sync already fetches.
+    """
+    sheets = [f for f in info.get("formats") or [] if f.get("format_id") == _BEST_SHEET]
+    if not sheets:
+        return None
+    sheet = sheets[0]
+    grid = [sheet.get(key) for key in ("columns", "rows", "width", "height")]
+    fps = sheet.get("fps")
+    urls = [f["url"] for f in sheet.get("fragments") or [] if f.get("url")]
+    if not all(isinstance(value, int) and value > 0 for value in grid):
+        return None
+    if not isinstance(fps, int | float) or fps <= 0 or not urls:
+        return None
+    template = _sheet_template(urls)
+    if template is None:
+        return None
+    columns, rows, width, height = (int(value) for value in grid)
+    return Storyboard(
+        columns=columns,
+        rows=rows,
+        width=width,
+        height=height,
+        fps=float(fps),
+        url_template=template,
+        fragment_count=len(urls),
     )
 
 

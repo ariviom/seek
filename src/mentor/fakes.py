@@ -19,6 +19,7 @@ from mentor.ports import (
     PlaylistNotFound,
     SecretStoreStatus,
     SourceUnavailable,
+    Storyboard,
     TextDelta,
     Transcript,
     VideoDetails,
@@ -119,6 +120,20 @@ class FakeTranscriptSource:
                         raise video.failure
                     return video.details, video.transcript
         self._call("fetch_video", video_id)
+        raise VideoUnavailable(f"Video {video_id} not found", permanent=True)
+
+    def fetch_storyboard(self, video_id: str) -> Storyboard | None:
+        """The storyboard the Video's own details carry, so what a backfill stores is what ingestion would have."""
+        for channel in self.channels:
+            for video in channel.all_videos:
+                if video.listing.video_id == video_id:
+                    if video.before_fetch is not None:
+                        video.before_fetch()
+                    self._call("fetch_storyboard", video_id)
+                    if video.failure is not None:
+                        raise video.failure
+                    return video.details.storyboard
+        self._call("fetch_storyboard", video_id)
         raise VideoUnavailable(f"Video {video_id} not found", permanent=True)
 
 

@@ -15,6 +15,7 @@ import { useMediaQuery } from "@/lib/media";
 import { usePlayback } from "@/lib/playback";
 import { channelSync } from "@/lib/sync-status";
 import { useUrlState, type View } from "@/lib/url-state";
+import { ThumbnailsToggle } from "@/components/Frames";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Inspector, useInspector } from "@/shell/Inspector";
@@ -346,7 +347,13 @@ export function App() {
       main: (
         <>
           {health !== null && !liveUpdatesStopped && <ModelNotice models={health.models} />}
-          <SearchResults search={search} groups={groups} playback={playback} onAsk={newChat} />
+          <SearchResults
+            search={search}
+            groups={groups}
+            thumbnails={settings?.thumbnails ?? true}
+            playback={playback}
+            onAsk={newChat}
+          />
         </>
       ),
     },
@@ -494,6 +501,11 @@ export function App() {
         <Inspector
           title={inspectorTitle}
           count={view === "chats" && chatOpen ? sources.reduce((n, group) => n + group.citations.length, 0) : undefined}
+          actions={
+            view === "chats" && chatOpen ? (
+              <ThumbnailsToggle settings={settings} onSettings={setSettings} />
+            ) : undefined
+          }
           onHide={() => {
             if (!playback.large) playback.close();
             inspector.hide();
@@ -508,7 +520,12 @@ export function App() {
             }
           />
           {view === "chats" && chatOpen && (
-            <Sources citations={chatCitations} playingKey={playback.playingKey} onPlay={playback.play} />
+            <Sources
+              citations={chatCitations}
+              thumbnails={settings?.thumbnails ?? true}
+              playingKey={playback.playingKey}
+              onPlay={playback.play}
+            />
           )}
         </Inspector>
       )}

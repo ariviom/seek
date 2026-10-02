@@ -91,6 +91,31 @@ def _channels_not_mentors(conn: sqlite3.Connection) -> None:
     )
 
 
+def _thumbnails_preference(conn: sqlite3.Connection) -> None:
+    """Schema 16: frames of a cited moment can be turned off, which the settings CHECK has to allow.
+
+    A CHECK can't be altered, so the table is rebuilt the way SQLite documents. Nothing references settings, so
+    dropping it cascades nothing.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE settings_new (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            CHECK (
+                (key = 'engine' AND value IN ('api', 'cli')) OR
+                (key = 'provider' AND value = 'anthropic') OR
+                (key = 'model' AND value IN ('fast', 'deep')) OR
+                (key = 'thumbnails' AND value IN ('on', 'off'))
+            )
+        ) WITHOUT ROWID;
+        INSERT INTO settings_new (key, value) SELECT key, value FROM settings;
+        DROP TABLE settings;
+        ALTER TABLE settings_new RENAME TO settings;
+        """
+    )
+
+
 # Applied in order; PRAGMA user_version records how many have run. Never edit a shipped entry.
 # A string entry runs with foreign keys ON inside a transaction, where they cannot be switched off: keep those
 # additive, because DROP TABLE on a parent would cascade-delete its children. A callable entry is a rebuild that
@@ -320,6 +345,26 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     -- divide work done before the restart by time measured after it.
     ALTER TABLE syncs ADD COLUMN counted_from INTEGER NOT NULL DEFAULT 0;
     """,
+    """
+    -- One Video's scrubber storyboard: the grid its frames are tiled in, and the one URL its sheets share. Kept
+    -- as a Transcript is, in a table of its own, so refreshing a Video's sheets never writes the videos row a
+    -- running Sync is updating. No row is the honest state for a Video whose storyboard was never fetched.
+    CREATE TABLE storyboards (
+        video_id INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+        columns INTEGER NOT NULL CHECK (columns > 0),
+        rows INTEGER NOT NULL CHECK (rows > 0),
+        -- One tile's pixels: 320x180 for most Videos, 160x90 for the rest.
+        width INTEGER NOT NULL CHECK (width > 0),
+        height INTEGER NOT NULL CHECK (height > 0),
+        -- Frames per second of video; 1/fps is the seconds one tile covers, about ten.
+        fps REAL NOT NULL CHECK (fps > 0),
+        -- Every sheet's URL with {index} where its number goes. The signature it carries expires (ticket 12).
+        url_template TEXT NOT NULL,
+        fragment_count INTEGER NOT NULL CHECK (fragment_count > 0),
+        fetched_at TEXT NOT NULL
+    );
+    """,
+    _thumbnails_preference,
 ]
 
 

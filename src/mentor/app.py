@@ -45,6 +45,7 @@ from mentor.search import PreferRecent, Search
 from mentor.search_api import search_router
 from mentor.secrets import KeyringSecrets
 from mentor.settings_api import settings_router
+from mentor.storyboards_api import storyboards_router
 from mentor.sync_worker import SyncWorker
 from mentor.syncs_api import syncs_router
 
@@ -220,6 +221,7 @@ def create_app(
     app.include_router(credentials_router(credentials), prefix="/api")
     app.include_router(syncs_router(database, events, worker.wake), prefix="/api")
     app.include_router(search_router(search, database), prefix="/api")
+    app.include_router(storyboards_router(database), prefix="/api")
     app.include_router(chat_router(database, chat, events_keepalive_seconds), prefix="/api")
     app.include_router(events_router(events, events_keepalive_seconds), prefix="/api")
     # The MCP app routes /mcp itself; its session manager runs in the lifespan above.

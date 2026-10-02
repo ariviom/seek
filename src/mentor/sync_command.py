@@ -69,7 +69,7 @@ def answers(url: str, seconds: float) -> bool:
             time.sleep(1)
 
 
-def _find_channel(listed: list[Channel], ref: str) -> Channel:
+def find_channel(listed: list[Channel], ref: str) -> Channel:
     matching = [c for c in listed if c.youtube_channel_id == ref or c.name.casefold() == ref.casefold()]
     if not matching:
         raise SyncCommandError(f"No Channel named {ref!r}; give a Channel's name or its YouTube channel id")
@@ -101,7 +101,7 @@ def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
     try:
         if channel is None:
             return TypeAdapter(list[Sync]).validate_json(request(f"{url}api/syncs", "POST", options))
-        found = _find_channel(TypeAdapter(list[Channel]).validate_json(request(f"{url}api/channels")), channel)
+        found = find_channel(TypeAdapter(list[Channel]).validate_json(request(f"{url}api/channels")), channel)
         return [
             TypeAdapter(Sync).validate_json(request(f"{url}api/channels/{found.id}/syncs", "POST", options))
         ]
@@ -130,7 +130,7 @@ async def _run_here(
     def enqueue(conn: sqlite3.Connection) -> list[Sync]:
         if channel is None:
             return syncs.enqueue_all(conn, reindex)
-        return [syncs.enqueue(conn, _find_channel(channels.list_channels(conn), channel).id, reindex)]
+        return [syncs.enqueue(conn, find_channel(channels.list_channels(conn), channel).id, reindex)]
 
     queued = await database.run(enqueue)
     if not queued:

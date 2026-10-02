@@ -1,11 +1,13 @@
 """The yt-dlp adapter's parsing and classification, below the API seam because yt-dlp can't be faked usefully."""
 
+import time
 from datetime import date, timedelta
 from typing import Any
 
 import pytest
+import yt_dlp
 
-from mentor.ports import Chapter, ChannelNotFound, Cue, VideoDetails, VideoListing, VideoUnavailable
+from mentor.ports import Chapter, ChannelNotFound, Cue, Storyboard, VideoDetails, VideoListing, VideoUnavailable
 from mentor.youtube import (
     CaptionTrack,
     caption_track,
@@ -14,6 +16,9 @@ from mentor.youtube import (
     cookies_from_browser,
     listings,
     parse_json3,
+    YouTubeSettings,
+    YouTubeTranscriptSource,
+    storyboard,
     take_until_known,
     video_details,
 )
@@ -280,3 +285,126 @@ def test_yt_dlp_errors_are_classified_with_a_user_facing_reason(
     assert contains in error.message
     assert not error.message.startswith("ERROR")
     assert "--cookies" not in error.message
+
+
+# A storyboard sheet URL as YouTube signs it: one signature, in the query, shared by every sheet of the Video.
+SHEETS = "https://i.ytimg.com/sb/v2jtQ96A2_Q/storyboard3_L3"
+SIGNATURE = "sqp=-oaymwENSDfyq4qpAwVwAcABBqLzl_8DBgiN2YjEBg==&sigh=rs$AOn4CLDhbELErul4_LCpfuzhIUtDN0dkUg"
+
+
+def sheet_urls(count: int, *, prefix: str = SHEETS, signature: str = SIGNATURE) -> list[dict[str, object]]:
+    return [{"url": f"{prefix}/M{i}.jpg?{signature}", "duration": 89.5} for i in range(count)]
+
+
+def extraction(**best: object) -> dict[str, Any]:
+    """A recorded extraction: the storyboard tiers yt-dlp returns beside the media formats, sb0 the largest."""
+    return {
+        "id": "v2jtQ96A2_Q",
+        "title": "Why",
+        "upload_date": "20260903",
+        "duration": 559,
+        "live_status": "not_live",
+        "formats": [
+            {"format_id": "251", "ext": "webm", "url": "https://example.invalid/audio"},
+            {
+                "format_id": "sb0",
+                "columns": 3,
+                "rows": 3,
+                "width": 320,
+                "height": 180,
+                "fps": 0.10116199589883801,
+                "fragments": sheet_urls(17),
+                **best,
+            },
+            # The smaller tier, which is the same frames again and must not be preferred.
+            {
+                "format_id": "sb1",
+                "columns": 5,
+                "rows": 5,
+                "width": 160,
+                "height": 90,
+                "fps": 0.1,
+                "fragments": sheet_urls(7),
+            },
+        ],
+    }
+
+
+def test_storyboard_geometry_comes_from_the_largest_tier_of_a_recorded_extraction() -> None:
+    assert storyboard(extraction()) == Storyboard(
+        columns=3,
+        rows=3,
+        width=320,
+        height=180,
+        fps=0.10116199589883801,
+        url_template=f"{SHEETS}/M{{index}}.jpg?{SIGNATURE}",
+        fragment_count=17,
+    )
+
+
+@pytest.mark.parametrize(
+    "best",
+    [
+        # The sheets' signatures differ, so no one template stands for them all.
+        {"fragments": [{"url": f"{SHEETS}/M0.jpg?{SIGNATURE}"}, {"url": f"{SHEETS}/M1.jpg?sqp=other&sigh=other"}]},
+        # They aren't numbered the way a template assumes.
+        {"fragments": [{"url": f"{SHEETS}/M0.jpg?{SIGNATURE}"}, {"url": f"{SHEETS}/M7.jpg?{SIGNATURE}"}]},
+        {"fragments": [{"url": f"{SHEETS}/first.jpg?{SIGNATURE}"}]},
+        {"fragments": []},
+        {"fps": 0},
+        {"fps": None},
+        {"columns": 0},
+        {"rows": None},
+        {"width": None},
+        {"height": 0},
+    ],
+)
+def test_a_storyboard_this_code_cannot_crop_is_treated_as_absent(best: dict[str, object]) -> None:
+    assert storyboard(extraction(**best)) is None
+
+
+def test_an_extraction_offering_no_storyboard_at_all_has_none() -> None:
+    assert storyboard({"id": "x"}) is None
+    assert storyboard({"id": "x", "formats": [{"format_id": "251", "ext": "webm"}]}) is None
+
+
+def test_video_details_carry_the_storyboard_of_the_same_extraction() -> None:
+    details = video_details(extraction())
+
+    assert details.storyboard is not None
+    assert (details.storyboard.width, details.storyboard.fragment_count) == (320, 17)
+
+
+class _StubYoutubeDL:
+    """yt-dlp's surface as the adapter uses it, returning one recorded extraction and reaching no network."""
+
+    def __init__(self, params: dict[str, object]) -> None:
+        self.params = params
+
+    def __enter__(self) -> "_StubYoutubeDL":
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        return None
+
+    def sanitize_info(self, info: dict[str, Any]) -> dict[str, Any]:
+        return info
+
+    def extract_info(self, url: str, download: bool, process: bool) -> dict[str, Any]:
+        return extraction()
+
+
+def test_fetching_one_storyboard_keeps_the_pace_a_syncs_calls_keep(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _StubYoutubeDL)
+    source = YouTubeTranscriptSource(
+        YouTubeSettings(delay_seconds=10, retries=0, backoff_seconds=1, cookie_file=None)
+    )
+
+    first = source.fetch_storyboard("v2jtQ96A2_Q")
+    second = source.fetch_storyboard("v2jtQ96A2_Q")
+
+    assert first is not None and first == second
+    # The first call goes at once; the next waits out the delay a Sync waits, jittered by up to 30% either way.
+    assert [7 <= wait <= 13 for wait in slept] == [True]

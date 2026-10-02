@@ -96,11 +96,14 @@ function ResizeHandle({ width, onResize }: { width: number; onResize: (width: nu
 export function Inspector({
   title,
   count,
+  actions,
   onHide,
   children,
 }: {
   title: string;
   count?: number;
+  // A control over what the panel shows, beside its title.
+  actions?: ReactNode;
   onHide: () => void;
   children: ReactNode;
 }) {
@@ -111,7 +114,14 @@ export function Inspector({
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
         <h2 className="truncate text-sm font-medium">{title}</h2>
         {count !== undefined && <Badge variant="secondary">{count}</Badge>}
-        <Button variant="ghost" size="icon" aria-label="Hide panel" className="ml-auto" onClick={onHide}>
+        {actions !== undefined && <span className="ml-auto">{actions}</span>}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Hide panel"
+          className={actions === undefined ? "ml-auto" : undefined}
+          onClick={onHide}
+        >
           <X />
         </Button>
       </div>

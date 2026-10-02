@@ -16,7 +16,7 @@ from mcp import Client
 from mentor import db
 from mentor.config import Config
 from mentor.fakes import FakeChannel, FakeTranscriptSource, FakeVideo
-from mentor.ports import Chapter, Cue, Transcript, VideoDetails, VideoListing, VideoUnavailable
+from mentor.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
 @asynccontextmanager
@@ -210,6 +210,7 @@ def fake_video(
     before_fetch: Callable[[], None] | None = None,
     cues: Sequence[Cue] | None = None,
     date_listed: bool = True,
+    storyboard: Storyboard | None = None,
 ) -> FakeVideo:
     return FakeVideo(
         listing=VideoListing(
@@ -225,6 +226,7 @@ def fake_video(
             duration_seconds=duration,
             description=f"About {title}",
             chapters=chapters,
+            storyboard=storyboard,
         ),
         transcript=Transcript(
             source=source,
@@ -243,6 +245,21 @@ async def start_sync(client: httpx.AsyncClient, channel_id: int) -> Json:
     assert response.status_code == 202, response.text
     sync: Json = response.json()
     return sync
+
+
+def fake_storyboard(
+    *, columns: int = 3, rows: int = 3, width: int = 320, height: int = 180, fps: float = 0.1, fragment_count: int = 2
+) -> Storyboard:
+    """A Video's storyboard as YouTube's geometry looks: a tile every 1/fps seconds, spread over numbered sheets."""
+    return Storyboard(
+        columns=columns,
+        rows=rows,
+        width=width,
+        height=height,
+        fps=fps,
+        url_template="https://i.ytimg.com/sb/v/storyboard3_L3/M{index}.jpg?sqp=signed&sigh=signed",
+        fragment_count=fragment_count,
+    )
 
 
 def said(*lines: str, every: float = 5.0) -> list[Cue]:

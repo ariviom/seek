@@ -34,6 +34,25 @@ class Chapter:
 
 
 @dataclass(frozen=True)
+class Storyboard:
+    """The geometry of a Video's scrubber storyboard: tiles of one frame each, laid out in a grid on numbered sheets.
+
+    Every sheet URL carries the same signature, so url_template, with {index} where the sheet number goes, stands
+    for all fragment_count of them. The signature expires; the geometry does not.
+    """
+
+    columns: int
+    rows: int
+    # One tile's pixels.
+    width: int
+    height: int
+    # Frames per second of video: one tile covers 1/fps seconds, about ten.
+    fps: float
+    url_template: str
+    fragment_count: int
+
+
+@dataclass(frozen=True)
 class VideoDetails:
     video_id: str
     title: str
@@ -41,6 +60,8 @@ class VideoDetails:
     duration_seconds: int
     description: str
     chapters: Sequence[Chapter]
+    # The scrubber storyboard the same extraction offered, when it offered a usable one.
+    storyboard: Storyboard | None = None
 
 
 @dataclass(frozen=True)
@@ -150,6 +171,14 @@ class TranscriptSource(Protocol):
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         """Full metadata and English captions. Raises VideoUnavailable otherwise, including for an unknown id."""
+        ...
+
+    def fetch_storyboard(self, video_id: str) -> Storyboard | None:
+        """The Video's scrubber storyboard geometry alone, for Videos ingested before it was kept.
+
+        None when the source offers none this code can use. Raises VideoUnavailable for one Video that cannot be
+        read, and SourceUnavailable when the source itself is refusing.
+        """
         ...
 
 

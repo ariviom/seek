@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Literal
 
+from mentor import storyboards
 from mentor.db import now_iso, transaction
 from mentor.errors import NotFound
 from mentor.channels import ChannelFilters
@@ -330,7 +331,12 @@ def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetai
             video_id,
         ),
     )
-    return cursor.rowcount == 1
+    if cursor.rowcount != 1:
+        return False
+    # The extraction that brought the metadata offered the storyboard too, so keeping it costs no YouTube call.
+    if details.storyboard is not None:
+        storyboards.record(conn, video_id, details.storyboard)
+    return True
 
 
 def record_transcript(

@@ -14,6 +14,7 @@ import uvicorn
 
 from mentor.api_chat import ApiEngine
 from mentor.app import create_app
+from mentor.backfill_command import backfill_storyboards
 from mentor.claude_chat import ClaudeChatEngine
 from mentor.config import HOST, Config, ConfigError, config_dir, data_dir, ensure_directories, load_config
 from mentor.credentials import Credentials
@@ -122,6 +123,19 @@ def sync(channel: str | None, reindex: bool = False) -> None:
         sys.exit(1)
 
 
+def backfill(channel: str | None) -> None:
+    config = _config()
+    try:
+        report = backfill_storyboards(config, channel, _youtube(config), lambda line: print(line, flush=True))
+    except (SyncCommandError, NotFound) as e:
+        sys.exit(f"mentor: {e}")
+    print(f"Stored {report.stored} storyboards; {report.absent} Videos offered none; {report.failed} could not be read.")
+    if report.stopped is not None:
+        print(f"Stopped with {report.remaining} Videos left: {report.stopped}")
+        print("Run the command again to carry on where it stopped.")
+        sys.exit(1)
+
+
 def show_status() -> None:
     config = _config()
     try:
@@ -225,6 +239,13 @@ def main() -> None:
     reindex_target = reindex_parser.add_mutually_exclusive_group(required=True)
     reindex_target.add_argument("--all", action="store_true", help="every active Channel")
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    backfill_parser = commands.add_parser(
+        "backfill-storyboards",
+        help="store the frames of already-ingested Videos, paced as a Sync is; safe to stop and run again",
+    )
+    backfill_target = backfill_parser.add_mutually_exclusive_group(required=True)
+    backfill_target.add_argument("--all", action="store_true", help="every Channel")
+    backfill_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
     commands.add_parser("status", help="the server, models, chat engines, and running and queued Syncs")
     commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups")
     commands.add_parser("doctor", help="one pasteable block for support, with every secret redacted")
@@ -248,6 +269,8 @@ def main() -> None:
         sync(args.channel)
     elif args.command == "reindex":
         sync(args.channel, reindex=True)
+    elif args.command == "backfill-storyboards":
+        backfill(args.channel)
     elif args.command == "status":
         show_status()
     elif args.command == "list":
