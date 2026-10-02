@@ -7,7 +7,10 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import warnings
+from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import uvicorn
@@ -123,10 +126,31 @@ def sync(channel: str | None, reindex: bool = False) -> None:
         sys.exit(1)
 
 
+@contextlib.contextmanager
+def _own_cookies(config: Config) -> Iterator[Config]:
+    """A config whose cookie jar is this process's alone, for a command that runs beside the server.
+
+    yt-dlp rewrites the cookie file as each session closes, and the server holds the same one: a write from here
+    could replace cookies YouTube had just rotated for a running Sync. A copy is read, rotated within this run, and
+    thrown away; the real jar is never written.
+    """
+    if config.youtube_cookie_file is None:
+        yield config
+        return
+    with tempfile.TemporaryDirectory(prefix="mentor-cookies-") as directory:
+        jar = Path(directory) / "cookies.txt"
+        try:
+            shutil.copy2(config.youtube_cookie_file, jar)
+        except OSError as e:
+            sys.exit(f"mentor: could not read {config.youtube_cookie_file}: {e}")
+        yield replace(config, youtube_cookie_file=jar)
+
+
 def backfill(channel: str | None) -> None:
     config = _config()
     try:
-        report = backfill_storyboards(config, channel, _youtube(config), lambda line: print(line, flush=True))
+        with _own_cookies(config) as own:
+            report = backfill_storyboards(config, channel, _youtube(own), lambda line: print(line, flush=True))
     except (SyncCommandError, NotFound) as e:
         sys.exit(f"mentor: {e}")
     print(f"Stored {report.stored} storyboards; {report.absent} Videos offered none; {report.failed} could not be read.")

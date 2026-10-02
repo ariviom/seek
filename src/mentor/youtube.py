@@ -122,7 +122,8 @@ class YouTubeTranscriptSource:
 
     def __init__(self, settings: YouTubeSettings) -> None:
         self._settings = settings
-        # One yt-dlp session at a time: each rewrites the cookie file when it closes.
+        # One yt-dlp session at a time: each rewrites the cookie file when it closes. The lock is this process's
+        # own, so a second process sharing the jar must not write it (see cli._own_cookies).
         self._session = threading.Lock()
         self._next_sync_call = 0.0
 
@@ -199,8 +200,9 @@ class YouTubeTranscriptSource:
     def fetch_storyboard(self, video_id: str) -> Storyboard | None:
         """The storyboard geometry alone, from the same extraction fetch_video performs, without its captions.
 
-        Paced and retried exactly as a Sync's calls are; the backfill that uses it runs in its own process, so it
-        shares neither the pace nor the lock with a Sync the server is running.
+        Paced and retried exactly as a Sync's calls are. The backfill that uses it runs in its own process, so it
+        waits on neither the pace nor the session lock a Sync in the server holds -- but both address YouTube from
+        one machine, so running the two together raises the rate it sees (see backfill_command).
         """
         url = f"{_YOUTUBE}/watch?v={video_id}"
 

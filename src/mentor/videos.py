@@ -334,8 +334,8 @@ def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetai
     if cursor.rowcount != 1:
         return False
     # The extraction that brought the metadata offered the storyboard too, so keeping it costs no YouTube call.
-    if details.storyboard is not None:
-        storyboards.record(conn, video_id, details.storyboard)
+    # Passed even when it is None, which clears a template this extraction no longer backs.
+    storyboards.record(conn, video_id, details.storyboard)
     return True
 
 

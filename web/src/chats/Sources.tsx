@@ -1,5 +1,5 @@
 import { Play } from "lucide-react";
-import type { Citation, Moment } from "@/lib/api";
+import type { Citation, Frame, Moment } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { FrameStrip, momentKey, sourcesFrames, useFrames } from "@/components/Frames";
 import { formatDuration } from "@/lib/format";
@@ -21,6 +21,14 @@ export function sourcesOf(citations: Citation[]): { key: string; channelName: st
     groups.set(channelKey, group);
   }
   return [...groups.values()];
+}
+
+// The Citation a frame plays: the moment that frame shows, which is the moment its label announces.
+function atFrame(citation: Citation, frame: Frame): Citation {
+  const seconds = Math.floor(frame.seconds);
+  const url = new URL(citation.url);
+  url.searchParams.set("t", `${seconds}s`);
+  return { ...citation, seconds, url: url.toString() };
 }
 
 // What one Video's strip asks for: three frames from the first moment of it this chat cited.
@@ -77,7 +85,7 @@ export function Sources({
                       title={citation.video_title}
                       onBroken={() => frames.markBroken(momentOf(citation))}
                       frameClassName="w-[74px]"
-                      onActivate={() => onPlay(citation)}
+                      onActivate={(frame) => onPlay(atFrame(citation, frame))}
                     />
                   )
                 );

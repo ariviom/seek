@@ -8,15 +8,24 @@ moment a Segment cites, and can turn those frames off.
 **Prototype:** branch `t3code/prototype-thumbnails` — variant C won; a, b, d, e record what lost. Throwaway code,
 not the design. Rewrite rather than promote it.
 
-**Status:** complete — 555 tests passing (browser smoke included), mypy 98 files and web typecheck clean, served
+**Status:** complete — 572 tests passing (browser smoke included), mypy 98 files and web typecheck clean, served
 bundle rebuilt. One signature does cover every sheet of a Video (all 25 captured Videos, plus a live check through
 the adapter), so a URL template and a sheet count are stored rather than a list of URLs; a Video whose sheets
 disagreed would be treated as having no storyboard rather than stored under a template that 403s. Signed URLs leave
-the server only from `POST /api/frames`; the search payload and the MCP tools' output are unchanged. Two honest
-limits: a Video whose extraction offers no storyboard keeps no row, so a later backfill run asks about it again
-(none of 25 measured Videos lacked one, though a 19-second Video genuinely does); and "no measurable time" in
-ingestion is argued rather than benchmarked — the geometry is parsed from the extraction dict already in memory and
-the tests assert one `fetch_video` per Video, as before.
+the server only from `POST /api/frames`; the search payload and the MCP tools' output are unchanged.
+
+The backfill runs in its own process with its own pacing and its own copy of the cookie jar, so it never waits on a
+Sync, never makes one wait, and never rewrites the jar yt-dlp rotates under a running Sync. What it cannot be is
+invisible to YouTube: both processes reach it from one address, so running them together raises the rate YouTube
+sees and a refusal brought on by the two can land on the Sync's throttle counter and stop it. The command warns
+when a Sync is queued or running, and the honest advice is to run it when none is.
+
+Three further limits, recorded rather than hidden: a Video whose extraction offers no storyboard keeps no row, so a
+later backfill run asks about it again (none of 25 measured Videos lacked one, though a 19-second Video genuinely
+does); "no measurable time" in ingestion is argued rather than benchmarked — the geometry is parsed from the
+extraction dict already in memory and the tests assert one `fetch_video` per Video, as before; and the last tile is
+worked out from a rounded duration divided into a derived fps, so the conservative end of that rounding is taken,
+which can cost the single final frame of a Video rather than risk painting an empty cell of a sheet that loaded.
 
 - [x] Store one `storyboards` row per Video, as `transcripts` is stored: tile width/height, rows, columns, frames per
   second, fragment count, the URL template every fragment shares, and when it was fetched. No row is the honest

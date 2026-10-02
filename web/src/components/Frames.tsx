@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 // Frames per strip: a search row has the width for five, the Sources column reads as texture past three.
 export const searchFrames = 5;
 export const sourcesFrames = 3;
+// The most moments one request may carry, as storyboards_api caps it: more are asked for in further requests, so a
+// chat citing dozens of Videos loses at most the Videos of a request that failed.
+const maxMoments = 60;
 // One width for every peek, whatever tier the Video has. Sizing it per tier made the card jump about, and a frame
 // from the 160x90 tier a quarter of Videos offer upscales soft here; that is accepted, and it claims no legibility.
 const peekWidth = 320;
@@ -45,11 +48,18 @@ export function useFrames(moments: Moment[], enabled: boolean): Frames {
       return;
     }
     let current = true;
-    void api.frames(moments).then(
-      (videos) => current && setFound(new Map(videos.map((video) => [momentKey(video), video]))),
-      // No frames is a legitimate state, so a failure shows none and nothing is retried.
-      () => current && setFound(new Map()),
-    );
+    const batches = [];
+    for (let from = 0; from < moments.length; from += maxMoments) batches.push(moments.slice(from, from + maxMoments));
+    void Promise.allSettled(batches.map((batch) => api.frames(batch))).then((answers) => {
+      if (!current) return;
+      const found = new Map<string, VideoFrames>();
+      for (const answer of answers) {
+        // No frames is a legitimate state, so a request that failed shows none of its own and is not retried.
+        if (answer.status !== "fulfilled") continue;
+        for (const video of answer.value) found.set(momentKey(video), video);
+      }
+      setFound(found);
+    });
     return () => {
       current = false;
     };
@@ -109,27 +119,29 @@ function Peek({
   onActivate?: (frame: Frame) => void;
 }) {
   const at = formatDuration(Math.floor(frame.seconds));
+  // Focusable either way, since focus is how the keyboard opens the preview: a frame that plays a moment is a
+  // button, and one that only previews itself is an image, which is what a screen reader announces its label as.
+  const style = cn(
+    "block shrink-0 overflow-hidden rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+    className,
+  );
   return (
     <HoverCard.Root openDelay={90} closeDelay={60}>
       <HoverCard.Trigger asChild>
-        <span
-          tabIndex={0}
-          role={onActivate === undefined ? undefined : "button"}
-          aria-label={onActivate === undefined ? `Frame at ${at}` : `Play ${title} at ${at}`}
-          onClick={onActivate === undefined ? undefined : () => onActivate(frame)}
-          onKeyDown={(event) => {
-            if (onActivate === undefined || (event.key !== "Enter" && event.key !== " ")) return;
-            event.preventDefault();
-            onActivate(frame);
-          }}
-          className={cn(
-            "block shrink-0 overflow-hidden rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-            onActivate !== undefined && "cursor-pointer hover:opacity-80",
-            className,
-          )}
-        >
-          <Tile video={video} frame={frame} onBroken={onBroken} />
-        </span>
+        {onActivate === undefined ? (
+          <span role="img" aria-label={`Frame at ${at}`} tabIndex={0} className={style}>
+            <Tile video={video} frame={frame} onBroken={onBroken} />
+          </span>
+        ) : (
+          <button
+            type="button"
+            aria-label={`Play ${title} at ${at}`}
+            onClick={() => onActivate(frame)}
+            className={cn(style, "cursor-pointer hover:opacity-80")}
+          >
+            <Tile video={video} frame={frame} onBroken={onBroken} />
+          </button>
+        )}
       </HoverCard.Trigger>
       <HoverCard.Portal>
         <HoverCard.Content

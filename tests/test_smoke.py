@@ -549,7 +549,8 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
             await search.get_by_label("Question", exact=True).fill(QUESTION)
             await search.get_by_role("button", name="Search", exact=True).click()
             results = main.get_by_role("list", name=f"Results for {QUESTION}")
-            await expect(results.locator("[aria-label^='Frame at']")).to_have_count(5 * strips)
+            frames = results.get_by_role("img", name=re.compile(r"^Frame at "))
+            await expect(frames).to_have_count(5 * strips)
 
             # Grouping is of consecutive results only: every result the ranking returned is still a row, in order.
             assert await results.locator("li > p").all_text_contents() == [result["text"] for result in ranked]
@@ -558,10 +559,9 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
             # The Video with no storyboard shows no frames and goes on naming itself in every row.
             vlog = results.get_by_role("listitem").filter(has_text="A week in the shop")
             await expect(vlog).to_have_count(sum(1 for result in ranked if result["youtube_video_id"] == "v-vlog"))
-            await expect(vlog.locator("[aria-label^='Frame at']")).to_have_count(0)
+            await expect(vlog.get_by_role("img", name=re.compile(r"^Frame at "))).to_have_count(0)
 
             # Hover opens the frame under the cursor, at one width whatever tier the Video has.
-            frames = results.locator("[aria-label^='Frame at']")
             await frames.nth(1).hover()
             peek = page.get_by_role("tooltip")
             await expect(peek).to_contain_text("Flattening a bench")
@@ -569,7 +569,7 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
             await page.mouse.move(0, 0)
             await expect(peek).to_be_hidden()
             soft = results.get_by_role("listitem").filter(has_text="Setting a plane").first
-            await soft.locator("[aria-label^='Frame at']").first.hover()
+            await soft.get_by_role("img", name=re.compile(r"^Frame at ")).first.hover()
             await expect(peek).to_contain_text("Setting a plane")
             # The 160x90 tier gets the same card as the 320x180 one and upscales soft in it, rather than a
             # card that changes size with the Video.
@@ -594,10 +594,16 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
             row = sources.get_by_role("listitem").first
             await expect(row).to_contain_text("0:20")
             await expect(row).not_to_contain_text("Flattening a bench")
+            # Every frame of the strip plays the moment it shows, which is the moment its label announces.
+            await sources.get_by_role("button", name="Play Flattening a bench at 0:40").click()
+            embed = ("www.youtube-nocookie.com", "/embed/v-bench")
+            assert await embedded_at(sources.locator("iframe")) == (*embed, ["40"])
+            await cited.click()
+            assert await embedded_at(sources.locator("iframe")) == (*embed, ["20"])
 
             # One preference, in the panel's own header, governing this column and the search view both.
             await sources.get_by_role("switch", name="Thumbnails").click()
-            await expect(sources.locator("[aria-label^='Play Flattening']")).to_have_count(0)
+            await expect(sources.get_by_role("button", name=re.compile(r"^Play Flattening"))).to_have_count(0)
             await expect(row).to_contain_text("Flattening a bench")
 
             # It survives a reload, and search is governed by it too.
@@ -605,7 +611,7 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
             await rail.get_by_role("button", name="Search").click()
             await search.get_by_label("Question", exact=True).fill(QUESTION)
             await search.get_by_role("button", name="Search", exact=True).click()
-            await expect(results.locator("[aria-label^='Frame at']")).to_have_count(0)
+            await expect(results.get_by_role("img", name=re.compile(r"^Frame at "))).to_have_count(0)
             await expect(results.get_by_role("listitem").filter(has_text="Flattening a bench")).not_to_have_count(0)
 
             # Switched on again from Settings, which is where a friend who never opens a chat would find it.
@@ -615,7 +621,7 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
             await rail.get_by_role("button", name="Search").click()
             await search.get_by_label("Question", exact=True).fill(QUESTION)
             await search.get_by_role("button", name="Search", exact=True).click()
-            await expect(results.locator("[aria-label^='Frame at']")).not_to_have_count(0)
+            await expect(results.get_by_role("img", name=re.compile(r"^Frame at "))).not_to_have_count(0)
 
     assert errors == []
     # Frames are stored geometry only: showing them asked YouTube for nothing beyond the Videos' own ingestion.
