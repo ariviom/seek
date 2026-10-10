@@ -126,9 +126,36 @@ export function Rail({
       className="fixed inset-x-0 bottom-0 z-20 h-14 w-full border-t bg-sidebar md:relative md:inset-auto md:h-auto md:w-12 md:shrink-0 md:border-t-0"
     >
       <div className="group/rail flex h-full w-full flex-row items-center justify-center gap-1 overflow-hidden md:absolute md:inset-y-0 md:left-0 md:z-30 md:w-12 md:flex-col md:items-stretch md:justify-start md:border-r md:bg-sidebar md:px-1.5 md:py-2 md:transition-[width,box-shadow] md:duration-200 md:ease-out md:hover:w-52 md:hover:shadow-lg md:hover:delay-150 md:has-[:focus-visible]:w-52 md:has-[:focus-visible]:shadow-lg">
-        {/* Seek's mark: the K of the wordmark, a player's "previous" icon (docs/brand/seek-mark.svg). */}
-        <div className="hidden h-9 shrink-0 items-center px-2.5 md:mb-1 md:flex">
-          <svg aria-hidden viewBox="0 -1 82 102" className="h-5 w-auto fill-brand">
+        {/* Seek's wordmark (docs/brand/seek-logo-accent.svg) in two parts: collapsed, only its K shows, in the
+            icon slot; expanded, the K slides right to its place in the word (247.5 of the logo's units, 48.53px at
+            this 20px height) while SEE fades in before it. Both wait out the rail's own delay so the K never
+            leaves the 48px column before the rail widens. */}
+        <div className="relative hidden h-9 shrink-0 items-center px-2.5 md:mb-1 md:flex">
+          <svg
+            aria-hidden
+            viewBox="0 -1 233.5 102"
+            className="h-5 w-auto opacity-0 transition-opacity duration-200 group-hover/rail:opacity-100 group-hover/rail:delay-150 group-has-[:focus-visible]/rail:opacity-100 motion-reduce:transition-none"
+          >
+            <clipPath id="rail-logo-s">
+              <polygon points="-10,-10 80,-10 40,30 80,30 80,110 -10,110 30,70 -10,70" />
+            </clipPath>
+            <path
+              clipPath="url(#rail-logo-s)"
+              d="M80 10H32A20 20 0 0 0 32 50H38A20 20 0 0 1 38 90H-10"
+              className="fill-none stroke-foreground"
+              strokeWidth={20}
+            />
+            <path
+              d="M149.5 10H89.5V90H149.5M89.5 50H141.5M233.5 10H173.5V90H233.5M173.5 50H225.5"
+              className="fill-none stroke-foreground"
+              strokeWidth={20}
+            />
+          </svg>
+          <svg
+            aria-hidden
+            viewBox="0 -1 82 102"
+            className="absolute left-2.5 h-5 w-auto fill-brand transition-transform duration-200 ease-out group-hover/rail:translate-x-[48.53px] group-hover/rail:delay-150 group-has-[:focus-visible]/rail:translate-x-[48.53px] motion-reduce:transition-none"
+          >
             <rect x="0" y="0" width="20" height="100" />
             <polygon points="27,50 82,-1 82,101" />
           </svg>
