@@ -19,6 +19,10 @@ from seek.fakes import FakeChannel, FakeTranscriptSource, FakeVideo
 from seek.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
+# The avatar the transcripts fixture's Wood By Wright reports; its other Channels report none.
+WRIGHT_AVATAR = "https://yt3.googleusercontent.com/wright-avatar=s176-c-k-c0x00ffffff-no-rj"
+
+
 @asynccontextmanager
 async def running(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     """An in-process client for the app, with startup and shutdown run.

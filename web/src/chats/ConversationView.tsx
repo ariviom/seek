@@ -305,7 +305,12 @@ export function ConversationView({
         <Composer
           name={live.name}
           chip={
-            <ScopeChip kind={live.kind} name={live.name} members={live.members.map((m) => m.name)} locked={!isNew} />
+            <ScopeChip
+              kind={live.kind}
+              name={live.name}
+              members={live.members.map((m) => ({ name: m.name, src: m.avatar_url }))}
+              locked={!isNew}
+            />
           }
           draft={draft}
           onDraft={setDraft}

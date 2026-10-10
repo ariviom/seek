@@ -45,7 +45,7 @@ export function NewChat({
               const running = channelSync(syncs, member.id);
               return (
                 <li key={member.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <Avatar name={member.name} size="sm" />
+                  <Avatar name={member.name} src={member.avatar_url} size="sm" />
                   <span className="min-w-0 flex-1 truncate text-sm">{member.name}</span>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {plural(member.videos, "video")}

@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
-// Avatars are never fetched images: initials on a tint derived from the name, so the same Channel always
-// looks the same without a network round trip.
+// A Channel's YouTube avatar when one is known, else initials on a tint derived from the name, so the same
+// Channel always looks the same. The avatar URL is kept from Add channel and each Sync, never looked up per view,
+// and a failed image falls back to the initials (Drew, 2026-10-10).
 const tints = [
   "bg-rose-200 text-rose-900 dark:bg-rose-900 dark:text-rose-100",
   "bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100",
@@ -39,46 +41,64 @@ function initialsOf(name: string): string {
 
 export function Avatar({
   name,
+  src,
   shape = "round",
   size = "md",
   className,
 }: {
   name: string;
+  src?: string | null;
   shape?: "round" | "square";
   size?: AvatarSize;
   className?: string;
 }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const image = src && src !== failed ? src : null;
   return (
     <span
       aria-hidden
       className={cn(
-        "inline-flex shrink-0 items-center justify-center font-medium select-none",
+        "inline-flex shrink-0 items-center justify-center overflow-hidden font-medium select-none",
         shape === "round" ? "rounded-full" : "rounded-md",
         sizes[size],
         tintOf(name),
         className,
       )}
     >
-      {initialsOf(name)}
+      {image === null ? (
+        initialsOf(name)
+      ) : (
+        <img
+          src={image}
+          alt=""
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(image)}
+          className="size-full object-cover"
+        />
+      )}
     </span>
   );
 }
 
+export type AvatarMember = { name: string; src?: string | null };
+
 export function AvatarStack({
-  names,
+  members,
   shape = "round",
   size = "sm",
   className,
   ringClassName = "ring-sidebar",
 }: {
-  names: string[];
+  members: AvatarMember[];
   shape?: "round" | "square";
   size?: AvatarSize;
   className?: string;
   // The surface the stack sits on, so the overlap reads as a gap.
   ringClassName?: string;
 }) {
-  const shown = names.slice(0, 3);
+  const shown = members.slice(0, 3);
   if (shown.length === 0) {
     return (
       <span
@@ -94,10 +114,11 @@ export function AvatarStack({
   }
   return (
     <span className={cn("inline-flex shrink-0 items-center", className)}>
-      {shown.map((name, index) => (
+      {shown.map(({ name, src }, index) => (
         <Avatar
           key={`${name}-${index}`}
           name={name}
+          src={src}
           shape={shape}
           size={size}
           className={cn("ring-2", ringClassName, index > 0 && "-ml-2")}

@@ -1,5 +1,6 @@
 import { ExternalLink, Maximize2, X } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
+import { useChannelAvatars } from "@/lib/channel-avatars";
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/format";
 import type { Playback, PlaybackControls } from "@/lib/playback";
@@ -26,6 +27,7 @@ export function YouTubeEmbed({ playback }: { playback: Playback }) {
 // The inspector's player. While the lightbox is open it hands over the video, so two players never run.
 export function PlayerCard({ controls, empty }: { controls: PlaybackControls; empty: string }) {
   const { playback } = controls;
+  const avatarOf = useChannelAvatars();
   if (playback === null) {
     return (
       <p className="flex aspect-video items-center justify-center rounded-lg border border-dashed px-5 text-center text-xs text-muted-foreground">
@@ -44,7 +46,7 @@ export function PlayerCard({ controls, empty }: { controls: PlaybackControls; em
         )}
       </div>
       <div className="flex items-center gap-1 py-1.5 pr-1 pl-2.5">
-        <Avatar name={playable.channel_name} size="xs" />
+        <Avatar name={playable.channel_name} src={avatarOf(playable.channel_id)} size="xs" />
         <span className="ml-1 min-w-0 flex-1">
           <span className="block truncate text-xs">{playable.video_title}</span>
           <span className="block truncate text-[11px] text-muted-foreground tabular-nums">

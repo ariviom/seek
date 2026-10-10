@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import replace
 
-from seek import segments, syncs, videos
+from seek import channels, segments, syncs, videos
 from seek.db import Database
 from seek.events import Events
 from seek.ports import (
@@ -166,7 +166,11 @@ class SyncWorker:
                         else set()
                     )
                 )
-            listings = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id, known)
+            listing = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id, known)
+            listings = listing.videos
+            # The listing's extraction carries the avatar, so a Channel added before avatars were kept fills in here.
+            if (avatar := listing.avatar_url) is not None:
+                await self._database.run(lambda conn: channels.set_avatar(conn, sync.channel_id, avatar))
             new_videos = await self._database.run(
                 lambda conn: videos.record_discovery(
                     conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules

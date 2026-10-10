@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from seek.ports import (
     ChannelInfo,
+    ChannelListing,
     ChannelNotFound,
     ChatDone,
     ChatEngineStatus,
@@ -60,6 +61,7 @@ class FakeVideo:
 
 @dataclass
 class FakeChannel:
+    # Its avatar_url is what both Add channel and a Sync's listing report; replace it to change the avatar.
     info: ChannelInfo
     handles: Sequence[str]
     videos: list[FakeVideo] = field(default_factory=list)
@@ -95,12 +97,12 @@ class FakeTranscriptSource:
                 return channel.info
         raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
 
-    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> Sequence[VideoListing]:
+    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> ChannelListing:
         self._call("list_videos", channel_id)
         self.listings_known.append(frozenset(known_ids))
         for channel in self.channels:
             if channel.info.channel_id == channel_id:
-                return [v.listing for v in channel.all_videos]
+                return ChannelListing([v.listing for v in channel.all_videos], channel.info.avatar_url)
         raise ChannelNotFound(f"No YouTube channel found for {channel_id}")
 
     def list_playlist(self, playlist_id: str) -> Sequence[str]:

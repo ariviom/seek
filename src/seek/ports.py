@@ -16,6 +16,8 @@ from mcp.server.mcpserver import MCPServer
 class ChannelInfo:
     channel_id: str
     name: str
+    # The Channel's YouTube avatar, when YouTube offered one.
+    avatar_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,13 @@ class VideoListing:
     title: str
     duration_seconds: int | None
     published_on: date | None
+
+
+@dataclass(frozen=True)
+class ChannelListing:
+    videos: Sequence[VideoListing]
+    # The same avatar ChannelInfo carries, from the same extraction, when it offered one.
+    avatar_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -154,8 +163,9 @@ class TranscriptSource(Protocol):
         """Accepts a channel URL, an @handle, or a bare channel id."""
         ...
 
-    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> Sequence[VideoListing]:
-        """A cheap flat listing of the channel's videos and streams tabs, each newest first, which excludes Shorts.
+    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> ChannelListing:
+        """A cheap flat listing of the channel's videos and streams tabs, each newest first, which excludes Shorts,
+        with the channel's avatar.
 
         The listing may stop once a page holds only `known_ids`, so pass them only when the older ones are known to
         be complete. Raises ChannelNotFound for an unknown channel id.

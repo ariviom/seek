@@ -456,3 +456,25 @@ async def test_a_sync_left_running_by_a_stopped_server_resumes_at_startup(
 
     assert (finished["id"], finished["status"]) == (sync["id"], "done")
     assert videos["One"]["stage"] == "done"
+
+
+async def test_a_sync_keeps_the_avatar_its_listing_reports_without_asking_youtube_again(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    rex = await add_channel(client, "@rexkrueger")
+    youtube = fake_channel(transcripts, "UC-rex")
+    avatar = "https://yt3.googleusercontent.com/rex=s176-c-k-c0x00ffffff-no-rj"
+    youtube.info = replace(youtube.info, avatar_url=avatar)
+
+    await start_sync(client, rex["id"])
+    await wait_for_syncs(client)
+    [refreshed] = (await client.get("/api/channels")).json()
+    # A listing without one leaves the avatar already known.
+    youtube.info = replace(youtube.info, avatar_url=None)
+    await start_sync(client, rex["id"])
+    await wait_for_syncs(client)
+    [kept] = (await client.get("/api/channels")).json()
+
+    assert rex["avatar_url"] is None
+    assert refreshed["avatar_url"] == kept["avatar_url"] == avatar
+    assert [method for method, _ in transcripts.calls] == ["resolve_channel", "list_videos", "list_videos"]

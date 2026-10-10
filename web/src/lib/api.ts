@@ -81,6 +81,8 @@ export type Channel = {
   excluded_videos: number;
   // When the Channel's last Sync finished successfully.
   last_synced_at: string | null;
+  // The Channel's YouTube avatar, once Add channel or a Sync found one.
+  avatar_url: string | null;
 };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
 export type Group = { id: number; name: string; channels: { id: number; name: string }[] };

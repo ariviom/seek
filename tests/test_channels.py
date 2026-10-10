@@ -2,6 +2,7 @@ from pathlib import Path
 
 import httpx
 from harness import (
+    WRIGHT_AVATAR,
     add_channel,
     add_group,
     fake_channel,
@@ -127,6 +128,20 @@ async def test_an_unavailable_youtube_source_is_reported_as_service_unavailable(
     assert response.json()["detail"] == "YouTube is rate limiting requests"
 
 
+async def test_a_channel_keeps_the_avatar_youtube_offered_when_it_was_added(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    added = await add_channel(client, "@woodbywright")
+    await add_channel(client, "@rexkrueger")
+
+    listed = (await client.get("/api/channels")).json()
+
+    assert added["avatar_url"] == WRIGHT_AVATAR
+    # A Channel YouTube gave no avatar has none, and the UI draws its initials.
+    assert [(c["name"], c["avatar_url"]) for c in listed] == [("Rex Krueger", None), ("Wood By Wright", WRIGHT_AVATAR)]
+    assert [method for method, _ in transcripts.calls] == ["resolve_channel", "resolve_channel"]
+
+
 async def test_unresolvable_channels_are_rejected(client: httpx.AsyncClient) -> None:
     await add_channel(client, "@woodbywright")
 
@@ -156,6 +171,7 @@ async def test_a_channel_can_be_indexed_again_and_only_takes_a_real_boolean(clie
         "failed_videos": 0,
         "excluded_videos": 0,
         "last_synced_at": None,
+        "avatar_url": WRIGHT_AVATAR,
     }
     assert loose.status_code == 422
 

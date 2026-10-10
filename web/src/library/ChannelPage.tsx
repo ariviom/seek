@@ -66,7 +66,7 @@ export function ChannelPage({
         </Alert>
       )}
       <div className="flex items-start gap-3">
-        <Avatar name={channel.name} size="lg" />
+        <Avatar name={channel.name} src={channel.avatar_url} size="lg" />
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold tracking-tight">
             <a

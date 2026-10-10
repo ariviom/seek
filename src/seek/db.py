@@ -365,6 +365,11 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     );
     """,
     _thumbnails_preference,
+    """
+    -- The Channel's YouTube avatar, kept from Add channel and refreshed by each Sync's listing. NULL until one is
+    -- known, and the UI shows initials then.
+    ALTER TABLE channels ADD COLUMN avatar_url TEXT;
+    """,
 ]
 
 

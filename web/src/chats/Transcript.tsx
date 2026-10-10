@@ -1,6 +1,7 @@
 import { AlertCircle, FileSearch, Globe2, Loader2, Search } from "lucide-react";
 import type { ChatMessage, Citation } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
+import { useChannelAvatars } from "@/lib/channel-avatars";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { formatDuration, plural } from "@/lib/format";
@@ -118,6 +119,7 @@ function AnswerView({
   onPlay: (citation: Citation) => void;
 }) {
   const consulted = [...new Set(answer.tools.flatMap((tool) => tool.consulted))];
+  const avatarOf = useChannelAvatars();
   return (
     <div className="space-y-2.5">
       {answer.tools.length > 0 && (
@@ -164,7 +166,7 @@ function AnswerView({
                     key === playingKey && "border-foreground/40 bg-accent",
                   )}
                 >
-                  <Avatar name={citation.channel_name} size="xs" />
+                  <Avatar name={citation.channel_name} src={avatarOf(citation.channel_id)} size="xs" />
                   <span className="max-w-[15rem] truncate">{citation.video_title}</span>
                   <span className="text-muted-foreground tabular-nums">{formatDuration(citation.seconds)}</span>
                 </button>

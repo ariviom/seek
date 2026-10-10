@@ -74,7 +74,7 @@ Store, API, tools:
 ### Web stack
 - React 19, Vite, Tailwind v4, TypeScript with no `any`, as before. **shadcn/ui** added the standard way (`components.json`, `@/` alias, `web/src/components/ui/`), zinc base colour, CSS variables, class-based dark mode via `@custom-variant dark`. Components used: Button, Badge, Input, Textarea, Select, Tabs, Popover, DropdownMenu, Dialog, Sheet, Switch, Tooltip, ScrollArea, Separator, Alert. Icons from lucide-react. No toasts.
 - Type: Geist (`@fontsource-variable/geist`); Barlow and Barlow Condensed removed. Base size 14px; titles `text-sm font-medium`; page headings `text-lg font-semibold tracking-tight`.
-- Avatars are initials from the name on a deterministic tint (Channels round, Groups square), never fetched images.
+- Avatars are initials from the name on a deterministic tint (Channels round, Groups square). A Channel shows its YouTube avatar instead when one is known (kept from Add channel and each Sync's listing, never fetched per page view), and its initials when none is or the image fails to load (Drew, 2026-10-10).
 - No router library. A `useUrlState` hook keeps `view` (`chats | search | library | syncs`) and the selection (`conversation`, `channel`, `group`, `sync`, `tab`) in the query string with `history.replaceState`, so reload and links restore the view. Relative URLs and the reverse-proxy prefix keep working as in v1.
 - Theme: `dark` class on `<html>`, chosen from `localStorage` (`theme`: `light | dark | system`), default `system`.
 

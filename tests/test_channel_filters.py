@@ -2,6 +2,7 @@ from datetime import date
 
 import httpx
 from harness import (
+    WRIGHT_AVATAR,
     Json,
     add_channel,
     fake_channel,
@@ -58,6 +59,7 @@ async def test_channel_filters_are_editable_without_touching_indexed(client: htt
         "failed_videos": 0,
         "excluded_videos": 0,
         "last_synced_at": None,
+        "avatar_url": WRIGHT_AVATAR,
         "filters": {
             "published_after": "2023-01-01",
             "published_before": "2024-12-31",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelRight } from "lucide-react";
 import {
   api,
@@ -10,6 +10,7 @@ import {
   type Scope,
   type Settings,
 } from "@/lib/api";
+import { ChannelAvatars, avatarsOf } from "@/lib/channel-avatars";
 import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
 import { useMediaQuery } from "@/lib/media";
 import { usePlayback } from "@/lib/playback";
@@ -68,6 +69,7 @@ function typingIn(target: EventTarget | null): boolean {
 export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [channels, setChannels] = useState<Channel[] | null>(null);
+  const avatars = useMemo(() => avatarsOf(channels), [channels]);
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [healthOpen, setHealthOpen] = useState(false);
   const { view, selection, setView, select } = useUrlState();
@@ -435,7 +437,7 @@ export function App() {
     );
   const inspectorTitle = inspected[view];
 
-  return (
+  const shell = (
     <div className="flex h-screen">
       <Rail
         view={view}
@@ -568,6 +570,7 @@ export function App() {
       </Dialog>
     </div>
   );
+  return <ChannelAvatars value={avatars}>{shell}</ChannelAvatars>;
 }
 
 function Fact({ term, value, wrap = false }: { term: string; value: string; wrap?: boolean }) {

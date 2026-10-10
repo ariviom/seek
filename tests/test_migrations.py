@@ -14,6 +14,7 @@ SCHEMA_8 = 8
 SCHEMA_9 = 9
 SCHEMA_13 = 13
 SCHEMA_14 = 14
+SCHEMA_16 = 16
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -238,6 +239,22 @@ def test_migrations_15_and_16_add_storyboards_and_let_frames_be_turned_off(tmp_p
     )
     conn.execute("DELETE FROM videos WHERE id = 11")
     assert conn.execute("SELECT count(*) FROM storyboards").fetchone()[0] == 0
+    conn.close()
+
+
+def test_migration_17_leaves_the_channels_already_added_without_an_avatar_until_they_sync(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "seek.db")
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_16])
+        db.migrate(conn)
+    conn.execute("INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright')")
+
+    db.migrate(conn)
+
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert [tuple(row) for row in conn.execute("SELECT id, name, avatar_url FROM channels")] == [
+        (3, "Wood By Wright", None)
+    ]
     conn.close()
 
 

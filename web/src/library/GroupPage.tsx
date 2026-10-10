@@ -66,7 +66,7 @@ export function GroupPage({
             <ul className="mt-3 space-y-1">
               {channels.map((channel) => (
                 <li key={channel.id} className="flex items-center gap-2.5">
-                  <Avatar name={channel.name} size="sm" />
+                  <Avatar name={channel.name} src={channel.avatar_url} size="sm" />
                   <span className="min-w-0 flex-1 truncate text-sm">{channel.name}</span>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {plural(channel.indexed_videos, "video")}

@@ -8,7 +8,7 @@ import {
   type Group,
   type Scope,
 } from "@/lib/api";
-import { Avatar, AvatarStack } from "@/components/Avatar";
+import { Avatar, AvatarStack, type AvatarMember } from "@/components/Avatar";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { avatarsOf } from "@/lib/channel-avatars";
 import { useChanges } from "@/lib/changes";
 import { formatWhen, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,7 @@ type Folder = {
   // Null for the trailing folder of chats whose Group or Channel was removed.
   scope: Scope | null;
   name: string;
-  members: string[];
+  members: AvatarMember[];
   chats: ConversationSummary[];
 };
 
@@ -62,19 +63,20 @@ export function useConversations(version: number) {
 // One flat list of Groups and Channels, each holding its chats, the folder with the newest chat first and those with
 // none last, alphabetically. The list is already newest first, so a folder ranks by where its first chat appears.
 function foldersOf(conversations: ConversationSummary[], groups: Group[], channels: Channel[]): Folder[] {
+  const avatars = avatarsOf(channels);
   const live: Folder[] = [
     ...groups.map((group) => ({
       key: scopeKey({ kind: "group", id: group.id }),
       scope: { kind: "group" as const, id: group.id },
       name: group.name,
-      members: group.channels.map((c) => c.name),
+      members: group.channels.map((c) => ({ name: c.name, src: avatars.get(c.id) })),
       chats: [],
     })),
     ...channels.map((channel) => ({
       key: scopeKey({ kind: "channel", id: channel.id }),
       scope: { kind: "channel" as const, id: channel.id },
       name: channel.name,
-      members: [channel.name],
+      members: [{ name: channel.name, src: channel.avatar_url }],
       chats: [],
     })),
   ];
@@ -112,8 +114,8 @@ function useCollapsed() {
 }
 
 function FolderAvatar({ folder, ringClassName }: { folder: Folder; ringClassName?: string }) {
-  if (folder.scope?.kind === "channel") return <Avatar name={folder.name} size="xs" />;
-  return <AvatarStack names={folder.members} size="xs" ringClassName={ringClassName} />;
+  if (folder.scope?.kind === "channel") return <Avatar name={folder.name} src={folder.members[0]?.src} size="xs" />;
+  return <AvatarStack members={folder.members} size="xs" ringClassName={ringClassName} />;
 }
 
 // The header's "+": a new chat in any live folder.

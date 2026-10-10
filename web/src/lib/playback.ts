@@ -4,7 +4,7 @@ import type { Citation } from "@/lib/api";
 // What the player needs of a Citation. A search result at a second is one too.
 export type Playable = Pick<
   Citation,
-  "youtube_video_id" | "seconds" | "video_title" | "channel_name" | "published_on" | "url"
+  "youtube_video_id" | "seconds" | "video_title" | "channel_id" | "channel_name" | "published_on" | "url"
 >;
 // `opening` counts plays, so playing the same moment again remounts the embed and restarts it.
 export type Playback = { playable: Playable; opening: number };

@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Play } from "lucide-react";
 import { api, errorText, type Expansion as ExpansionShape, type Group, type Scope, type SearchResult } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
+import { useChannelAvatars } from "@/lib/channel-avatars";
 import { FrameStrip, momentKey, runsOf, searchFrames, useFrames } from "@/components/Frames";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -137,6 +138,7 @@ function Result({
   const [expansion, setExpansion] = useState<ExpansionShape | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const avatarOf = useChannelAvatars();
   const matched = Math.floor(result.matched_seconds);
   const playing = playingKey === playableKey({ ...result, seconds: matched });
 
@@ -174,7 +176,7 @@ function Result({
           <Play className="size-3" aria-hidden /> {formatDuration(matched)}
         </button>
         <span className="inline-flex items-center gap-1.5">
-          <Avatar name={result.channel_name} size="xs" /> {result.channel_name}
+          <Avatar name={result.channel_name} src={avatarOf(result.channel_id)} size="xs" /> {result.channel_name}
         </span>
         {titled && <span className="text-foreground">{result.video_title}</span>}
         {result.chapter_title !== null && <span>{result.chapter_title}</span>}

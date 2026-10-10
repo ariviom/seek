@@ -3,7 +3,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import running
+from harness import WRIGHT_AVATAR, running
 
 from seek.app import create_app
 from seek.config import Config
@@ -21,7 +21,7 @@ def transcripts() -> FakeTranscriptSource:
     return FakeTranscriptSource(
         channels=[
             FakeChannel(
-                info=ChannelInfo(channel_id="UC-wright", name="Wood By Wright"),
+                info=ChannelInfo(channel_id="UC-wright", name="Wood By Wright", avatar_url=WRIGHT_AVATAR),
                 handles=["@woodbywright", "https://www.youtube.com/@woodbywright"],
             ),
             FakeChannel(

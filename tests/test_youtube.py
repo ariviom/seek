@@ -9,6 +9,7 @@ import yt_dlp
 
 from seek.ports import Chapter, ChannelNotFound, Cue, Storyboard, VideoDetails, VideoListing, VideoUnavailable
 from seek.youtube import (
+    avatar_url,
     CaptionTrack,
     caption_track,
     channel_url,
@@ -86,6 +87,23 @@ def test_listings_keep_order_and_leave_the_approximate_date_out() -> None:
         VideoListing("c9OnQEHUpvI", "The Forgotten Alternative", duration_seconds=1031, published_on=None),
         VideoListing("LFzLQTySDCk", "Upcoming", duration_seconds=None, published_on=None),
     ]
+
+
+def test_the_avatar_is_the_square_crop_at_a_small_size_and_never_a_banner() -> None:
+    avatar = "https://yt3.googleusercontent.com/pSHat-8"
+    banner = "https://yt3.googleusercontent.com/2SLF"
+    # As a channel tab extraction lists them: the square avatar, the original upload, then banners.
+    thumbnails: list[dict[str, Any]] = [
+        {"url": f"{avatar}=s900-c-k-c0x00ffffff-no-rj", "width": 900, "height": 900},
+        {"id": "avatar_uncropped", "url": f"{avatar}=s0", "preference": 1},
+        {"url": f"{banner}=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj", "width": 1060, "height": 175},
+        {"id": "banner_uncropped", "url": f"{banner}=s0", "preference": -5},
+    ]
+
+    assert avatar_url({"thumbnails": thumbnails}) == f"{avatar}=s176-c-k-c0x00ffffff-no-rj"
+    assert avatar_url({"thumbnails": thumbnails[1:]}) == f"{avatar}=s176"
+    assert avatar_url({"thumbnails": thumbnails[2:]}) is None
+    assert avatar_url({}) is None
 
 
 def test_video_details_come_from_the_full_metadata_with_chapter_ends_filled_in() -> None:

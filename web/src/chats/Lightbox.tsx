@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { Avatar } from "@/components/Avatar";
+import { useChannelAvatars } from "@/lib/channel-avatars";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogOverlay, DialogPortal, DialogTitle } from "@/components/ui/dialog";
 import { formatDuration } from "@/lib/format";
@@ -15,6 +16,7 @@ const onDark = "border-white/15 bg-transparent text-zinc-100 hover:bg-white/10 h
 export function Lightbox({ controls }: { controls: PlaybackControls }) {
   const { playback } = controls;
   const closeButton = useRef<HTMLButtonElement>(null);
+  const avatarOf = useChannelAvatars();
   return (
     <Dialog open={controls.large && playback !== null} onOpenChange={(open) => !open && controls.closeLarge()}>
       {playback !== null && (
@@ -31,7 +33,7 @@ export function Lightbox({ controls }: { controls: PlaybackControls }) {
               <YouTubeEmbed playback={playback} />
             </div>
             <div className="mt-3 flex items-center gap-3">
-              <Avatar name={playback.playable.channel_name} size="sm" />
+              <Avatar name={playback.playable.channel_name} src={avatarOf(playback.playable.channel_id)} size="sm" />
               <div className="min-w-0 flex-1">
                 <DialogTitle className="truncate text-sm font-medium text-zinc-100">
                   {playback.playable.video_title}

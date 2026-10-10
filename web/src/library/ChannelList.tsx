@@ -34,7 +34,7 @@ export function ChannelList({
         return (
           <li key={channel.id}>
             <ListRow selected={channel.id === selectedId} onClick={() => onSelect(channel)}>
-              <Avatar name={channel.name} size="md" />
+              <Avatar name={channel.name} src={channel.avatar_url} size="md" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{channel.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">{channelMeta(channel, running)}</span>

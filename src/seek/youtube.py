@@ -22,6 +22,7 @@ from yt_dlp.networking.exceptions import HTTPError
 from seek.ports import (
     Chapter,
     ChannelInfo,
+    ChannelListing,
     ChannelNotFound,
     Cue,
     PlaylistNotFound,
@@ -137,24 +138,32 @@ class YouTubeTranscriptSource:
         channel_id = info.get("channel_id")
         if not isinstance(channel_id, str) or not _CHANNEL_ID.fullmatch(channel_id):
             raise ChannelNotFound(f"No YouTube channel found for {url_or_handle}")
-        return ChannelInfo(channel_id=channel_id, name=str(info.get("channel") or info.get("uploader") or channel_id))
+        return ChannelInfo(
+            channel_id=channel_id,
+            name=str(info.get("channel") or info.get("uploader") or channel_id),
+            avatar_url=avatar_url(info),
+        )
 
-    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> Sequence[VideoListing]:
+    def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> ChannelListing:
         # The streams tab after the videos tab, so a listing's order stays newest first within each.
         found: list[VideoListing] = []
+        avatar: str | None = None
         for tab in ("videos", "streams"):
             try:
-                entries = self._call(_tab_entries(f"{_YOUTUBE}/channel/{channel_id}/{tab}", known_ids), sync=True)
+                tab_avatar, entries = self._call(
+                    _tab_entries(f"{_YOUTUBE}/channel/{channel_id}/{tab}", known_ids), sync=True
+                )
             except _Failed as failed:
                 if _NO_TAB.search(failed.error.message):
                     continue
                 raise _channel_error(failed.error, channel_id) from None
+            avatar = avatar or tab_avatar
             found += listings(entries)
         # Merged by id: a stream can appear on both tabs.
         merged: dict[str, VideoListing] = {}
         for listing in found:
             merged.setdefault(listing.video_id, listing)
-        return list(merged.values())
+        return ChannelListing(videos=list(merged.values()), avatar_url=avatar)
 
     def list_playlist(self, playlist_id: str) -> Sequence[str]:
         try:
@@ -277,14 +286,31 @@ def _flat_entries(url: str) -> Callable[[Any, _Log], list[Mapping[str, Any]]]:
     return extract
 
 
-def _tab_entries(url: str, known_ids: Collection[str]) -> Callable[[Any, _Log], list[Mapping[str, Any]]]:
-    def extract(ydl: Any, _: _Log) -> list[Mapping[str, Any]]:
+def _tab_entries(
+    url: str, known_ids: Collection[str]
+) -> Callable[[Any, _Log], tuple[str | None, list[Mapping[str, Any]]]]:
+    def extract(ydl: Any, _: _Log) -> tuple[str | None, list[Mapping[str, Any]]]:
         # process=False leaves the entries as a generator that fetches a page at a time, so stopping early
         # spares the requests for the pages of Videos already known.
-        entries = ydl.extract_info(url, download=False, process=False).get("entries") or []
-        return take_until_known(entries, known_ids)
+        info = ydl.extract_info(url, download=False, process=False)
+        return avatar_url(info), take_until_known(info.get("entries") or [], known_ids)
 
     return extract
+
+
+# YouTube serves an avatar at whatever size its =sNNN suffix asks; the UI draws one at most 44 px across, so 176
+# stays sharp on any screen without fetching the 900 px original.
+_AVATAR_SIZE = re.compile(r"=s\d+(?=-|$)")
+
+
+def avatar_url(info: Mapping[str, Any]) -> str | None:
+    """The channel's avatar from a channel tab extraction's thumbnails, which hold its banners too."""
+    thumbnails = [t for t in info.get("thumbnails") or [] if isinstance(t.get("url"), str)]
+    # The square crop YouTube shows, else the uploaded original.
+    square = [t for t in thumbnails if isinstance(t.get("width"), int) and t.get("width") == t.get("height")]
+    uncropped = [t for t in thumbnails if t.get("id") == "avatar_uncropped"]
+    candidates = [*square, *uncropped]
+    return _AVATAR_SIZE.sub("=s176", candidates[0]["url"], count=1) if candidates else None
 
 
 def take_until_known(

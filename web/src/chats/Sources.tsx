@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 import type { Citation, Frame, Moment } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
+import { useChannelAvatars } from "@/lib/channel-avatars";
 import { FrameStrip, momentKey, sourcesFrames, useFrames } from "@/components/Frames";
 import { formatDuration } from "@/lib/format";
 import { playableKey } from "@/lib/playback";
@@ -58,6 +59,7 @@ export function Sources({
   const groups = sourcesOf(citations);
   const cited = citedVideos(groups.flatMap((group) => group.citations));
   const frames = useFrames(cited.map(momentOf), thumbnails);
+  const avatarOf = useChannelAvatars();
   if (groups.length === 0) {
     return <p className="px-1 pt-3 text-xs text-muted-foreground">Sources an answer cites are listed here.</p>;
   }
@@ -68,7 +70,7 @@ export function Sources({
         return (
         <section key={group.key} aria-label={group.channelName}>
           <div className="flex items-center gap-2 px-1 pt-2 pb-1">
-            <Avatar name={group.channelName} size="xs" />
+            <Avatar name={group.channelName} src={avatarOf(group.citations[0]?.channel_id ?? null)} size="xs" />
             <h3 className="truncate text-xs font-medium">{group.channelName}</h3>
           </div>
           {/* One strip per cited Video of this Channel, each frame playing that Video's cited moment. Several

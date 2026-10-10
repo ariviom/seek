@@ -33,6 +33,7 @@ class Channel:
     failed_videos: int = 0
     excluded_videos: int = 0
     last_synced_at: str | None = None
+    avatar_url: str | None = None
 
 
 # The channels table with each Channel's Video counts and last completed Sync.
@@ -61,6 +62,7 @@ def _channel(row: sqlite3.Row) -> Channel:
         failed_videos=row["failed_videos"],
         excluded_videos=row["excluded_videos"],
         last_synced_at=row["last_synced_at"],
+        avatar_url=row["avatar_url"],
     )
 
 
@@ -93,10 +95,16 @@ def create_channel(conn: sqlite3.Connection, info: ChannelInfo, name: str | None
         if existing is not None:
             raise Conflict(f"The Channel {info.name!r} is already added as {existing['name']!r}")
         (channel_id,) = conn.execute(
-            "INSERT INTO channels (youtube_channel_id, name) VALUES (?, ?) RETURNING id",
-            (info.channel_id, name or info.name),
+            "INSERT INTO channels (youtube_channel_id, name, avatar_url) VALUES (?, ?, ?) RETURNING id",
+            (info.channel_id, name or info.name, info.avatar_url),
         ).fetchone()
         return _get_channel(conn, channel_id)
+
+
+def set_avatar(conn: sqlite3.Connection, channel_id: int, avatar_url: str) -> None:
+    """Keeps the avatar a Sync's listing found; a Channel deleted meanwhile is left gone."""
+    with transaction(conn):
+        conn.execute("UPDATE channels SET avatar_url = ? WHERE id = ?", (avatar_url, channel_id))
 
 
 def update_channel(

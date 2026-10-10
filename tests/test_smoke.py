@@ -11,6 +11,7 @@ import httpx2
 import pytest
 from api_transport import Provider, ToolUse, answer
 from harness import (
+    WRIGHT_AVATAR,
     Gate,
     add_channel,
     add_group,
@@ -32,6 +33,7 @@ WEB = Path(__file__).parents[1] / "web"
 # A storyboard sheet as the page would load one: three by three tiles of 320x180.
 QUESTION = "plane across the grain"
 SHEET = b'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#444"/></svg>'
+AVATAR = b'<svg xmlns="http://www.w3.org/2000/svg" width="176" height="176"><rect width="176" height="176" fill="#a52"/></svg>'
 
 
 
@@ -71,6 +73,11 @@ async def browsing(base_url: str) -> AsyncIterator[tuple[Page, list[str]]]:
             # Storyboard sheets are answered here with a grid-sized image, since the page must be able to load one
             # and must not load it from YouTube. Registered last, which is what gives it priority over the abort.
             await page.route("**/sb/**", lambda route: route.fulfill(body=SHEET, content_type="image/svg+xml"))
+            # Channel avatars likewise, so a Channel with one shows it rather than falling back to initials.
+            await page.route(
+                "https://yt3.googleusercontent.com/**",
+                lambda route: route.fulfill(body=AVATAR, content_type="image/svg+xml"),
+            )
             yield page, errors
 
 
@@ -455,6 +462,9 @@ async def test_adding_a_channel_advises_starting_small_and_a_running_sync_report
     app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
 
     async with serving(app) as base_url:
+        # YouTube offers no avatar for this one.
+        async with httpx.AsyncClient(base_url=base_url) as api:
+            await add_channel(api, "@rexkrueger")
         async with browsing(base_url) as (page, errors):
             await page.goto(base_url)
             main = page.get_by_role("main")
@@ -467,6 +477,16 @@ async def test_adding_a_channel_advises_starting_small_and_a_running_sync_report
             await add.get_by_label("YouTube channel URL or handle").fill("@woodbywright")
             await add.get_by_role("button", name="Look up").click()
             await add.get_by_role("button", name="Add", exact=True).click()
+
+            # The added Channel shows the avatar YouTube offered, loaded rather than fallen back from; the one
+            # without an avatar shows its initials.
+            wright_row = library.get_by_role("listitem").filter(has_text="Wood By Wright")
+            avatar = wright_row.locator("img")
+            await expect(avatar).to_have_attribute("src", WRIGHT_AVATAR)
+            await expect(avatar).to_have_js_property("naturalWidth", 176)
+            rex_row = library.get_by_role("listitem").filter(has_text="Rex Krueger")
+            await expect(rex_row).to_contain_text("RK")
+            await expect(rex_row.locator("img")).to_have_count(0)
 
             videos_card = main.locator("section").filter(has=page.get_by_role("heading", name="Videos"))
             await main.get_by_role("button", name="Sync now").click()

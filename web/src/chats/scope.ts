@@ -4,7 +4,7 @@ import type { Channel, Group, Scope } from "@/lib/api";
 // can't start there, if it can't.
 export type LiveScope = Scope & {
   name: string;
-  members: { id: number; name: string; videos: number }[];
+  members: { id: number; name: string; videos: number; avatar_url: string | null }[];
   unavailable: string | null;
 };
 
@@ -18,10 +18,10 @@ export function liveScope(scope: Scope, groups: Group[] | null, channels: Channe
   if (scope.kind === "group") {
     const group = groups.find((g) => g.id === scope.id);
     if (group === undefined) return null;
-    const members = group.channels.map((member) => ({
-      ...member,
-      videos: channels.find((c) => c.id === member.id)?.indexed_videos ?? 0,
-    }));
+    const members = group.channels.map((member) => {
+      const channel = channels.find((c) => c.id === member.id);
+      return { ...member, videos: channel?.indexed_videos ?? 0, avatar_url: channel?.avatar_url ?? null };
+    });
     return {
       ...scope,
       name: group.name,
@@ -34,7 +34,7 @@ export function liveScope(scope: Scope, groups: Group[] | null, channels: Channe
   return {
     ...scope,
     name: channel.name,
-    members: [{ id: channel.id, name: channel.name, videos: channel.indexed_videos }],
+    members: [{ id: channel.id, name: channel.name, videos: channel.indexed_videos, avatar_url: channel.avatar_url }],
     unavailable: channel.indexed ? null : "This channel is paused, so it can’t answer. Resume it on its page.",
   };
 }
