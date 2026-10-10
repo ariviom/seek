@@ -3,6 +3,8 @@ name = "seek"
 version = "0.1.0"
 description = "Turn YouTube channels into a cited, searchable knowledge base for Claude"
 requires-python = ">=3.13,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.141",
     "uvicorn>=0.52",
