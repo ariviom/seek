@@ -70,12 +70,16 @@ export type ChannelFilters = {
   playlist_id: string | null;
   most_recent: number | null;
 };
+// How often the server checks a Channel for new videos, in hours.
+export type CheckHours = 6 | 24 | 168;
 export type Channel = {
   id: number;
   youtube_channel_id: string;
   name: string;
   indexed: boolean;
   filters: ChannelFilters;
+  // Null is off; a paused Channel keeps its setting but isn't checked.
+  check_every_hours: CheckHours | null;
   indexed_videos: number;
   failed_videos: number;
   excluded_videos: number;
@@ -286,6 +290,8 @@ export const api = {
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { indexed } }),
   setChannelFilters: (id: number, filters: ChannelFilters) =>
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { filters } }),
+  setChannelChecks: (id: number, check_every_hours: CheckHours | null) =>
+    request<Channel>(`channels/${id}`, { method: "PATCH", body: { check_every_hours } }),
   deleteChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
   listGroups: () => request<Group[]>("groups"),
   createGroup: (name: string) => request<Group>("groups", { method: "POST", body: { name } }),

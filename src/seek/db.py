@@ -370,6 +370,12 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     -- known, and the UI shows initials then.
     ALTER TABLE channels ADD COLUMN avatar_url TEXT;
     """,
+    """
+    -- How often the server checks a Channel for new Videos; NULL is off. New Channels check daily. A Paused Channel
+    -- is skipped whatever its setting, so those already Paused start off rather than checking once resumed.
+    ALTER TABLE channels ADD COLUMN check_every_hours INTEGER DEFAULT 24 CHECK (check_every_hours IN (6, 24, 168));
+    UPDATE channels SET check_every_hours = NULL WHERE indexed = 0;
+    """,
 ]
 
 

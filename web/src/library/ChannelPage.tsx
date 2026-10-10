@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
-import { api, type Channel, type Group, type Scope, type Stage, type Sync } from "@/lib/api";
+import { api, type Channel, type CheckHours, type Group, type Scope, type Stage, type Sync } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChanges } from "@/lib/changes";
 import { formatWhen } from "@/lib/format";
 import { channelSync, syncProgress, useNow } from "@/lib/sync-status";
@@ -28,6 +29,18 @@ function channelCounts(channel: Channel, syncs: Sync[] | null): Record<Stage, nu
     failed: channel.failed_videos,
     excluded: channel.excluded_videos,
   };
+}
+
+const checkLabels: Record<string, string> = { "6": "Every 6 hours", "24": "Daily", "168": "Weekly", off: "Off" };
+
+// The server checks again once the latest Sync was queued longer ago than the interval; the list holds the newest
+// Syncs, and a Channel whose latest has dropped off it is judged by when it last synced.
+function nextCheck(channel: Channel, syncs: Sync[] | null, now: number): string | null {
+  if (!channel.indexed) return "Paused channels aren’t checked.";
+  if (channel.check_every_hours === null) return null;
+  const since = syncs?.find((sync) => sync.channel_id === channel.id)?.queued_at ?? channel.last_synced_at;
+  const due = since === null ? now : new Date(since).getTime() + channel.check_every_hours * 3_600_000;
+  return due <= now ? "Next check soon." : `Next check around ${formatWhen(new Date(due).toISOString())}.`;
 }
 
 export function ChannelPage({
@@ -57,6 +70,7 @@ export function ChannelPage({
   const filters = filtersSummary(channel.filters);
   const running = channelSync(syncs, channel.id);
   const now = useNow(running === null ? 0 : 10);
+  const checkNote = nextCheck(channel, syncs, now);
 
   return (
     <div className="space-y-5">
@@ -131,6 +145,31 @@ export function ChannelPage({
             <Button size="sm" variant="ghost" aria-expanded={videosOpen} onClick={() => setVideosOpen(!videosOpen)}>
               Videos
             </Button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span id="channel-checks" className="text-xs text-muted-foreground">
+              Check for new videos
+            </span>
+            <Select
+              value={channel.check_every_hours === null ? "off" : String(channel.check_every_hours)}
+              onValueChange={(value) =>
+                void act(() =>
+                  api.setChannelChecks(channel.id, value === "off" ? null : (Number(value) as CheckHours)),
+                )
+              }
+            >
+              <SelectTrigger size="sm" className="w-36" aria-labelledby="channel-checks">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(checkLabels).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {checkNote !== null && <span className="text-xs text-muted-foreground">{checkNote}</span>}
           </div>
           <div className="mt-4">
             <StageRule counts={channelCounts(channel, syncs)} detailed />

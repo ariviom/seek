@@ -72,82 +72,11 @@ WantedBy=default.target
     ]
 
 
-def test_a_timer_runs_a_sync_of_all_channels_on_the_schedule_with_the_same_environment(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
-    executable(bin_dir, "claude")
-    executable(bin_dir, "deno")
-    env = {"PATH": f"{bin_dir}:/usr/bin", "HF_HOME": "/models/hf", "SEEK_PORT": "7400"}
-    systemctl = Systemctl()
-
-    installed = install_service(
-        Config(data_dir=tmp_path / "data"),
-        env,
-        Path("/tools/bin/seek"),
-        tmp_path / "units",
-        systemctl,
-        sync_schedule="Mon *-*-* 04:00",
-    )
-
-    assert installed.timer_path == tmp_path / "units" / "seek-sync.timer"
-    assert (tmp_path / "units" / "seek-sync.service").read_text() == f"""\
-[Unit]
-Description=Seek scheduled Sync of every active Channel
-After=seek.service
-
-[Service]
-Type=oneshot
-ExecStart="/tools/bin/seek" sync --all
-Environment="PATH={bin_dir}:/usr/bin"
-Environment="HF_HOME=/models/hf"
-Environment="SEEK_PORT=7400"
-Environment="SEEK_CLAUDE_CLI_PATH={bin_dir / "claude"}"
-UnsetEnvironment=ANTHROPIC_API_KEY
-"""
-    assert installed.timer_path.read_text() == """\
-[Unit]
-Description=Seek scheduled Sync of every active Channel
-
-[Timer]
-OnCalendar=Mon *-*-* 04:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-"""
-    assert systemctl.calls == [
-        ["daemon-reload"],
-        ["enable", "seek.service"],
-        ["restart", "seek.service"],
-        ["enable", "seek-sync.timer"],
-        ["restart", "seek-sync.timer"],
-    ]
-
-
-def test_reinstalling_without_a_schedule_refreshes_the_sync_environment_and_keeps_the_timer(tmp_path: Path) -> None:
-    units = tmp_path / "units"
+def test_only_the_server_unit_is_installed(tmp_path: Path) -> None:
     install_service(
-        Config(data_dir=tmp_path / "data"), {"PATH": "/old/bin"}, Path("/tools/bin/seek"), units, Systemctl(),
-        sync_schedule="weekly",
-    )
-    timer = (units / "seek-sync.timer").read_text()
-    systemctl = Systemctl()
-
-    installed = install_service(
-        Config(data_dir=tmp_path / "data"), {"PATH": "/new/bin"}, Path("/tools/bin/seek"), units, systemctl
-    )
-
-    assert installed.timer_path is None
-    assert 'Environment="PATH=/new/bin"' in (units / "seek-sync.service").read_text()
-    assert (units / "seek-sync.timer").read_text() == timer
-    assert systemctl.calls == [["daemon-reload"], ["enable", "seek.service"], ["restart", "seek.service"]]
-
-
-def test_without_a_schedule_no_timer_is_installed(tmp_path: Path) -> None:
-    installed = install_service(
         Config(data_dir=tmp_path / "data"), {"PATH": "/usr/bin"}, Path("/tools/bin/seek"), tmp_path / "units", Systemctl()
     )
 
-    assert installed.timer_path is None
     assert sorted(p.name for p in (tmp_path / "units").iterdir()) == ["seek.service"]
 
 

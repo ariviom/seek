@@ -29,7 +29,7 @@ from seek.mcp_config import client_config, guidance
 from seek.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from seek.ports import ChatEngine, EngineName
 from seek.secrets import KeyringSecrets
-from seek.service import TIMER_NAME, UNIT_NAME, install_service, unit_dir
+from seek.service import UNIT_NAME, install_service, unit_dir
 from seek.status_command import format_list, format_status, list_all, status
 from seek.sync_command import SyncCommandError, answers, sync_channels
 from seek.youtube import YouTubeSettings, YouTubeTranscriptSource
@@ -101,7 +101,7 @@ def sync(channel: str | None, reindex: bool = False) -> None:
     embedder = SentenceTransformerEmbedder(
         config.embedding_model, config.embedding_dimension, GpuRunner(), select_device(probe_device())
     )
-    # The service counts as active as soon as it starts, before it answers: at login a scheduled Sync can start
+    # The service counts as active as soon as it starts, before it answers: a `seek sync` run at login can start
     # alongside it, and waiting keeps the models from loading twice.
     server_wait_seconds = 30 if _service_active() else 0
     try:
@@ -210,25 +210,14 @@ def _systemctl(args: list[str]) -> None:
     subprocess.run(["systemctl", "--user", *args], check=True)
 
 
-def _check_schedule(schedule: str) -> None:
-    try:
-        checked = subprocess.run(["systemd-analyze", "calendar", schedule], capture_output=True, text=True)
-    except OSError as e:
-        sys.exit(f"seek: could not check the schedule with systemd-analyze: {e}")
-    if checked.returncode != 0:
-        sys.exit(f"seek: {schedule!r} is not a systemd calendar expression, such as daily or 'Mon *-*-* 04:00'")
-
-
-def install(sync_schedule: str | None) -> None:
+def install() -> None:
     if sys.platform != "linux":
         sys.exit("seek: install-service is supported only on Linux with systemd; run `seek serve` in a terminal")
     config = _config()
-    if sync_schedule is not None:
-        _check_schedule(sync_schedule)
     try:
         # The script as this shell found it, e.g. ~/.local/bin/seek for a uv tool install.
         installed = install_service(
-            config, os.environ, Path(sys.argv[0]).absolute(), unit_dir(Path.home()), _systemctl, sync_schedule
+            config, os.environ, Path(sys.argv[0]).absolute(), unit_dir(Path.home()), _systemctl
         )
     except (OSError, subprocess.CalledProcessError) as e:
         sys.exit(f"seek: could not install the service: {e}")
@@ -242,9 +231,6 @@ def install(sync_schedule: str | None) -> None:
         sys.exit(f"seek: the service started but isn't answering at {url}; see `{logs}`")
     print(f"Seek is running at {url} and starts whenever you log in.")
     print(f"Status: systemctl --user status {UNIT_NAME}    Logs: {logs}")
-    if installed.timer_path is not None:
-        print(f"Every active Channel Syncs on the schedule {sync_schedule!r}.")
-        print(f"Next run: systemctl --user list-timers {TIMER_NAME}    Logs: journalctl --user -u seek-sync")
 
 
 def main() -> None:
@@ -276,16 +262,7 @@ def main() -> None:
     commands.add_parser(
         "mcp-config", help="the configuration that registers Seek's tools with Claude Code and similar agents"
     )
-    install_parser = commands.add_parser(
-        "install-service", help="run the server as a systemd user service that starts at login"
-    )
-    install_parser.add_argument(
-        "--timer",
-        nargs="?",
-        const="daily",
-        metavar="SCHEDULE",
-        help="also Sync every active Channel on a schedule, a systemd calendar expression (default: daily)",
-    )
+    commands.add_parser("install-service", help="run the server as a systemd user service that starts at login")
     args = parser.parse_args()
     if args.command == "serve":
         serve()
@@ -304,4 +281,4 @@ def main() -> None:
     elif args.command == "mcp-config":
         mcp_config()
     elif args.command == "install-service":
-        install(args.timer)
+        install()

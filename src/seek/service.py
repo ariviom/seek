@@ -1,5 +1,4 @@
-"""`seek install-service`: a systemd user unit that runs `seek serve` from login, and optionally a timer that
-runs `seek sync --all`."""
+"""`seek install-service`: a systemd user unit that runs `seek serve` from login."""
 
 import shutil
 from collections.abc import Callable, Mapping
@@ -9,8 +8,6 @@ from pathlib import Path
 from seek.config import Config
 
 UNIT_NAME = "seek.service"
-SYNC_UNIT_NAME = "seek-sync.service"
-TIMER_NAME = "seek-sync.timer"
 # Variables that decide where seek finds its config, data, models, GPU, and Claude login, so the service uses the
 # same ones as this shell. Anything else stays out.
 _PASSED_THROUGH = (
@@ -27,7 +24,6 @@ _PASSED_THROUGH = (
 @dataclass(frozen=True)
 class InstalledService:
     unit_path: Path
-    timer_path: Path | None
     warnings: tuple[str, ...]
 
 
@@ -85,12 +81,8 @@ def install_service(
     seek_executable: Path,
     unit_dir: Path,
     systemctl: Callable[[list[str]], None],
-    sync_schedule: str | None = None,
 ) -> InstalledService:
-    """Writes the units into unit_dir, then enables and (re)starts them with `systemctl --user` arguments.
-
-    With a sync_schedule (a systemd calendar expression), also a timer that Syncs every Channel on that schedule.
-    """
+    """Writes the unit into unit_dir, then enables and (re)starts it with `systemctl --user` arguments."""
     search_path = env["PATH"]
     environment = {"PATH": search_path} | {
         key: env[key] for key in sorted(env) if key in _PASSED_THROUGH or key.startswith("SEEK_")
@@ -112,12 +104,6 @@ def install_service(
 
     # $ would expand a variable in a command line.
     command = _quoted(str(seek_executable)).replace("$", "$$")
-    environment_lines = [
-        *(f"Environment={_quoted(f'{key}={value}')}" for key, value in environment.items()),
-        # A desktop session can import one into the user manager, and the chat would bill it instead of the
-        # subscription.
-        "UnsetEnvironment=ANTHROPIC_API_KEY",
-    ]
     lines = [
         "[Unit]",
         "Description=Seek server",
@@ -128,7 +114,10 @@ def install_service(
         "[Service]",
         "Type=exec",
         f"ExecStart={command} serve",
-        *environment_lines,
+        *(f"Environment={_quoted(f'{key}={value}')}" for key, value in environment.items()),
+        # A desktop session can import one into the user manager, and the chat would bill it instead of the
+        # subscription.
+        "UnsetEnvironment=ANTHROPIC_API_KEY",
         "Restart=on-failure",
         "RestartSec=10",
         "# A Sync waiting out YouTube's backoff can't be interrupted; a killed Sync resumes at the next start.",
@@ -140,41 +129,8 @@ def install_service(
     unit_path = unit_dir / UNIT_NAME
     unit_dir.mkdir(parents=True, exist_ok=True)
     unit_path.write_text("\n".join(lines) + "\n")
-    sync_unit_path = unit_dir / SYNC_UNIT_NAME
-    # An installed timer keeps its schedule, but its Sync takes the environment recorded now.
-    if sync_schedule is not None or sync_unit_path.exists():
-        sync_lines = [
-            "[Unit]",
-            "Description=Seek scheduled Sync of every active Channel",
-            f"After={UNIT_NAME}",
-            "",
-            "[Service]",
-            "Type=oneshot",
-            f"ExecStart={command} sync --all",
-            *environment_lines,
-        ]
-        sync_unit_path.write_text("\n".join(sync_lines) + "\n")
-    timer_path = None
-    if sync_schedule is not None:
-        timer_lines = [
-            "[Unit]",
-            "Description=Seek scheduled Sync of every active Channel",
-            "",
-            "[Timer]",
-            f"OnCalendar={sync_schedule}",
-            # A run missed while the machine was off or the user logged out happens at the next chance.
-            "Persistent=true",
-            "",
-            "[Install]",
-            "WantedBy=timers.target",
-        ]
-        timer_path = unit_dir / TIMER_NAME
-        timer_path.write_text("\n".join(timer_lines) + "\n")
     systemctl(["daemon-reload"])
-    started = [UNIT_NAME] if timer_path is None else [UNIT_NAME, TIMER_NAME]
-    for name in started:
-        # Restarted rather than started, so reinstalling after an upgrade runs the new version (and a timer, its
-        # new schedule).
-        systemctl(["enable", name])
-        systemctl(["restart", name])
-    return InstalledService(unit_path, timer_path, tuple(warnings))
+    systemctl(["enable", UNIT_NAME])
+    # Restarted rather than started, so reinstalling after an upgrade runs the new version.
+    systemctl(["restart", UNIT_NAME])
+    return InstalledService(unit_path, tuple(warnings))

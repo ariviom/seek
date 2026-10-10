@@ -32,7 +32,7 @@ web UI, or give your coding agents (Claude Code, Codex) the same library over MC
 - [Install](#install)
 - [First run](#first-run)
 - [Upgrade](#upgrade)
-- Reference: [Sync from the command line](#sync-from-the-command-line-or-on-a-schedule) ·
+- Reference: [Checking for new videos](#check-for-new-videos-automatically-or-from-the-command-line) ·
   [Status and diagnostics](#check-on-it-from-the-command-line) · [Data](#data) · [Configuration](#configuration) ·
   [Reverse proxy](#publishing-through-a-reverse-proxy) · [Agents (MCP)](#register-seek-with-your-agents) ·
   [Settings](#settings) · [Web chat](#web-chat) · [Troubleshooting](#troubleshooting) · [Development](#development)
@@ -173,7 +173,18 @@ are. On macOS, the new install can trigger a keychain prompt to allow access to 
 For a Linux service installation, run `seek install-service` instead of `seek serve`, which refreshes the recorded
 environment and restarts the service.
 
-## Sync from the command line or on a schedule
+## Check for new videos automatically or from the command line
+
+While Seek runs, it checks each active Channel for new videos on its own: every 6 hours, daily or weekly, or not at
+all, chosen under **Check for new videos** on the Channel's page. New Channels check daily, and one never synced is
+due at once, so a newly added Channel has its first Sync within a few minutes unless you start it sooner. A check is a
+normal Sync, queued once the Channel's latest Sync was queued longer ago than its interval, and never while one is
+already queued or running; like any later Sync it stops listing at videos Seek already knows (see below) and ingests
+the new ones. Checks happen only while Seek is running, on macOS and Linux alike; any that came due while it was
+stopped run as it starts. Pausing a Channel stops its checks without changing the setting, so resuming it restores
+them.
+
+To Sync without waiting for a check:
 
 ```sh
 seek sync --all                        # every active Channel
@@ -195,19 +206,6 @@ Videos wait for the next one; no Sync runs for `youtube_backoff_seconds`, doubli
 `seek reindex --all` (or `--channel`) Syncs the same way but first re-cuts and re-embeds every Video already indexed
 from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a Seek that indexes
 passages differently; until each Video is done again it is out of search.
-
-On Linux, to Sync every active Channel on a schedule, install the service with a timer:
-
-```sh
-seek install-service --timer                    # daily at midnight
-seek install-service --timer "Mon *-*-* 04:00"   # any systemd calendar expression
-```
-
-This also writes `seek-sync.service` and `seek-sync.timer`, with the same recorded environment. A run missed while
-the machine was off happens at the next chance. Rerunning `seek install-service` without `--timer` keeps an
-installed timer's schedule and updates its recorded environment; pass `--timer` again to change the schedule. Next
-run: `systemctl --user list-timers seek-sync.timer`. Logs: `journalctl --user -u seek-sync`. To turn it off:
-`systemctl --user disable --now seek-sync.timer`.
 
 ## Check on it from the command line
 

@@ -55,6 +55,7 @@ async def test_channel_filters_are_editable_without_touching_indexed(client: htt
         "youtube_channel_id": "UC-wright",
         "name": "Wood By Wright",
         "indexed": False,
+        "check_every_hours": 24,
         "indexed_videos": 0,
         "failed_videos": 0,
         "excluded_videos": 0,

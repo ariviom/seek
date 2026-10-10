@@ -15,6 +15,7 @@ SCHEMA_9 = 9
 SCHEMA_13 = 13
 SCHEMA_14 = 14
 SCHEMA_16 = 16
+SCHEMA_17 = 17
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -255,6 +256,28 @@ def test_migration_17_leaves_the_channels_already_added_without_an_avatar_until_
     assert [tuple(row) for row in conn.execute("SELECT id, name, avatar_url FROM channels")] == [
         (3, "Wood By Wright", None)
     ]
+    conn.close()
+
+
+def test_migration_18_checks_active_channels_daily_and_leaves_paused_ones_off(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "seek.db")
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_17])
+        db.migrate(conn)
+    conn.execute(
+        "INSERT INTO channels (id, youtube_channel_id, name, indexed) VALUES (3, 'UC-wright', 'Wood By Wright', 1), "
+        "(5, 'UC-wright-vlog', 'Wright Vlogs', 0)"
+    )
+
+    db.migrate(conn)
+    conn.execute("INSERT INTO channels (id, youtube_channel_id, name) VALUES (6, 'UC-rex', 'Rex Krueger')")
+
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert [tuple(row) for row in conn.execute("SELECT id, check_every_hours FROM channels ORDER BY id")] == [
+        (3, 24), (5, None), (6, 24)
+    ]
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE channels SET check_every_hours = 12 WHERE id = 3")
     conn.close()
 
 

@@ -167,6 +167,7 @@ async def test_a_channel_can_be_indexed_again_and_only_takes_a_real_boolean(clie
         "name": "Wood By Wright",
         "indexed": True,
         "filters": {"published_after": None, "published_before": None, "playlist_id": None, "most_recent": None},
+        "check_every_hours": 24,
         "indexed_videos": 0,
         "failed_videos": 0,
         "excluded_videos": 0,

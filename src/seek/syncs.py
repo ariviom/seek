@@ -8,6 +8,7 @@ import sqlite3
 import time
 from collections.abc import Collection
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Literal
 
 from seek import channels, videos
@@ -150,6 +151,42 @@ def _enqueue(conn: sqlite3.Connection, channel_id: int, retry_failed: bool, rein
         )
     [sync] = _select(conn, "WHERE syncs.id = ?", (row["id"],))
     return sync
+
+
+def is_due(
+    indexed: bool, check_every_hours: int | None, open_sync: bool, last_queued_at: datetime | None, now: datetime
+) -> bool:
+    """Whether the Channel's automatic check should queue a Sync now: it is Active with checks on, has no Sync
+    queued or running, and its latest Sync was queued longer ago than its interval, or it has never had one."""
+    if not indexed or check_every_hours is None or open_sync:
+        return False
+    return last_queued_at is None or now - last_queued_at > timedelta(hours=check_every_hours)
+
+
+def enqueue_due(conn: sqlite3.Connection, now: datetime) -> list[Sync]:
+    """Queues a Sync, as enqueue does, for every Channel whose automatic check is due."""
+    with transaction(conn):
+        rows = conn.execute(
+            """
+            SELECT channels.id, channels.indexed, channels.check_every_hours,
+                   EXISTS (SELECT 1 FROM syncs WHERE syncs.channel_id = channels.id
+                             AND syncs.status IN ('queued', 'running')) AS open_sync,
+                   (SELECT queued_at FROM syncs WHERE syncs.channel_id = channels.id ORDER BY syncs.id DESC LIMIT 1)
+                     AS last_queued_at
+            FROM channels ORDER BY channels.id
+            """
+        ).fetchall()
+        return [
+            _enqueue(conn, row["id"], retry_failed=False)
+            for row in rows
+            if is_due(
+                bool(row["indexed"]),
+                row["check_every_hours"],
+                bool(row["open_sync"]),
+                None if row["last_queued_at"] is None else datetime.fromisoformat(row["last_queued_at"]),
+                now,
+            )
+        ]
 
 
 def list_syncs(conn: sqlite3.Connection, limit: int = 50) -> list[Sync]:

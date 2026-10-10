@@ -4,10 +4,15 @@ Database.run."""
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
+from types import EllipsisType
+from typing import Literal
 
 from seek.db import transaction
 from seek.errors import Conflict, NotFound
 from seek.ports import ChannelInfo
+
+# How often the server checks a Channel for new Videos: every 6 hours, daily, or weekly.
+type CheckHours = Literal[6, 24, 168]
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,8 @@ class Channel:
     name: str
     indexed: bool
     filters: ChannelFilters
+    # None is off. A Paused Channel keeps its setting but isn't checked.
+    check_every_hours: CheckHours | None = 24
     # Videos searchable (done), failed, and excluded, and when the Channel's last Sync finished successfully.
     indexed_videos: int = 0
     failed_videos: int = 0
@@ -58,6 +65,7 @@ def _channel(row: sqlite3.Row) -> Channel:
         name=row["name"],
         indexed=bool(row["indexed"]),
         filters=read_filters(row),
+        check_every_hours=row["check_every_hours"],
         indexed_videos=row["indexed_videos"],
         failed_videos=row["failed_videos"],
         excluded_videos=row["excluded_videos"],
@@ -113,8 +121,10 @@ def update_channel(
     name: str | None = None,
     indexed: bool | None = None,
     filters: ChannelFilters | None = None,
+    check_every_hours: CheckHours | None | EllipsisType = ...,
 ) -> Channel:
-    """Changes whichever of the name, indexed, and the filters are given; filters are replaced as a whole."""
+    """Changes whichever of the name, indexed, the filters, and the check interval are given (None turns checks
+    off, so leaving it unchanged is ...); filters are replaced as a whole."""
     with transaction(conn):
         _get_channel(conn, channel_id)
         if name is not None:
@@ -137,6 +147,8 @@ def update_channel(
                     channel_id,
                 ),
             )
+        if check_every_hours is not ...:
+            conn.execute("UPDATE channels SET check_every_hours = ? WHERE id = ?", (check_every_hours, channel_id))
         return _get_channel(conn, channel_id)
 
 

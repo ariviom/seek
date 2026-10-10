@@ -7,7 +7,7 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, field_validator, model_validator
 
 from seek import channels
-from seek.channels import Channel, ChannelFilters
+from seek.channels import Channel, ChannelFilters, CheckHours
 from seek.db import Database
 from seek.events import Events
 from seek.ports import ChannelInfo, TranscriptSource
@@ -61,6 +61,16 @@ class ChannelUpdate(BaseModel):
     name: Name | None = None
     indexed: StrictBool | None = None
     filters: FiltersBody | None = None
+    # Null turns checks off, so only a field left out is unchanged.
+    check_every_hours: CheckHours | None = None
+
+    @field_validator("check_every_hours", mode="before")
+    @classmethod
+    def whole_hours(cls, value: object) -> object:
+        # A Literal of ints would also take 24.0.
+        if value is not None and type(value) is not int:
+            raise ValueError("Check every 6, 24 or 168 hours, or null for off")
+        return value
 
 
 def channels_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
@@ -87,8 +97,9 @@ def channels_router(database: Database, transcripts: TranscriptSource, events: E
     @router.patch("/channels/{channel_id}")
     async def update_channel(channel_id: int, body: ChannelUpdate) -> Channel:
         filters = None if body.filters is None else ChannelFilters(**body.filters.model_dump())
+        check_every_hours = body.check_every_hours if "check_every_hours" in body.model_fields_set else ...
         channel = await database.run(
-            lambda conn: channels.update_channel(conn, channel_id, body.name, body.indexed, filters)
+            lambda conn: channels.update_channel(conn, channel_id, body.name, body.indexed, filters, check_every_hours)
         )
         # Syncs show their Channel's name.
         if body.name is not None:

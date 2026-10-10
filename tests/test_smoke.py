@@ -646,3 +646,59 @@ async def test_frames_of_the_cited_moment_in_search_and_sources_and_turning_them
     assert errors == []
     # Frames are stored geometry only: showing them asked YouTube for nothing beyond the Videos' own ingestion.
     assert [method for method, _ in transcripts.calls if method == "fetch_storyboard"] == []
+
+
+async def test_choosing_how_often_a_channel_is_checked_persists_and_says_when_the_next_check_is(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-one", "Winding sticks", cues=said("Check it with winding sticks"))
+    )
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
+
+    async with serving(app) as base_url:
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("button", name="Add channel").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
+            await add.get_by_label("YouTube channel URL or handle").fill("@woodbywright")
+            await add.get_by_role("button", name="Look up").click()
+            await add.get_by_role("button", name="Add", exact=True).click()
+
+            videos_card = main.locator("section").filter(has=page.get_by_role("heading", name="Videos"))
+            checks = main.get_by_role("combobox", name="Check for new videos")
+            # A new Channel checks daily, and one never synced is due at the next check.
+            await expect(checks).to_have_text("Daily")
+            await expect(videos_card).to_contain_text("Next check soon.")
+            await main.get_by_role("button", name="Sync now").click()
+            await expect(videos_card).to_contain_text("last synced", timeout=15_000)
+            await expect(videos_card).to_contain_text("Next check around ")
+
+            await checks.click()
+            await page.get_by_role("option", name="Weekly").click()
+            await expect(checks).to_have_text("Weekly")
+            await page.reload()
+            await expect(checks).to_have_text("Weekly")
+            async with httpx.AsyncClient(base_url=base_url) as client:
+                [listed] = (await client.get("api/channels")).json()
+            assert listed["check_every_hours"] == 168
+
+            # Pausing keeps the setting but stops the checks, and says so.
+            await main.get_by_role("button", name="Pause channel").click()
+            await expect(videos_card).to_contain_text("Paused channels aren’t checked.")
+            await expect(checks).to_have_text("Weekly")
+            await main.get_by_role("button", name="Resume channel").click()
+            await checks.click()
+            await page.get_by_role("option", name="Off").click()
+            await expect(checks).to_have_text("Off")
+            await expect(videos_card).not_to_contain_text("Next check")
+
+    assert errors == []

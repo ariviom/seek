@@ -106,7 +106,7 @@ def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
             TypeAdapter(Sync).validate_json(request(f"{url}api/channels/{found.id}/syncs", "POST", options))
         ]
     except ValidationError as e:
-        # e.g. a timer ran this upgraded seek against the server from before the upgrade.
+        # e.g. this upgraded seek ran against the server from before the upgrade.
         raise SyncCommandError(
             f"The server at {url} answered in a form this Seek doesn't know; restart it after upgrading"
         ) from e

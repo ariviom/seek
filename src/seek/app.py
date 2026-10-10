@@ -4,6 +4,7 @@ import html
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -18,6 +19,7 @@ from seek.api_chat import ApiEngine
 from seek.channels_api import channels_router
 from seek.chat import Chat
 from seek.chat_api import chat_router
+from seek.checks import run_checks, utc_now
 from seek.config import Config
 from seek.credentials import Credentials
 from seek.credentials_api import credentials_router
@@ -138,6 +140,8 @@ def create_app(
     access_keys_refetch_seconds: float = 60.0,
     secrets: Secrets | None = None,
     api_engine: ChatEngine | None = None,
+    check_seconds: float = 300.0,
+    clock: Callable[[], datetime] = utc_now,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
@@ -183,6 +187,7 @@ def create_app(
         tasks = [
             asyncio.create_task(_load_models(models, events, worker.wake, model_progress_seconds)),
             asyncio.create_task(worker.run()),
+            asyncio.create_task(run_checks(database, events, worker.wake, check_seconds, clock)),
         ]
         mcp_started = asyncio.get_running_loop().create_future()
         tasks.append(asyncio.create_task(_serve_mcp(mcp, mcp_started)))

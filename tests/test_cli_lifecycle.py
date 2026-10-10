@@ -36,9 +36,8 @@ def command(monkeypatch: pytest.MonkeyPatch, platform: str, *args: str) -> None:
 
 
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
-@pytest.mark.parametrize("timer", [[], ["--timer"], ["--timer", "weekly"]])
 def test_service_installation_off_linux_points_to_foreground_before_reading_config_or_running_systemd(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, timer: list[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
@@ -48,13 +47,33 @@ def test_service_installation_off_linux_points_to_foreground_before_reading_conf
         pytest.fail("service installation attempted an external command on a non-Linux platform")
 
     monkeypatch.setattr(subprocess, "run", unexpected_process)
-    command(monkeypatch, platform, "install-service", *timer)
+    command(monkeypatch, platform, "install-service")
 
     with pytest.raises(SystemExit) as error:
         cli.main()
 
     assert "Linux" in str(error.value)
     assert "seek serve" in str(error.value)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("timer", [["--timer"], ["--timer", "weekly"]])
+def test_service_installation_has_no_sync_timer_since_the_server_checks_channels_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], timer: list[str]
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    def unexpected_process(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("a refused option still ran an external command")
+
+    monkeypatch.setattr(subprocess, "run", unexpected_process)
+    command(monkeypatch, "linux", "install-service", *timer)
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "unrecognized arguments: --timer" in capsys.readouterr().err
     assert not list(tmp_path.iterdir())
 
 
