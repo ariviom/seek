@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Inspector, useInspector } from "@/shell/Inspector";
 import { ListColumn } from "@/shell/ListColumn";
+import { PaneMessage } from "@/components/PaneMessage";
 import { MainHeader } from "@/shell/MainHeader";
 import {
   describeEngine,
@@ -321,13 +322,11 @@ export function App() {
           onOpenSettings={() => changeView("settings")}
         />
       ) : (
-        <div className="mx-auto max-w-3xl px-6 py-6">
-          <p className="text-sm text-muted-foreground">
-            {conversations.items?.length === 0
-              ? "No chats yet. Start one with + on a group or channel, or from its page in the Library."
-              : "Pick a chat, or start a new one with + on a group or channel."}
-          </p>
-        </div>
+        <PaneMessage>
+          {conversations.items?.length === 0
+            ? "No chats yet. Start one with + on a group or channel, or from its page in the Library."
+            : "Pick a chat, or start a new one with + on a group or channel."}
+        </PaneMessage>
       ),
     },
     search: {
@@ -492,7 +491,8 @@ export function App() {
         </div>
         {view !== "chats" && (
           <div className="min-h-0 flex-1 overflow-y-auto pb-14 md:pb-0">
-            <div className="mx-auto max-w-3xl space-y-8 px-6 py-5">
+            {/* A column at least as tall as the pane, so a PaneMessage can centre itself in what's left. */}
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col space-y-8 px-6 py-5">
               <ServerNotice state={state} liveUpdatesStopped={liveUpdatesStopped} />
               {section.main}
             </div>

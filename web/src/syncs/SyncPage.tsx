@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, errorText, type Sync } from "@/lib/api";
+import { PaneMessage } from "@/components/PaneMessage";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { plural } from "@/lib/format";
@@ -83,5 +84,5 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
 }
 
 export function SyncsEmpty() {
-  return <p className="text-sm text-muted-foreground">Pick a sync to see its progress.</p>;
+  return <PaneMessage>Pick a sync to see its progress.</PaneMessage>;
 }

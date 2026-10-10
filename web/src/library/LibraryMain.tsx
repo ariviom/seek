@@ -1,5 +1,6 @@
 import type { Channel, Group, Scope, Sync } from "@/lib/api";
 import type { Selection } from "@/lib/url-state";
+import { PaneMessage } from "@/components/PaneMessage";
 import { ChannelPage } from "./ChannelPage";
 import { GroupPage } from "./GroupPage";
 
@@ -59,5 +60,5 @@ export function LibraryMain({
     );
   }
 
-  return <p className="text-sm text-muted-foreground">Pick a channel or group, or add one from the list.</p>;
+  return <PaneMessage>Pick a channel or group, or add one from the list.</PaneMessage>;
 }

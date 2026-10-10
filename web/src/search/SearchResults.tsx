@@ -4,6 +4,7 @@ import { api, errorText, type Expansion as ExpansionShape, type Group, type Scop
 import { Avatar } from "@/components/Avatar";
 import { useChannelAvatars } from "@/lib/channel-avatars";
 import { FrameStrip, momentKey, runsOf, searchFrames, useFrames } from "@/components/Frames";
+import { PaneMessage } from "@/components/PaneMessage";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { formatDuration, plural } from "@/lib/format";
@@ -54,7 +55,7 @@ export function SearchResults({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-1 flex-col space-y-3">
       {error !== null && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -62,14 +63,14 @@ export function SearchResults({
       )}
       {outcome === null ? (
         error === null && (
-          <p className="text-sm text-muted-foreground">
+          <PaneMessage>
             {searching ? "Searching…" : "Search the transcripts from the form, and play the moments that answer it."}
-          </p>
+          </PaneMessage>
         )
       ) : outcome.results.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <PaneMessage>
           Nothing matched “{outcome.query}” in {outcome.scopeName}. Try other words or a wider scope.
-        </p>
+        </PaneMessage>
       ) : (
         <>
           <p className={cn("text-xs text-muted-foreground", searching && "opacity-60")}>
