@@ -5,10 +5,10 @@ import httpx
 import pytest
 from harness import running
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import ChannelInfo, ChatEngineStatus
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChannel, FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.ports import ChannelInfo, ChatEngineStatus
 
 
 @pytest.fixture

@@ -16,8 +16,8 @@ from harness import (
     woodworkers,
 )
 
-from mentor.fakes import FakeChatEngine, FakeTranscriptSource
-from mentor.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, PastMessage, TextDelta
+from seek.fakes import FakeChatEngine, FakeTranscriptSource
+from seek.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, PastMessage, TextDelta
 
 
 async def get_conversation(client: httpx.AsyncClient, conversation_id: int) -> Json:
@@ -154,7 +154,7 @@ async def test_a_project_context_must_be_an_existing_absolute_directory(client: 
         f"/api/groups/{group['id']}/conversations", json={"workspace": "project", "web_access": False}
     )
     missing = await client.post(
-        f"/api/groups/{group['id']}/conversations", json={"workspace": "/no/such/mentor-project"}
+        f"/api/groups/{group['id']}/conversations", json={"workspace": "/no/such/seek-project"}
     )
 
     assert relative.status_code == 422 and "absolute" in relative.json()["detail"]

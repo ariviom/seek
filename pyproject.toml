@@ -1,5 +1,5 @@
 [project]
-name = "mentor"
+name = "seek"
 version = "0.1.0"
 description = "Turn YouTube channels into a cited, searchable knowledge base for Claude"
 requires-python = ">=3.13,<3.14"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mentor = "mentor.cli:main"
+seek = "seek.cli:main"
 
 [dependency-groups]
 dev = [
@@ -38,11 +38,11 @@ requires = ["hatchling>=1.32"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mentor"]
-artifacts = ["src/mentor/static/**"]
+packages = ["src/seek"]
+artifacts = ["src/seek/static/**"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/mentor", "web", "hatch_build.py"]
+include = ["src/seek", "web", "hatch_build.py"]
 exclude = ["web/node_modules"]
 
 [tool.hatch.build.hooks.custom]

@@ -43,7 +43,7 @@ export function modelLabel(model: string, engine: EngineName | null): string {
 }
 
 // What "fast" or "deep" means on the engine that would answer; just the choice while no engine can. A null
-// choice is a default Mentor hasn't loaded yet, which is never guessed at.
+// choice is a default Seek hasn't loaded yet, which is never guessed at.
 export function choiceLabel(choice: ModelChoice | null, engine: EngineName | null): string {
   if (choice === null) return "your default";
   return engine === null ? choiceNames[choice] : modelLabel(defaultModels[engine][choice], engine);

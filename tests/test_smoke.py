@@ -23,10 +23,10 @@ from harness import (
 )
 from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright, expect
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import ChatDone, ChatEngineStatus, TextDelta, VideoUnavailable
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.ports import ChatDone, ChatEngineStatus, TextDelta, VideoUnavailable
 
 WEB = Path(__file__).parents[1] / "web"
 # A storyboard sheet as the page would load one: three by three tiles of 320x180.

@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 from harness import Gate, add_channel, event_stream, fake_channel, fake_video, running, start_sync, wait_for_syncs
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import ModelStatus
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import ModelStatus
 
 
 async def test_model_events_continue_reporting_failures_after_startup(

@@ -1,5 +1,5 @@
-from mentor.ports import Chapter, Cue
-from mentor.segmentation import Segment, SegmentCue, segment
+from seek.ports import Chapter, Cue
+from seek.segmentation import Segment, SegmentCue, segment
 
 
 def steady_cues(until: float, every: float = 5.0) -> list[Cue]:

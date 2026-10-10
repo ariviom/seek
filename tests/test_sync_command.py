@@ -19,11 +19,11 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor import db, syncs
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.sync_command import SyncCommandError, sync_channels
+from seek import db, syncs
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.sync_command import SyncCommandError, sync_channels
 
 
 def with_videos(transcripts: FakeTranscriptSource, gate: Gate | None = None) -> FakeTranscriptSource:
@@ -45,7 +45,7 @@ async def seed_channels(config: Config, transcripts: FakeTranscriptSource, tmp_p
         await add_channel(client, "@rexkrueger", "Rex Krueger")
 
 
-async def test_mentor_sync_hands_the_syncs_to_the_running_server(
+async def test_seek_sync_hands_the_syncs_to_the_running_server(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     with_videos(transcripts)
@@ -68,7 +68,7 @@ async def test_mentor_sync_hands_the_syncs_to_the_running_server(
     assert cli_source.calls == []
 
 
-async def test_mentor_reindex_hands_reindex_syncs_to_the_running_server(
+async def test_seek_reindex_hands_reindex_syncs_to_the_running_server(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     with_videos(transcripts)
@@ -92,7 +92,7 @@ async def test_mentor_reindex_hands_reindex_syncs_to_the_running_server(
     assert len(embedder.passages) == 2
 
 
-async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_youtube_channel_id(
+async def test_seek_sync_hands_one_channel_to_the_running_server_by_its_youtube_channel_id(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     with_videos(transcripts)
@@ -112,7 +112,7 @@ async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_youtub
     assert fetched(transcripts) == ["v-rex"]
 
 
-async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_name(
+async def test_seek_sync_hands_one_channel_to_the_running_server_by_its_name(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     with_videos(transcripts)
@@ -132,7 +132,7 @@ async def test_mentor_sync_hands_one_channel_to_the_running_server_by_its_name(
     assert fetched(transcripts) == ["v-rex"]
 
 
-async def test_mentor_sync_runs_a_channel_named_by_its_name_itself_when_no_server_answers(
+async def test_seek_sync_runs_a_channel_named_by_its_name_itself_when_no_server_answers(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     await seed_channels(config, transcripts, tmp_path)
@@ -145,7 +145,7 @@ async def test_mentor_sync_runs_a_channel_named_by_its_name_itself_when_no_serve
     assert fetched(cli_source) == ["v-rex"]
 
 
-async def test_mentor_sync_runs_a_channel_named_by_its_youtube_channel_id_itself_when_no_server_answers(
+async def test_seek_sync_runs_a_channel_named_by_its_youtube_channel_id_itself_when_no_server_answers(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     await seed_channels(config, transcripts, tmp_path)
@@ -167,7 +167,7 @@ async def test_an_unknown_channel_is_reported_rather_than_synced(
         await sync_channels(replace(config, port=free_port()), "Paul Sellers", transcripts, FakeEmbedder())
 
 
-async def test_mentor_sync_and_a_server_starting_meanwhile_never_both_run_syncs(
+async def test_seek_sync_and_a_server_starting_meanwhile_never_both_run_syncs(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     await seed_channels(config, transcripts, tmp_path)
@@ -197,7 +197,7 @@ async def test_mentor_sync_and_a_server_starting_meanwhile_never_both_run_syncs(
     assert sorted(fetched(cli_source) + fetched(server_source)) == ["v-rex", "v-wright"]
 
 
-async def test_a_second_mentor_sync_waits_for_its_own_channel_while_the_first_runs_the_queue(
+async def test_a_second_seek_sync_waits_for_its_own_channel_while_the_first_runs_the_queue(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     await seed_channels(config, transcripts, tmp_path)
@@ -231,7 +231,7 @@ async def test_a_second_mentor_sync_waits_for_its_own_channel_while_the_first_ru
     assert fetched(first_source) == ["v-wright", "v-rex", "v-wright-2"]
 
 
-async def test_mentor_sync_asks_for_a_youtube_channel_id_when_two_channels_share_the_name(
+async def test_seek_sync_asks_for_a_youtube_channel_id_when_two_channels_share_the_name(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")

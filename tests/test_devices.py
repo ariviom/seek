@@ -1,4 +1,4 @@
-from mentor.devices import DeviceProbe, DeviceSelection, select_device
+from seek.devices import DeviceProbe, DeviceSelection, select_device
 
 
 def test_device_selection_prefers_cuda_then_mps_then_cpu_with_safe_precision() -> None:

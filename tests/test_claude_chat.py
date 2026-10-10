@@ -16,9 +16,9 @@ from claude_agent_sdk import (
 )
 from mcp.server.mcpserver import MCPServer
 
-from mentor import claude_chat
-from mentor.claude_chat import ClaudeChatEngine, chat_events, chat_options, failure, prompt
-from mentor.ports import (
+from seek import claude_chat
+from seek.claude_chat import ClaudeChatEngine, chat_events, chat_options, failure, prompt
+from seek.ports import (
     ChatDone,
     ChatFailed,
     ChatRequest,
@@ -40,28 +40,28 @@ def request(**changes: object) -> ChatRequest:
         "history": (),
         "workspace": None,
         "web_access": False,
-        "tools": MCPServer("mentor"),
+        "tools": MCPServer("seek"),
         "tool_names": ("list_groups", "search", "expand", "get_video"),
     }
     return ChatRequest(**(fields | changes))  # type: ignore[arg-type]
 
 
-def test_the_model_can_use_nothing_but_the_requests_mentor_tools(tmp_path: Path) -> None:
-    tools = MCPServer("mentor")
+def test_the_model_can_use_nothing_but_the_requests_seek_tools(tmp_path: Path) -> None:
+    tools = MCPServer("seek")
 
     options = chat_options(request(tools=tools), tmp_path / "chat", cli_path=None)
 
     # Built-in tools off, and only our in-process server, strictly.
     assert options.tools == []
     assert options.mcp_servers == {
-        "mentor": {"type": "sdk", "name": "mentor", "instance": tools._lowlevel_server}  # noqa: SLF001
+        "seek": {"type": "sdk", "name": "seek", "instance": tools._lowlevel_server}  # noqa: SLF001
     }
     assert options.strict_mcp_config is True
     assert options.allowed_tools == [
-        "mcp__mentor__list_groups",
-        "mcp__mentor__search",
-        "mcp__mentor__expand",
-        "mcp__mentor__get_video",
+        "mcp__seek__list_groups",
+        "mcp__seek__search",
+        "mcp__seek__expand",
+        "mcp__seek__get_video",
     ]
     # The MCP resource tools the CLI adds alongside any MCP server are removed, and anything else not pre-approved
     # is denied rather than prompted for.
@@ -182,7 +182,7 @@ async def test_a_session_with_no_transcript_is_lost_before_the_cli_starts(tmp_pa
     [
         ('{"loggedIn": true, "authMethod": "claude.ai", "apiKeySource": null}', "ready"),
         ('{"loggedIn": false}', "logged_out"),
-        # The chat inherits mentor's environment, where an API key would be billed instead of the subscription.
+        # The chat inherits seek's environment, where an API key would be billed instead of the subscription.
         ('{"loggedIn": true, "apiKeySource": "ANTHROPIC_API_KEY"}', "api_key"),
         ("not json", "unknown"),
     ],
@@ -220,7 +220,7 @@ async def test_status_and_turns_report_a_missing_cli(tmp_path: Path, configured:
     assert (status.state, status.cli_path) == ("missing", configured and str(configured))
     assert status.message == (
         f"The Claude CLI was not found {where}; install Claude Code and log in with `claude`, or set claude_cli_path "
-        "in mentor's config"
+        "in seek's config"
     )
     assert len(events) == 1 and isinstance(events[0], ChatFailed)
 
@@ -240,7 +240,7 @@ def test_sdk_messages_become_chat_events() -> None:
         AssistantMessage(
             content=[
                 TextBlock("Hone "),
-                ToolUseBlock(id="call-1", name="mcp__mentor__search", input={"query": "hone"}),
+                ToolUseBlock(id="call-1", name="mcp__seek__search", input={"query": "hone"}),
             ],
             model="claude-sonnet-5",
         )

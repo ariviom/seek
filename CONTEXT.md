@@ -1,4 +1,4 @@
-# Mentor — Domain Glossary
+# Seek — Domain Glossary
 
 The ubiquitous language for this project. Terms only; no implementation detail.
 
@@ -46,7 +46,7 @@ also keep read-only access to a selected local project, the public web, or both.
 
 - A Group is a set of Channels. Excluding a Channel from syncs, search, and chats is done on the Channel (pause it), not per Group.
 - A deleted Group or Channel leaves its Conversations readable but not continuable.
-- "Mentor" is the product's name and nothing else.
+- "Seek" is the product's name and nothing else.
 - Shorts and very short Videos are excluded from ingestion by default.
 - The tool has one user. Identity, when accessed remotely, is established outside the tool.
 - Newer Videos are preferred over older ones when they address the same question; every result exposes its publish date.

@@ -7,7 +7,7 @@ dist/
 build/
 node_modules/
 web/dist/
-src/mentor/static/
+src/seek/static/
 *.egg-info/
 .claude/worktrees/
 .playwright-mcp/

@@ -5,11 +5,11 @@ import httpx2
 import pytest
 from harness import running
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.credentials import Credentials, CredentialStatus
-from mentor.events import Events
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.app import create_app
+from seek.config import Config
+from seek.credentials import Credentials, CredentialStatus
+from seek.events import Events
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
 
 # Where a status says the key is kept, when the keychain took it.
 IN_KEYCHAIN = {"store": "keychain", "fallback_reason": None}
@@ -107,7 +107,7 @@ async def test_late_validation_and_turn_rejections_cannot_overwrite_replacement_
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: bool,
 ) -> None:
     import asyncio
-    from mentor.credentials import Credentials
+    from seek.credentials import Credentials
     from harness import event_stream
 
     entered, release = asyncio.Event(), asyncio.Event()
@@ -188,7 +188,7 @@ async def test_locked_keychain_after_restart_allows_safe_replacement_and_deletio
 ) -> None:
     import keyring
     from keyring.errors import KeyringLocked
-    from mentor.secrets import KeyringSecrets
+    from seek.secrets import KeyringSecrets
 
     values: dict[str, str] = {}
     locked = False

@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 from retrieval_baseline import Manifest, Questions, checksum, configured_snapshot, prepare_snapshot
 
-from mentor.db import Database
-from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
-from mentor.search import Search
+from seek.db import Database
+from seek.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
+from seek.search import Search
 
 pytestmark = pytest.mark.real_models
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -26,15 +26,15 @@ FIXTURES = Path(__file__).parent / "fixtures"
 async def test_frozen_retrieval_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = configured_snapshot(os.environ)
     if source is None:
-        pytest.skip("Set MENTOR_RETRIEVAL_SNAPSHOT to the frozen real-corpus SQLite snapshot to run the baseline")
+        pytest.skip("Set SEEK_RETRIEVAL_SNAPSHOT to the frozen real-corpus SQLite snapshot to run the baseline")
     manifest_path = FIXTURES / "retrieval-baseline-manifest.json"
     questions_path = FIXTURES / "retrieval-baseline.json"
     manifest = Manifest.model_validate_json(manifest_path.read_text())
     fixture = Questions.model_validate_json(questions_path.read_text())
     working = prepare_snapshot(source, tmp_path / "run.db", manifest)
-    output = Path(os.environ.get("MENTOR_RETRIEVAL_RESULTS", str(tmp_path / "retrieval-results.json"))).expanduser()
+    output = Path(os.environ.get("SEEK_RETRIEVAL_RESULTS", str(tmp_path / "retrieval-results.json"))).expanduser()
     if output.resolve() in {source.resolve(), manifest_path.resolve(), questions_path.resolve()}:
-        raise ValueError("MENTOR_RETRIEVAL_RESULTS must not overwrite the snapshot or frozen inputs")
+        raise ValueError("SEEK_RETRIEVAL_RESULTS must not overwrite the snapshot or frozen inputs")
 
     # Resolve immutable cached revisions first; never update a repository's moving main ref.
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
@@ -62,7 +62,7 @@ async def test_frozen_retrieval_baseline(tmp_path: Path, monkeypatch: pytest.Mon
         def now(cls, tz: tzinfo | None = None) -> "FrozenDateTime":
             return cls.combine(fixture.reference_date, datetime.min.time(), tzinfo=tz or UTC)
 
-    monkeypatch.setattr("mentor.search.datetime", FrozenDateTime)
+    monkeypatch.setattr("seek.search.datetime", FrozenDateTime)
     gpu = GpuRunner()
     embedder = SentenceTransformerEmbedder(paths[manifest.embedding.model], manifest.embedding.dimension, gpu)
     reranker = CrossEncoderReranker(paths[manifest.reranker.model], gpu)
@@ -71,7 +71,7 @@ async def test_frozen_retrieval_baseline(tmp_path: Path, monkeypatch: pytest.Mon
         "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "source_files_sha256": {
             str(path.relative_to(FIXTURES.parent.parent)): checksum(path)
-            for path in sorted((FIXTURES.parent.parent / "src" / "mentor").glob("*.py"))
+            for path in sorted((FIXTURES.parent.parent / "src" / "seek").glob("*.py"))
         },
         "runner_sha256": checksum(Path(__file__)),
         "runner_inputs_sha256": checksum(FIXTURES.parent / "retrieval_baseline.py"),

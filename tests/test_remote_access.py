@@ -13,16 +13,16 @@ from harness import event_stream, running
 from jwt.algorithms import RSAAlgorithm
 from starlette.types import Message
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 
-# What a reverse proxy publishing mentor at https://mentor.example.com/mentor/ adds, with the prefix stripped.
+# What a reverse proxy publishing seek at https://seek.example.com/seek/ adds, with the prefix stripped.
 PROXIED = {
     "X-Forwarded-For": "203.0.113.7",
     "X-Forwarded-Proto": "https",
-    "X-Forwarded-Host": "mentor.example.com",
-    "X-Forwarded-Prefix": "/mentor",
+    "X-Forwarded-Host": "seek.example.com",
+    "X-Forwarded-Prefix": "/seek",
 }
 INITIALIZE = {
     "jsonrpc": "2.0",
@@ -35,7 +35,7 @@ MCP_HEADERS = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Ve
 
 @pytest.fixture
 def published(config: Config) -> Config:
-    return replace(config, allowed_hosts=("mentor.example.com",))
+    return replace(config, allowed_hosts=("seek.example.com",))
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ def bundle(tmp_path: Path) -> Path:
     (static / "index.html").write_text(
         '<!doctype html>\n<html>\n  <head>\n    <script src="./assets/app.js"></script>\n  </head>\n</html>\n'
     )
-    (static / "assets" / "app.js").write_text("console.log('mentor')\n")
+    (static / "assets" / "app.js").write_text("console.log('seek')\n")
     return static
 
 
@@ -66,16 +66,16 @@ async def test_the_api_and_redirects_follow_the_public_url_whether_or_not_the_pr
 ) -> None:
     async with running(app_for(published, tmp_path / "no-bundle")) as client:
         stripped = await client.get("/api/syncs", headers=PROXIED)
-        unstripped = await client.get("/mentor/api/syncs", headers=PROXIED)
+        unstripped = await client.get("/seek/api/syncs", headers=PROXIED)
         redirect = await client.get("/api/syncs/", headers=PROXIED)
-        unstripped_redirect = await client.get("/mentor/api/syncs/", headers=PROXIED)
+        unstripped_redirect = await client.get("/seek/api/syncs/", headers=PROXIED)
         local_redirect = await client.get("/api/syncs/")
 
     assert (stripped.status_code, stripped.json()) == (200, [])
     assert (unstripped.status_code, unstripped.json()) == (200, [])
     assert redirect.status_code == 307
-    assert redirect.headers["location"] == "https://mentor.example.com/mentor/api/syncs"
-    assert unstripped_redirect.headers["location"] == "https://mentor.example.com/mentor/api/syncs"
+    assert redirect.headers["location"] == "https://seek.example.com/seek/api/syncs"
+    assert unstripped_redirect.headers["location"] == "https://seek.example.com/seek/api/syncs"
     assert local_redirect.headers["location"] == "http://127.0.0.1:7337/api/syncs"
 
 
@@ -86,21 +86,21 @@ async def test_the_web_ui_resolves_its_assets_and_api_under_the_prefix_even_with
         proxied = await client.get("/", headers=PROXIED)
         local = await client.get("/")
         asset = await client.get("/assets/app.js", headers=PROXIED)
-        unstripped_asset = await client.get("/mentor/assets/app.js", headers=PROXIED)
-        unstripped_root = await client.get("/mentor", headers=PROXIED)
+        unstripped_asset = await client.get("/seek/assets/app.js", headers=PROXIED)
+        unstripped_root = await client.get("/seek", headers=PROXIED)
 
     assert proxied.status_code == 200
-    assert '<head>\n    <base href="/mentor/">' in proxied.text
+    assert '<head>\n    <base href="/seek/">' in proxied.text
     assert '<script src="./assets/app.js"></script>' in proxied.text
     assert '<base href="/">' in local.text
-    assert asset.text == unstripped_asset.text == "console.log('mentor')\n"
-    assert unstripped_root.headers["location"] == "https://mentor.example.com/mentor/"
+    assert asset.text == unstripped_asset.text == "console.log('seek')\n"
+    assert unstripped_root.headers["location"] == "https://seek.example.com/seek/"
 
 
 async def test_the_mcp_endpoint_answers_under_the_prefix(published: Config, tmp_path: Path) -> None:
     async with running(app_for(published, tmp_path / "no-bundle")) as client:
         stripped = await client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS | PROXIED)
-        unstripped = await client.post("/mentor/mcp", json=INITIALIZE, headers=MCP_HEADERS | PROXIED)
+        unstripped = await client.post("/seek/mcp", json=INITIALIZE, headers=MCP_HEADERS | PROXIED)
 
     assert stripped.status_code == 200, stripped.text
     assert unstripped.status_code == 200, unstripped.text
@@ -109,7 +109,7 @@ async def test_the_mcp_endpoint_answers_under_the_prefix(published: Config, tmp_
 async def test_the_event_stream_keeps_sending_keepalives_through_the_proxy(published: Config, tmp_path: Path) -> None:
     app = app_for(published, tmp_path / "no-bundle", events_keepalive_seconds=0.05)
 
-    async with running(app), event_stream(app, "/mentor/api/events", PROXIED) as stream:
+    async with running(app), event_stream(app, "/seek/api/events", PROXIED) as stream:
         await stream.wait_for_comments(2)
 
     assert stream.status == 200
@@ -128,20 +128,20 @@ async def test_requests_through_hosts_or_from_origins_not_allowed_are_refused(
         allowed = [
             await status(),
             await status(Host="localhost:5173", Origin="http://localhost:5173"),
-            await status(**PROXIED, Origin="https://mentor.example.com"),
-            await status(Host="mentor.example.com"),
+            await status(**PROXIED, Origin="https://seek.example.com"),
+            await status(Host="seek.example.com"),
         ]
         # DNS rebinding: a page on another site whose name resolves to this machine.
         refused = [
             await status(Host="attacker.example:7337"),
             await status(**(PROXIED | {"X-Forwarded-Host": "attacker.example"})),
-            await status(Host="attacker.example:7337", **{"X-Forwarded-Host": "mentor.example.com"}),
+            await status(Host="attacker.example:7337", **{"X-Forwarded-Host": "seek.example.com"}),
             await status(Origin="https://attacker.example"),
             await status(Origin="null"),
         ]
         bad_prefixes = [
             (await client.get("/api/syncs", headers=PROXIED | {"X-Forwarded-Prefix": prefix})).status_code
-            for prefix in ('/x"><script>', "/..", "/mentor/../api")
+            for prefix in ('/x"><script>', "/..", "/seek/../api")
         ]
 
     assert allowed == [202, 202, 202, 202]
@@ -207,7 +207,7 @@ async def test_with_access_configured_every_proxied_request_needs_a_valid_token(
     valid = with_token(certs.token())
 
     async with running(app) as client:
-        api = await client.get("/mentor/api/syncs", headers=valid)
+        api = await client.get("/seek/api/syncs", headers=valid)
         page = await client.get("/", headers=valid)
         mcp = await client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS | valid)
         async with event_stream(app, "/api/events", valid) as stream:
@@ -272,7 +272,7 @@ async def test_a_websocket_from_another_machine_is_refused_without_a_token(publi
         "raw_path": b"/api/events",
         "root_path": "",
         "query_string": b"",
-        "headers": [(b"host", b"mentor.example.com")],
+        "headers": [(b"host", b"seek.example.com")],
         "client": ("192.0.2.10", 50000),
         "server": ("127.0.0.1", 7337),
         "subprotocols": [],

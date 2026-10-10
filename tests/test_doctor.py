@@ -11,17 +11,17 @@ import httpx
 import pytest
 from harness import add_channel, fake_channel, fake_video, free_port, running, serving, wait_for_syncs
 
-from mentor import cli, db, doctor
-from mentor.api_chat import ApiEngine
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.credentials import Credentials
-from mentor.devices import DeviceProbe
-from mentor.doctor import Machine, diagnose
-from mentor.events import Events
-from mentor.service import UNIT_NAME, install_service
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import (
+from seek import cli, db, doctor
+from seek.api_chat import ApiEngine
+from seek.app import create_app
+from seek.config import Config
+from seek.credentials import Credentials
+from seek.devices import DeviceProbe
+from seek.doctor import Machine, diagnose
+from seek.events import Events
+from seek.service import UNIT_NAME, install_service
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.ports import (
     ChatEngine,
     ChatEngineStatus,
     EngineName,
@@ -110,21 +110,21 @@ async def seed_failures(
 
 
 def command(monkeypatch: pytest.MonkeyPatch, config: Config, secrets: FakeSecrets, probes: Machine) -> None:
-    """`mentor doctor` as a friend runs it, configured through the environment, with fakes for the machine."""
+    """`seek doctor` as a friend runs it, configured through the environment, with fakes for the machine."""
     monkeypatch.setenv("HOME", str(config.data_dir.parent))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config.data_dir.parent / "config"))
-    monkeypatch.setenv("MENTOR_DATA_DIR", str(config.data_dir))
-    monkeypatch.setenv("MENTOR_PORT", str(config.port))
+    monkeypatch.setenv("SEEK_DATA_DIR", str(config.data_dir))
+    monkeypatch.setenv("SEEK_PORT", str(config.port))
     if config.youtube_cookie_file is not None:
-        monkeypatch.setenv("MENTOR_YOUTUBE_COOKIE_FILE", str(config.youtube_cookie_file))
+        monkeypatch.setenv("SEEK_YOUTUBE_COOKIE_FILE", str(config.youtube_cookie_file))
     if config.youtube_cookies_from_browser is not None:
-        monkeypatch.setenv("MENTOR_YOUTUBE_COOKIES_FROM_BROWSER", config.youtube_cookies_from_browser)
+        monkeypatch.setenv("SEEK_YOUTUBE_COOKIES_FROM_BROWSER", config.youtube_cookies_from_browser)
     args = "\n".join(f"{name} = {json.dumps(list(values))}" for name, values in config.youtube_extractor_args.items())
-    monkeypatch.setenv("MENTOR_YOUTUBE_EXTRACTOR_ARGS", args)
+    monkeypatch.setenv("SEEK_YOUTUBE_EXTRACTOR_ARGS", args)
     monkeypatch.setattr(cli, "KeyringSecrets", lambda data_dir: secrets)
     monkeypatch.setattr(cli, "_chat_engine", lambda config: FakeChatEngine("cli"))
     monkeypatch.setattr(cli, "Machine", lambda: probes)
-    monkeypatch.setattr(sys, "argv", ["mentor", "doctor"])
+    monkeypatch.setattr(sys, "argv", ["seek", "doctor"])
 
 
 async def test_doctor_against_a_served_app_reports_its_state_and_leaks_no_seeded_secret(
@@ -172,7 +172,7 @@ async def test_doctor_against_a_served_app_reports_its_state_and_leaks_no_seeded
         "  failed Syncs: 2, latest first:",
     ]:
         assert expected in lines
-    assert any(line.startswith("Mentor 0.1.0, Python ") for line in lines)
+    assert any(line.startswith("Seek 0.1.0, Python ") for line in lines)
     assert "  rows: 1 channels, 0 groups, 2 videos" in captured.out
     [sync_errors] = [lines[i + 1 : i + 3] for i, line in enumerate(lines) if line.startswith("  failed Syncs")]
     assert [line.split(": ", 1)[1] for line in sync_errors] == [
@@ -200,7 +200,7 @@ async def test_doctor_without_a_server_reads_the_store_without_changing_it(
     assert leaked(report, cookie_file) == []
     lines = report.splitlines()
     for expected in [
-        f"Server: not running at http://127.0.0.1:{config.port}/; start it with `mentor serve`",
+        f"Server: not running at http://127.0.0.1:{config.port}/; start it with `seek serve`",
         "Preferences: engine api, provider anthropic, model fast",
         "Models: state unavailable, since only a running server loads them",
         "  expected device: mps / float32",
@@ -235,7 +235,7 @@ async def test_doctor_on_a_first_install_creates_nothing_and_labels_what_it_cann
         "  expected device: unavailable (ImportError: No module named 'torch')",
         "YouTube: yt-dlp unavailable (FileNotFoundError); JavaScript runtimes: deno not found, node not found, "
         "bun not found",
-        "Database: none yet; `mentor serve` creates it on first start",
+        "Database: none yet; `seek serve` creates it on first start",
         "Recent errors: none stored",
     ]:
         assert expected in lines
@@ -255,7 +255,7 @@ async def test_doctor_reports_an_unreadable_or_older_database_without_migrating_
         conn.execute("PRAGMA user_version = 2")
     report = await diagnose(config, tmp_path / "config.toml", None, FakeSecrets(), engines(), machine())
     lines = report.splitlines()
-    assert f"Database: schema 2 of {len(db.MIGRATIONS)}; `mentor serve` migrates it on start" in lines
+    assert f"Database: schema 2 of {len(db.MIGRATIONS)}; `seek serve` migrates it on start" in lines
     assert "  rows: none readable" in lines
     assert "Preferences: unavailable (the stored preferences could not be read)" in lines
     with sqlite3.connect(config.database_path) as conn:
@@ -321,19 +321,19 @@ def test_an_unexpected_failure_is_named_without_its_message(
     with pytest.raises(SystemExit) as exited:
         cli.main()
 
-    assert str(exited.value) == "mentor: doctor could not finish (RuntimeError)"
+    assert str(exited.value) == "seek: doctor could not finish (RuntimeError)"
     assert KEY not in capsys.readouterr().err
 
 
 def test_an_unreadable_config_still_prints_the_report_and_withholds_stored_error_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    config = Config(data_dir=tmp_path / "data" / "mentor", port=free_port())
+    config = Config(data_dir=tmp_path / "data" / "seek", port=free_port())
     command(monkeypatch, config, stored_key(), machine())
-    for name in ("MENTOR_DATA_DIR", "MENTOR_PORT", "MENTOR_YOUTUBE_EXTRACTOR_ARGS"):
+    for name in ("SEEK_DATA_DIR", "SEEK_PORT", "SEEK_YOUTUBE_EXTRACTOR_ARGS"):
         monkeypatch.delenv(name)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    config_file = tmp_path / "data" / "config" / "mentor" / "config.toml"
+    config_file = tmp_path / "data" / "config" / "seek" / "config.toml"
     config_file.parent.mkdir(parents=True)
     config_file.write_text(f'youtube_extractor_args = {{ po_token = "{PO_TOKEN}" ')
     config.data_dir.mkdir(parents=True)
@@ -347,7 +347,7 @@ def test_an_unreadable_config_still_prints_the_report_and_withholds_stored_error
         )
 
     asyncio.run(db.Database(config.database_path).run(failed_video))
-    # The fallback is the default port, where a real Mentor may be running on this machine.
+    # The fallback is the default port, where a real Seek may be running on this machine.
     monkeypatch.setattr(doctor, "answers", lambda url, seconds: False)
     cli.main()
     out = capsys.readouterr().out
@@ -381,10 +381,10 @@ def test_secrets_only_the_installed_service_knows_are_redacted_too(tmp_path: Pat
         config,
         {
             "PATH": "/nonexistent",
-            "MENTOR_YOUTUBE_EXTRACTOR_ARGS": f'po_token = ["web+{UNIT_TOKEN}"]',
-            "MENTOR_YOUTUBE_COOKIE_FILE": str(unit_cookie),
+            "SEEK_YOUTUBE_EXTRACTOR_ARGS": f'po_token = ["web+{UNIT_TOKEN}"]',
+            "SEEK_YOUTUBE_COOKIE_FILE": str(unit_cookie),
         },
-        Path("/usr/bin/mentor"),
+        Path("/usr/bin/seek"),
         tmp_path / "units",
         lambda args: None,
     )
@@ -404,7 +404,7 @@ def test_an_unreadable_service_unit_withholds_what_a_sync_wrote(tmp_path: Path) 
     config = Config(data_dir=tmp_path / "data", port=free_port())
     unit = tmp_path / "units" / UNIT_NAME
     unit.parent.mkdir()
-    unit.write_text("[Service]\nEnvironment=MENTOR_YOUTUBE_COOKIE_FILE=unquoted\n")
+    unit.write_text("[Service]\nEnvironment=SEEK_YOUTUBE_COOKIE_FILE=unquoted\n")
     failed_video_quoting(config, f"token {UNIT_TOKEN} refused")
 
     report = asyncio.run(diagnose(config, tmp_path / "config.toml", None, FakeSecrets(), engines(), machine(), unit))

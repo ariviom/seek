@@ -6,7 +6,9 @@ once, by hand.
 
 **Blocked by:** None. Ticket 10's publication step waits for this.
 
-**Status:** ready-for-agent
+**Status:** implemented — 572 tests passing, mypy and web typecheck clean, served bundle rebuilt, and the rail mark
+and favicon checked in light, dark and at 390px. Drew's one-time migration is written in HANDOFF but not yet run: it
+needs the rename on `main` and the key re-entered in Settings.
 
 **Decisions (Drew, 2026-10-10):** the name is Seek, and the public repository is `git@github.com:ariviom/seek.git`
 (public, empty). The rename lands before the first push. The logo is option 3 from the brand exploration: a custom
@@ -28,19 +30,19 @@ geometric S with 45° cut ends, and a K that is a video player's "previous" icon
 - Web: `<title>`, user-facing copy, a wordmark or favicon from `docs/brand/`, and FastAPI's `title`. Then rebuild the
   served bundle.
 
-- [ ] Rename all of the above. No compatibility aliases: no friend has installed Mentor, so there is nothing to keep
+- [x] Rename all of the above. No compatibility aliases: no friend has installed Mentor, so there is nothing to keep
   working under the old name.
-- [ ] Update README, CONTEXT.md and the live docs to Seek. Leave ADRs, closed specs, closed tickets, recorded baselines
+- [x] Update README, CONTEXT.md and the live docs to Seek. Leave ADRs, closed specs, closed tickets, recorded baselines
   (`docs/baselines/*.json`) and HANDOFF history as written, because they record what was true then. Add one line to
   HANDOFF recording the rename.
-- [ ] Use the logo in the web UI (a favicon from `seek-mark.svg`, plus the wordmark wherever the rail or header shows
+- [x] Use the logo in the web UI (a favicon from `seek-mark.svg`, plus the wordmark wherever the rail or header shows
   the product name). Check it in light, dark and at 390px.
 - [ ] Write Drew's one-time migration as documented manual steps, not code. Stop and uninstall `mentor.service` and
   its timer; move `~/.config/mentor` → `~/.config/seek` and `~/.local/share/mentor` → `~/.local/share/seek`, renaming
   `mentor.db` → `seek.db`; reinstall the tool as `seek`; `seek install-service`; re-enter the Anthropic key in Settings
   (the old keychain item can then be deleted); re-register MCP clients under `seek`. Run them, and check that Channels,
   Conversations and search all survive.
-- [ ] Leave the frozen baseline snapshot where it is (`~/.local/share/mentor-baselines`). Only the variable names
+- [x] Leave the frozen baseline snapshot where it is (`~/.local/share/mentor-baselines`). Only the variable names
   pointing at it change.
 
 **Verification:** pytest, mypy and the web typecheck pass. The bundle is rebuilt and the browser smoke tests are

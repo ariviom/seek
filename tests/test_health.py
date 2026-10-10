@@ -8,10 +8,10 @@ import httpx2
 import pytest
 from harness import running
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import ChatEngineStatus
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.ports import ChatEngineStatus
 
 
 async def test_health_reports_server_ok(client: httpx.AsyncClient) -> None:

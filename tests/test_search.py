@@ -16,10 +16,10 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import Chapter, Cue
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import Chapter, Cue
 
 
 async def search(client: httpx.AsyncClient, query: str, **scope: object) -> list[Json]:

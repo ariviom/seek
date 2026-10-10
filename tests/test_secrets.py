@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from mentor.ports import SecretsUnavailable
-from mentor.secrets import KeyringSecrets
+from seek.ports import SecretsUnavailable
+from seek.secrets import KeyringSecrets
 
 
 class Keychain:
@@ -35,10 +35,10 @@ class Keychain:
 
 @pytest.fixture
 def keychain(monkeypatch: pytest.MonkeyPatch) -> Keychain:
-    import mentor.secrets
+    import seek.secrets
 
     backend = Keychain()
-    monkeypatch.setattr(mentor.secrets, "keyring", backend)
+    monkeypatch.setattr(seek.secrets, "keyring", backend)
     return backend
 
 
@@ -210,7 +210,7 @@ def test_private_file_failure_cannot_fall_through_to_keychain(
 
 
 def test_fake_representation_redacts_credentials() -> None:
-    from mentor.fakes import FakeSecrets
+    from seek.fakes import FakeSecrets
 
     secrets = FakeSecrets()
     secrets.set("anthropic", "raw-secret")

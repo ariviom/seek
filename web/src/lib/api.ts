@@ -31,7 +31,7 @@ export type ChatEngineStatus = {
 export type ChatHealth = { active: EngineName | null; engines: Record<EngineName, ChatEngineStatus> };
 
 // Preferences a friend owns, kept apart from the operational settings in the config file. A null engine
-// leaves the choice to Mentor; `model` is the default a Conversation follows unless it pinned one.
+// leaves the choice to Seek; `model` is the default a Conversation follows unless it pinned one.
 export type ModelChoice = "fast" | "deep";
 export type Settings = {
   engine: EngineName | null;
@@ -268,7 +268,7 @@ async function request<T>(
 export const api = {
   health: () => request<Health>("health"),
   settings: () => request<Settings>("settings"),
-  // Only the fields given change; an explicit null engine restores Mentor's own choice.
+  // Only the fields given change; an explicit null engine restores Seek's own choice.
   updateSettings: (patch: Partial<Settings>) => request<Settings>("settings", { method: "PATCH", body: patch }),
   credentialStatus: () => request<CredentialStatus>("credentials/anthropic"),
   // The key goes one way: the server validates and stores it, and never gives it back.
@@ -301,7 +301,7 @@ export const api = {
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
-  // Reads geometry already stored; it never makes Mentor fetch anything from YouTube.
+  // Reads geometry already stored; it never makes Seek fetch anything from YouTube.
   frames: (moments: Moment[]) => request<VideoFrames[]>("frames", { method: "POST", body: { moments } }),
   createConversation: (scope: Scope, model: string | null, context: ChatContext) =>
     request<Conversation>(`${scope.kind}s/${scope.id}/conversations`, {

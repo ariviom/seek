@@ -806,65 +806,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mentor"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "anthropic" },
-    { name = "claude-agent-sdk" },
-    { name = "fastapi" },
-    { name = "huggingface-hub" },
-    { name = "keyring" },
-    { name = "mcp" },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "sentence-transformers" },
-    { name = "snowballstemmer" },
-    { name = "sqlite-vec" },
-    { name = "torch" },
-    { name = "tqdm" },
-    { name = "uvicorn" },
-    { name = "yt-dlp", extra = ["default"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "mypy" },
-    { name = "playwright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "types-tqdm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", specifier = ">=1.7,<2" },
-    { name = "claude-agent-sdk", specifier = ">=0.2.152" },
-    { name = "fastapi", specifier = ">=0.141" },
-    { name = "huggingface-hub", specifier = ">=1.31" },
-    { name = "keyring", specifier = ">=25" },
-    { name = "mcp", specifier = ">=2.2,<3" },
-    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.14" },
-    { name = "sentence-transformers", specifier = ">=6.0.1" },
-    { name = "snowballstemmer", specifier = ">=3.1.1" },
-    { name = "sqlite-vec", specifier = ">=0.1.9" },
-    { name = "torch", specifier = ">=2.14" },
-    { name = "tqdm", specifier = ">=4.70" },
-    { name = "uvicorn", specifier = ">=0.52" },
-    { name = "yt-dlp", extras = ["default"], specifier = ">=2026.8" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "mypy", specifier = ">=2.3" },
-    { name = "playwright", specifier = ">=1.62" },
-    { name = "pytest", specifier = ">=9.1" },
-    { name = "pytest-asyncio", specifier = ">=1.4" },
-    { name = "types-tqdm", specifier = ">=4.70.0.20260906" },
-]
-
-[[package]]
 name = "more-itertools"
 version = "11.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1523,6 +1464,65 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137", size = 15554, upload-time = "2025-11-23T19:02:51.545Z" },
+]
+
+[[package]]
+name = "seek"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "anthropic" },
+    { name = "claude-agent-sdk" },
+    { name = "fastapi" },
+    { name = "huggingface-hub" },
+    { name = "keyring" },
+    { name = "mcp" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "sentence-transformers" },
+    { name = "snowballstemmer" },
+    { name = "sqlite-vec" },
+    { name = "torch" },
+    { name = "tqdm" },
+    { name = "uvicorn" },
+    { name = "yt-dlp", extra = ["default"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "mypy" },
+    { name = "playwright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "types-tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", specifier = ">=1.7,<2" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.152" },
+    { name = "fastapi", specifier = ">=0.141" },
+    { name = "huggingface-hub", specifier = ">=1.31" },
+    { name = "keyring", specifier = ">=25" },
+    { name = "mcp", specifier = ">=2.2,<3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.14" },
+    { name = "sentence-transformers", specifier = ">=6.0.1" },
+    { name = "snowballstemmer", specifier = ">=3.1.1" },
+    { name = "sqlite-vec", specifier = ">=0.1.9" },
+    { name = "torch", specifier = ">=2.14" },
+    { name = "tqdm", specifier = ">=4.70" },
+    { name = "uvicorn", specifier = ">=0.52" },
+    { name = "yt-dlp", extras = ["default"], specifier = ">=2026.8" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "mypy", specifier = ">=2.3" },
+    { name = "playwright", specifier = ">=1.62" },
+    { name = "pytest", specifier = ">=9.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4" },
+    { name = "types-tqdm", specifier = ">=4.70.0.20260906" },
 ]
 
 [[package]]

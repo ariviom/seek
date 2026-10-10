@@ -12,10 +12,10 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import VideoUnavailable
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import VideoUnavailable
 
 
 async def listed_channels(client: httpx.AsyncClient) -> list[tuple[str, str, bool]]:

@@ -34,7 +34,7 @@ export function momentKey(moment: { video_id: number; seconds: number }): string
   return `${moment.video_id}:${moment.seconds}`;
 }
 
-/** The frames the moments ask for, read from geometry already stored. Never makes Mentor call YouTube. */
+/** The frames the moments ask for, read from geometry already stored. Never makes Seek call YouTube. */
 export function useFrames(moments: Moment[], enabled: boolean): Frames {
   const [found, setFound] = useState<Map<string, VideoFrames>>(new Map());
   const [broken, setBroken] = useState<string[]>([]);

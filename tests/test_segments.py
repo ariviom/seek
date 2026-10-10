@@ -19,11 +19,11 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor import db
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import Chapter, Cue
+from seek import db
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import Chapter, Cue
 
 
 def spoken(topic: str, until: float) -> list[Cue]:

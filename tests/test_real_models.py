@@ -8,11 +8,11 @@ import httpx
 import pytest
 from harness import Json, add_channel, fake_channel, fake_video, running, start_sync, wait_for_syncs
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeTranscriptSource
-from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
-from mentor.ports import Cue
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeTranscriptSource
+from seek.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
+from seek.ports import Cue
 
 pytestmark = pytest.mark.real_models
 

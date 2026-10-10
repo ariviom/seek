@@ -13,10 +13,10 @@ import uvicorn
 from fastapi import FastAPI
 from mcp import Client
 
-from mentor import db
-from mentor.config import Config
-from mentor.fakes import FakeChannel, FakeTranscriptSource, FakeVideo
-from mentor.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
+from seek import db
+from seek.config import Config
+from seek.fakes import FakeChannel, FakeTranscriptSource, FakeVideo
+from seek.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
 @asynccontextmanager

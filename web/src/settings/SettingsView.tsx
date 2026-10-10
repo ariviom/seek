@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { describeEngine, describeModel, engineLabels, engineNames, modelLabels, modelRoles } from "@/shell/Notices";
 
 const KEYS_URL = "https://console.anthropic.com/settings/keys";
-// Sent as a null engine, which hands the choice back to Mentor.
+// Sent as a null engine, which hands the choice back to Seek.
 const automatic = "automatic";
 
 function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) {
@@ -76,7 +76,7 @@ export function SettingsView({
       </h1>
       <p className="text-sm text-muted-foreground">
         Your preferences, kept on this machine. Ports, directories and ingestion options belong to whoever runs
-        Mentor and stay in its config file.
+        Seek and stay in its config file.
       </p>
       {(error ?? settingsError) !== null && (
         <Alert variant="destructive">
@@ -139,7 +139,7 @@ export function SettingsView({
           settings?.engine != null &&
           health.chat.engines[settings.engine].state !== "ready" && (
             <p className="text-xs text-destructive">
-              You chose {engineLabels[settings.engine]}, which can’t answer yet. Mentor won’t quietly use the other
+              You chose {engineLabels[settings.engine]}, which can’t answer yet. Seek won’t quietly use the other
               engine instead.
             </p>
           )}
@@ -188,7 +188,7 @@ export function SettingsView({
 
       <Section
         title="Models on this machine"
-        description="How search and ingestion are running here. The model names come from Mentor's config file; the device and precision follow your hardware."
+        description="How search and ingestion are running here. The model names come from Seek's config file; the device and precision follow your hardware."
       >
         <dl className="grid gap-1 text-xs">
           {modelRoles.map((role) => {
@@ -218,7 +218,7 @@ function validityNote(status: CredentialStatus): string {
     case "invalid":
       return "The saved key was rejected. Replace it with a working one.";
     case "unverified":
-      return "A key is saved, but Anthropic hasn’t confirmed it yet. Mentor will use it as it stands.";
+      return "A key is saved, but Anthropic hasn’t confirmed it yet. Seek will use it as it stands.";
   }
 }
 
@@ -290,7 +290,7 @@ function KeySection() {
   return (
     <Section
       title="Anthropic API key"
-      description="Needed for the Anthropic API engine. Mentor stores it outside the knowledge base and never shows it again."
+      description="Needed for the Anthropic API engine. Seek stores it outside the knowledge base and never shows it again."
     >
       <p className="text-xs" role="status">
         {status !== null
@@ -303,7 +303,7 @@ function KeySection() {
       {status?.present && (status.store === "file" || status.fallback_reason !== null) && (
         <p className="text-xs text-amber-600 dark:text-amber-500">
           {status.fallback_reason ??
-            "The key is in a private file in Mentor’s data directory, readable only by your user account."}
+            "The key is in a private file in Seek’s data directory, readable only by your user account."}
         </p>
       )}
       {error !== null && (
@@ -360,7 +360,7 @@ function KeySection() {
         <a className="underline underline-offset-2" href={KEYS_URL} target="_blank" rel="noreferrer">
           {KEYS_URL}
         </a>
-        . Anthropic bills the key directly; Mentor only reports the tokens each chat used.
+        . Anthropic bills the key directly; Seek only reports the tokens each chat used.
       </p>
       <ConfirmDialog
         title="Delete key"

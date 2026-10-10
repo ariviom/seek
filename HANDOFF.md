@@ -1,4 +1,24 @@
-# Handoff — Mentor
+# Handoff — Seek (formerly Mentor)
+
+**Renamed to Seek (2026-10-10, ticket 13).** The package, CLI, paths, database file, keychain service, systemd units,
+MCP server and tool names (`mcp__seek__…`), `SEEK_*` environment variables and web UI are all Seek now, with the
+logo from `docs/brand/`. Entries below this one are history and keep the old name. The old schema's own names
+(`mentors`, `mentor_groups`, `mentor_id`…) and `~/.local/share/mentor-baselines` deliberately stay. Drew's
+installation moves once, from an ordinary terminal (not an agent session), after the rename reaches `main`:
+
+1. `systemctl --user disable --now mentor.service`, then remove `~/.config/systemd/user/mentor.service` and
+   `systemctl --user daemon-reload` (no Sync timer is installed).
+2. `mv ~/.config/mentor ~/.config/seek`, `mv ~/.local/share/mentor ~/.local/share/seek`, then
+   `mv ~/.local/share/seek/mentor.db ~/.local/share/seek/seek.db` (move its `-wal`/`-shm` files too, if present).
+   `config.toml` needs no edits: its only mention is the `remote.example.com` hostname, which stays.
+3. `uv tool uninstall mentor`, then `uv tool install ~/mentor` from the updated `main` checkout.
+4. `SEEK_CLAUDE_CLI_PATH=~/.local/bin/claude seek install-service`. The old unit was given `MENTOR_CLAUDE_CLI_PATH`
+   at install, and no shell profile sets it.
+5. The moved journal still names the old keychain item, which Seek looks for under the service `seek`, so the key
+   reads as unavailable. Re-enter it in Settings, then delete the old items with `secret-tool clear service mentor`.
+6. Re-register MCP clients: `claude mcp remove mentor --scope user`, then the `claude mcp add …` line from
+   `seek mcp-config`.
+7. Check: `seek status`, then confirm in the web UI that Channels, Conversations and search are all intact.
 
 **Current direction (2026-09-18): build 0, the friends release.** The approved queue is
 `.scratch/mentor-build-0/issues/`, with dependencies and coverage in `.scratch/mentor-build-0/README.md`.

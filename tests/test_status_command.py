@@ -16,18 +16,18 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor import db, syncs
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import ChatEngine, ChatEngineStatus, EngineName, ModelStatus, VideoUnavailable
-from mentor.status_command import format_list, format_status, list_all, status
+from seek import db, syncs
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import ChatEngine, ChatEngineStatus, EngineName, ModelStatus, VideoUnavailable
+from seek.status_command import format_list, format_status, list_all, status
 
 
 def _engines(
     cli: FakeChatEngine | None = None, api: FakeChatEngine | None = None
 ) -> dict[EngineName, ChatEngine]:
-    """Both engines, as `mentor status` is wired with them when it has to ask them itself."""
+    """Both engines, as `seek status` is wired with them when it has to ask them itself."""
     return {
         "api": api or FakeChatEngine("api", engine_status=ChatEngineStatus("api", "no_key", None, "Add a key")),
         "cli": cli or FakeChatEngine("cli"),
@@ -59,7 +59,7 @@ async def test_status_shows_actual_device_precision_and_fallback_without_losing_
     assert "2 MB of 8 MB" in formatted
 
 
-async def test_mentor_status_reports_the_running_servers_models_both_engines_and_sync_queue(
+async def test_seek_status_reports_the_running_servers_models_both_engines_and_sync_queue(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     gate = Gate()
@@ -109,7 +109,7 @@ async def test_mentor_status_reports_the_running_servers_models_both_engines_and
     ]
 
 
-async def test_mentor_status_reads_the_store_and_asks_both_engines_itself_when_no_server_answers(
+async def test_seek_status_reads_the_store_and_asks_both_engines_itself_when_no_server_answers(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     offline = replace(config, port=free_port())
@@ -151,7 +151,7 @@ def seed_videos(transcripts: FakeTranscriptSource) -> None:
     ]
 
 
-async def test_mentor_list_shows_channels_with_their_counts_and_groups_from_the_server_or_the_store(
+async def test_seek_list_shows_channels_with_their_counts_and_groups_from_the_server_or_the_store(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     seed_videos(transcripts)
@@ -181,7 +181,7 @@ async def test_mentor_list_shows_channels_with_their_counts_and_groups_from_the_
     ]
 
 
-async def test_mentor_list_with_nothing_added_says_so(config: Config) -> None:
+async def test_seek_list_with_nothing_added_says_so(config: Config) -> None:
     report = await list_all(replace(config, port=free_port()))
 
     assert format_list(report) == "No Channels yet."

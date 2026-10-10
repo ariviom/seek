@@ -15,16 +15,16 @@ import pytest
 from api_transport import MESSAGES_URL, Provider, ToolUse, answer
 from harness import running, woodworkers
 
-from mentor.api_chat import INVALID_KEY, NO_KEY, ApiEngine, replayed
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.credentials import Credentials
-from mentor.db import Database
-from mentor.engines import MAX_TURNS, NO_API_CONTEXT
-from mentor.events import Events
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.mcp_server import bound_tool_names, create_scope_server
-from mentor.ports import (
+from seek.api_chat import INVALID_KEY, NO_KEY, ApiEngine, replayed
+from seek.app import create_app
+from seek.config import Config
+from seek.credentials import Credentials
+from seek.db import Database
+from seek.engines import MAX_TURNS, NO_API_CONTEXT
+from seek.events import Events
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.mcp_server import bound_tool_names, create_scope_server
+from seek.ports import (
     ChatDone,
     ChatEvent,
     ChatFailed,
@@ -35,9 +35,9 @@ from mentor.ports import (
     ToolResult,
     UsageReported,
 )
-from mentor.ranking import Recency
-from mentor.scope import Scope
-from mentor.search import PreferRecent, Search
+from seek.ranking import Recency
+from seek.scope import Scope
+from seek.search import PreferRecent, Search
 
 KEY = "sk-ant-private-key"
 
@@ -217,7 +217,7 @@ async def test_the_turn_stops_at_the_shared_turn_limit_instead_of_looping(
     events = await collect(engine_over(FakeSecrets(values={"anthropic": stored()})), request_for(config, group_id))
 
     assert len(provider.bodies) == MAX_TURNS
-    assert events[-1] == ChatFailed(f"The answer needed more than {MAX_TURNS} steps, so Mentor stopped it.")
+    assert events[-1] == ChatFailed(f"The answer needed more than {MAX_TURNS} steps, so Seek stopped it.")
 
 
 @pytest.mark.parametrize(

@@ -11,7 +11,7 @@ failed model. Search then returns fused results with their existing citations, s
 and Video diversity. Their score is zero (unscored), and reranker-dependent recency adjustment
 is not applied. Successful reranked search is unchanged.
 
-`mentor status`, `/api/health`, model events and the existing Server health dialog report
+`seek status`, `/api/health`, model events and the existing Server health dialog report
 actual device, precision and fallback reason. Events continue after startup to expose runtime
 changes. Download progress and byte totals remain visible. CUDA allocation cleanup and
 per-Video embedding OOM recovery remain CUDA-specific.
@@ -23,10 +23,10 @@ models. Execute only the device test, which uses production adapters without a d
 Sync worker:
 
 ```sh
-MENTOR_DEVICE_RESULTS=/tmp/mentor-mac-auto.json \
+SEEK_DEVICE_RESULTS=/tmp/seek-mac-auto.json \
 uv run pytest -q -s -m real_models tests/test_real_devices.py
 
-MENTOR_VERIFY_DEVICE=cpu MENTOR_DEVICE_RESULTS=/tmp/mentor-mac-cpu.json \
+SEEK_VERIFY_DEVICE=cpu SEEK_DEVICE_RESULTS=/tmp/seek-mac-cpu.json \
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 uv run pytest -q -s -m real_models tests/test_real_devices.py
 ```
@@ -47,8 +47,8 @@ Use the unchanged ticket-01 snapshot, questions and manifest, following the serv
 and restoration procedure in [retrieval-baseline.md](retrieval-baseline.md):
 
 ```sh
-MENTOR_RETRIEVAL_SNAPSHOT=/home/drew/.local/share/mentor-baselines/build-0/retrieval.db \
-MENTOR_RETRIEVAL_RESULTS=/tmp/mentor-ticket-02-cuda.json \
+SEEK_RETRIEVAL_SNAPSHOT=/home/drew/.local/share/mentor-baselines/build-0/retrieval.db \
+SEEK_RETRIEVAL_RESULTS=/tmp/mentor-ticket-02-cuda.json \
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 uv run pytest -q -s -m real_models tests/test_retrieval_baseline.py
 ```
@@ -74,7 +74,7 @@ Linux execution on clean `b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626`, 2026-09-19:
   -5.34743. Both models are ready on CPU, with fully cached offline execution. Full report:
   [ticket-02-cpu.json](baselines/ticket-02-cpu.json). The CPU name was recorded using `lscpu`
   because Python's `platform.processor()` returned an empty string.
-- Mentor was stopped around these runs with an EXIT trap to restore its prior active state.
+- Seek was stopped around these runs with an EXIT trap to restore its prior active state.
   GPU memory was checked before CUDA loading; no unrelated workloads were evicted. After
   restoration the installed service was active and both models ready. The service remains
   on its prior installed code; this branch was not installed into the live service.
@@ -88,7 +88,7 @@ Linux execution on clean `b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626`, 2026-09-19:
 The CPU command used was:
 
 ```sh
-MENTOR_VERIFY_DEVICE=cpu MENTOR_DEVICE_RESULTS=/tmp/mentor-ticket-02-cpu.json \
+SEEK_VERIFY_DEVICE=cpu SEEK_DEVICE_RESULTS=/tmp/mentor-ticket-02-cpu.json \
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 \
 uv run pytest -q -s -m real_models tests/test_real_devices.py
 ```

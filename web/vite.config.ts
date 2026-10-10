@@ -10,7 +10,7 @@ export default defineConfig({
     alias: { "@": new URL("./src", import.meta.url).pathname },
   },
   build: {
-    outDir: "../src/mentor/static",
+    outDir: "../src/seek/static",
     emptyOutDir: true,
   },
   server: {

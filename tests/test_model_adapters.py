@@ -5,8 +5,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from mentor.devices import DeviceSelection
-from mentor.models import CrossEncoderReranker, GpuRunner
+from seek.devices import DeviceSelection
+from seek.models import CrossEncoderReranker, GpuRunner
 
 
 def test_mps_warmup_failure_retries_on_cpu_before_reporting_ready(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,7 +44,7 @@ def test_first_runtime_mps_failure_retries_once_and_reports_a_failed_cpu_retry(
     import huggingface_hub
     import sentence_transformers
 
-    from mentor.ports import ModelUnavailable
+    from seek.ports import ModelUnavailable
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **kw: [])
     devices: list[str] = []
@@ -85,7 +85,7 @@ def test_cuda_reranker_oom_is_observably_failed(monkeypatch: pytest.MonkeyPatch)
     import sentence_transformers
     import torch
 
-    from mentor.ports import GpuOutOfMemory
+    from seek.ports import GpuOutOfMemory
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **kw: [])
     cleanup: list[bool] = []
@@ -118,8 +118,8 @@ def test_embedding_keeps_prompts_normalization_and_cuda_oom_video_recovery(
     import sentence_transformers
     import torch
 
-    from mentor.models import SentenceTransformerEmbedder
-    from mentor.ports import GpuOutOfMemory, ModelUnavailable
+    from seek.models import SentenceTransformerEmbedder
+    from seek.ports import GpuOutOfMemory, ModelUnavailable
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **kw: [])
     cleanup: list[bool] = []
@@ -224,7 +224,7 @@ def test_offline_cached_model_loads_or_explains_missing_cache(
         assert reranker.status().state == "ready"
     else:
         assert reranker.status().state == "failed"
-        assert "restart mentor once online" in (reranker.status().error or "")
+        assert "restart seek once online" in (reranker.status().error or "")
 
 
 def test_download_progress_keeps_byte_totals_and_selected_device(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,7 +233,7 @@ def test_download_progress_keeps_byte_totals_and_selected_device(monkeypatch: py
     import huggingface_hub
     import sentence_transformers
 
-    from mentor.ports import ModelStatus
+    from seek.ports import ModelStatus
 
     observed: list[ModelStatus] = []
 

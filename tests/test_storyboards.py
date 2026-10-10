@@ -22,15 +22,15 @@ from harness import (
     sync,
 )
 
-from mentor import db, storyboards, syncs
-from mentor.app import create_app
-from mentor.backfill_command import SYNC_RUNNING, BackfillReport, backfill_storyboards
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import Storyboard, VideoUnavailable
-from mentor.storyboards import Frame, Moment, frames_at
-from mentor.storyboards_api import MAX_MOMENTS
-from mentor.sync_command import SyncCommandError
+from seek import db, storyboards, syncs
+from seek.app import create_app
+from seek.backfill_command import SYNC_RUNNING, BackfillReport, backfill_storyboards
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import Storyboard, VideoUnavailable
+from seek.storyboards import Frame, Moment, frames_at
+from seek.storyboards_api import MAX_MOMENTS
+from seek.sync_command import SyncCommandError
 
 # Every field a search result has carried since before frames existed; a signed sheet URL is not among them.
 SEARCH_RESULT_FIELDS = {
@@ -456,7 +456,7 @@ async def test_the_backfill_names_an_unknown_channel_rather_than_fetching_every_
     assert [method for method, _ in transcripts.calls if method == "fetch_storyboard"] == []
 
 
-def test_the_backfill_refuses_a_knowledge_base_from_a_newer_mentor(
+def test_the_backfill_refuses_a_knowledge_base_from_a_newer_seek(
     config: Config, transcripts: FakeTranscriptSource
 ) -> None:
     config.data_dir.mkdir(parents=True)

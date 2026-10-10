@@ -75,7 +75,7 @@ export function AddChannelDialog({
           <DialogTitle>Add a channel</DialogTitle>
           {/* Said here, where it can still change the choice: how long the first Sync takes is decided now. */}
           <DialogDescription>
-            Start with a small channel. Mentor fetches and indexes every video it finds, so a large back catalogue
+            Start with a small channel. Seek fetches and indexes every video it finds, so a large back catalogue
             can take hours. You can add more once you have seen how the first one goes.
           </DialogDescription>
         </DialogHeader>

@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 from harness import add_channel, add_group, fake_channel, fake_video, running, said, sync
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.devices import DeviceSelection
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeTranscriptSource
-from mentor.models import CrossEncoderReranker, GpuRunner
+from seek.app import create_app
+from seek.config import Config
+from seek.devices import DeviceSelection
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeTranscriptSource
+from seek.models import CrossEncoderReranker, GpuRunner
 
 
 @pytest.mark.parametrize("cpu_fails", [False, True])

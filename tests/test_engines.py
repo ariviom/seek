@@ -26,12 +26,12 @@ from harness import (
     stream_events,
 )
 
-from mentor import conversations
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.engines import API_MODELS, CLI_MODELS
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
-from mentor.ports import (
+from seek import conversations
+from seek.app import create_app
+from seek.config import Config
+from seek.engines import API_MODELS, CLI_MODELS
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.ports import (
     ChatDone,
     ChatEngineState,
     ChatEngineStatus,
@@ -110,7 +110,7 @@ async def test_an_invalid_stored_key_is_reported_rather_than_bypassed_through_th
 async def test_no_ready_engine_disables_chat_and_nothing_else(
     client: httpx.AsyncClient, engine: FakeChatEngine, api_engine: FakeChatEngine
 ) -> None:
-    """A friend without a key can still see what Mentor does before paying for anything."""
+    """A friend without a key can still see what Seek does before paying for anything."""
     channel = await add_channel(client, "@woodbywright")
     group = await add_group(client, "Woodworking", channel)
     conversation = await start_conversation(client, group["id"])

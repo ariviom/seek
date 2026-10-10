@@ -1,7 +1,7 @@
 """Actual local model execution; select explicitly with -m real_models.
 
-MENTOR_VERIFY_DEVICE=cpu exercises CPU even when an accelerator is available.
-MENTOR_DEVICE_RESULTS writes portable verification evidence outside the checkout.
+SEEK_VERIFY_DEVICE=cpu exercises CPU even when an accelerator is available.
+SEEK_DEVICE_RESULTS writes portable verification evidence outside the checkout.
 """
 
 import asyncio
@@ -17,22 +17,22 @@ from pathlib import Path
 
 import pytest
 
-from mentor.config import DEFAULT_EMBEDDING_DIMENSION, DEFAULT_EMBEDDING_MODEL, DEFAULT_RERANKER_MODEL
-from mentor.devices import DeviceSelection, probe_device, select_device
-from mentor.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
+from seek.config import DEFAULT_EMBEDDING_DIMENSION, DEFAULT_EMBEDDING_MODEL, DEFAULT_RERANKER_MODEL
+from seek.devices import DeviceSelection, probe_device, select_device
+from seek.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 
 pytestmark = pytest.mark.real_models
 
 
 async def test_real_models_embed_and_score_on_the_selected_device(tmp_path: Path) -> None:
-    requested = os.environ.get("MENTOR_VERIFY_DEVICE", "auto")
-    assert requested in {"auto", "cpu"}, "MENTOR_VERIFY_DEVICE must be auto or cpu"
+    requested = os.environ.get("SEEK_VERIFY_DEVICE", "auto")
+    assert requested in {"auto", "cpu"}, "SEEK_VERIFY_DEVICE must be auto or cpu"
     probe = probe_device()
     selection = DeviceSelection("cpu", "float32") if requested == "cpu" else select_device(probe)
     runner = GpuRunner()
     embedder = SentenceTransformerEmbedder(DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSION, runner, selection)
     reranker = CrossEncoderReranker(DEFAULT_RERANKER_MODEL, runner, selection)
-    output = Path(os.environ.get("MENTOR_DEVICE_RESULTS", str(tmp_path / "device-results.json")))
+    output = Path(os.environ.get("SEEK_DEVICE_RESULTS", str(tmp_path / "device-results.json")))
     report: dict[str, object] = {
         "started_at": datetime.now(UTC).isoformat(),
         "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

@@ -9,8 +9,8 @@ from retrieval_baseline import configured_snapshot
 def test_absent_snapshot_is_explicitly_optional_but_empty_or_missing_is_an_error(tmp_path: Path) -> None:
     assert configured_snapshot({}) is None
     for value in ("", str(tmp_path / "missing.db"), str(tmp_path)):
-        with pytest.raises(ValueError, match="MENTOR_RETRIEVAL_SNAPSHOT"):
-            configured_snapshot({"MENTOR_RETRIEVAL_SNAPSHOT": value})
+        with pytest.raises(ValueError, match="SEEK_RETRIEVAL_SNAPSHOT"):
+            configured_snapshot({"SEEK_RETRIEVAL_SNAPSHOT": value})
 
 
 def test_snapshot_must_match_checksum_schema_and_embedding_before_a_copy_is_used(tmp_path: Path) -> None:

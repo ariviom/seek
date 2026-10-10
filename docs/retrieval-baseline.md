@@ -35,13 +35,13 @@ manifest. Both revisions must already be complete in the Hugging Face cache. If 
 the cache, dereference snapshot symlinks or include their blob targets. The runner resolves
 exact revisions offline; it never refreshes a moving `main` model ref.
 
-Stop Mentor before loading a second model set, inspect free GPU memory, and restore its
+Stop Seek before loading a second model set, inspect free GPU memory, and restore its
 prior running state even on failure. Do not kill unrelated GPU workloads. On this Linux host,
 the exact test invocation is:
 
 ```sh
-MENTOR_RETRIEVAL_SNAPSHOT=/home/drew/.local/share/mentor-baselines/build-0/retrieval.db \
-MENTOR_RETRIEVAL_RESULTS=/tmp/mentor-cuda-retrieval-results.json \
+SEEK_RETRIEVAL_SNAPSHOT=/home/drew/.local/share/mentor-baselines/build-0/retrieval.db \
+SEEK_RETRIEVAL_RESULTS=/tmp/seek-cuda-retrieval-results.json \
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 uv run pytest -q -s -m real_models tests/test_retrieval_baseline.py
 ```
@@ -51,23 +51,23 @@ For a service-managed repeat, use a shell trap so failure also restores the serv
 ```sh
 (
   set -eu
-  prior=$(systemctl --user is-active mentor.service || true)
-  restore() { if [ "$prior" = active ]; then systemctl --user start mentor.service; fi; }
+  prior=$(systemctl --user is-active seek.service || true)
+  restore() { if [ "$prior" = active ]; then systemctl --user start seek.service; fi; }
   trap restore EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  systemctl --user stop mentor.service
+  systemctl --user stop seek.service
   nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv
-  MENTOR_RETRIEVAL_SNAPSHOT=/home/drew/.local/share/mentor-baselines/build-0/retrieval.db \
-  MENTOR_RETRIEVAL_RESULTS=/tmp/mentor-cuda-retrieval-results.json \
+  SEEK_RETRIEVAL_SNAPSHOT=/home/drew/.local/share/mentor-baselines/build-0/retrieval.db \
+  SEEK_RETRIEVAL_RESULTS=/tmp/seek-cuda-retrieval-results.json \
   HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   uv run pytest -q -s -m real_models tests/test_retrieval_baseline.py
 )
 ```
 
-Ensure no scheduled Sync or foreground Mentor can start concurrently. At initial capture,
-`mentor-sync.timer` and `mentor-sync.service` were inactive. After restoration, verify
-`systemctl --user is-active mentor.service` and `/api/health` model readiness.
+Ensure no scheduled Sync or foreground Seek can start concurrently. At initial capture,
+`seek-sync.timer` and `seek-sync.service` were inactive. After restoration, verify
+`systemctl --user is-active seek.service` and `/api/health` model readiness.
 
 The runner validates checksum/schema/model identity before copying to a disposable writable
 database. The supported retrieval schema remains 11: additive application migrations such
@@ -76,16 +76,16 @@ and actual snapshot must both match that explicitly supported schema.
 It calls production `Search` and the existing CUDA model wrappers directly; it
 never starts application lifespan or a Sync worker. Time is frozen only at the search clock
 boundary. CUDA precision and ranking implementation remain unchanged. A missing
-`MENTOR_RETRIEVAL_SNAPSHOT` produces an explicit skip when this opt-in test is selected;
+`SEEK_RETRIEVAL_SNAPSHOT` produces an explicit skip when this opt-in test is selected;
 an empty, missing, corrupt, wrong-checksum or incompatible configured snapshot fails.
 Normal `uv run pytest -q` excludes the `real_models` marker entirely. To demonstrate the
-explicit skip, use `env -u MENTOR_RETRIEVAL_SNAPSHOT uv run pytest -q -rs -m real_models
+explicit skip, use `env -u SEEK_RETRIEVAL_SNAPSHOT uv run pytest -q -rs -m real_models
 tests/test_retrieval_baseline.py`.
 
 ## Ticket 03: transfer and compare
 
 Transfer the existing `retrieval.db` privately to the Mac, verify the exact SHA-256 above,
-keep it read-only outside the checkout, and set `MENTOR_RETRIEVAL_SNAPSHOT` to its absolute
+keep it read-only outside the checkout, and set `SEEK_RETRIEVAL_SNAPSHOT` to its absolute
 path. Transfer these fixtures, manifest, locked dependencies and pinned model cache revisions
 with it. Never take a replacement snapshot, re-Sync, re-embed, or regenerate required Videos.
 There are no SQLite sidecars to transfer. The database can contain personal conversations;
@@ -113,12 +113,12 @@ scores, model revisions, dependencies and source hashes are in
 were replaced with repository names in that committed artifact; the original report remains
 beside the private snapshot as `cuda-results.json`.
 
-The command above was run with `MENTOR_RETRIEVAL_RESULTS` set to
-`/home/drew/.local/share/mentor-baselines/build-0/cuda-results.json`. Mentor was active before
+The command above was run with `SEEK_RETRIEVAL_RESULTS` set to
+`/home/drew/.local/share/mentor-baselines/build-0/cuda-results.json`. Seek was active before
 the run, stopped and confirmed inactive before model loading, then restored by the EXIT trap.
-The RTX 3090 had **21,590 MiB free / 24,576 MiB total** after stopping Mentor; driver
+The RTX 3090 had **21,590 MiB free / 24,576 MiB total** after stopping Seek; driver
 595.84, CUDA 13.0, precision bfloat16. No unrelated workload was evicted. After the run,
-Mentor was active and `/api/health` reported both models ready. The live Group count remains
+Seek was active and `/api/health` reported both models ready. The live Group count remains
 zero, confirming the approved scope preparation was confined to the copy.
 
 | Question | Required Video | First matching Segment rank | Result |

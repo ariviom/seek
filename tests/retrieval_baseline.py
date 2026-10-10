@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from mentor.ranking import Recency
+from seek.ranking import Recency
 
 from collections.abc import Mapping
 from pathlib import Path
@@ -19,11 +19,11 @@ RETRIEVAL_SCHEMA_VERSION = 11
 
 
 def configured_snapshot(env: Mapping[str, str]) -> Path | None:
-    value = env.get("MENTOR_RETRIEVAL_SNAPSHOT")
+    value = env.get("SEEK_RETRIEVAL_SNAPSHOT")
     if value is None:
         return None
     if not value or not (path := Path(value).expanduser()).is_file():
-        raise ValueError("MENTOR_RETRIEVAL_SNAPSHOT must name the frozen SQLite snapshot file")
+        raise ValueError("SEEK_RETRIEVAL_SNAPSHOT must name the frozen SQLite snapshot file")
     return path.resolve()
 
 

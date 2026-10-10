@@ -22,10 +22,10 @@ from harness import (
 )
 from mcp.types import CallToolResult, TextContent
 
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import Chapter
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import Chapter
 
 TOOLS = {"list_groups", "list_channels", "search", "expand", "get_video", "sql"}
 
@@ -375,7 +375,7 @@ async def test_the_mcp_endpoint_serves_tools_over_http_to_loopback_and_configure
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", cues=said("flatten the board")))
     app = create_app(
-        replace(config, allowed_hosts=("mentor.example.com",)),
+        replace(config, allowed_hosts=("seek.example.com",)),
         transcripts,
         embedder,
         reranker,
@@ -407,8 +407,8 @@ async def test_the_mcp_endpoint_serves_tools_over_http_to_loopback_and_configure
 
         assert (await post(initialize, Host="127.0.0.1:7337")).status_code == 200
         assert (await post(initialize, Host="localhost:7337")).status_code == 200
-        assert (await post(initialize, Host="mentor.example.com")).status_code == 200
-        assert (await post(initialize, Host="mentor.example.com", Origin="https://mentor.example.com")).status_code == 200
+        assert (await post(initialize, Host="seek.example.com")).status_code == 200
+        assert (await post(initialize, Host="seek.example.com", Origin="https://seek.example.com")).status_code == 200
         # DNS rebinding: a page on another site that resolves its name to this machine.
         assert (await post(initialize, Host="attacker.example:7337")).status_code == 421
         assert (await post(initialize, Origin="https://attacker.example")).status_code == 403

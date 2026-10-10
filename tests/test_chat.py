@@ -21,12 +21,12 @@ from harness import (
 )
 from mcp import Client
 
-from mentor.app import create_app
-from mentor.chat import citation_links
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.mcp_server import GROUNDED_ADVISOR
-from mentor.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
+from seek.app import create_app
+from seek.chat import citation_links
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.mcp_server import GROUNDED_ADVISOR
+from seek.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
 
 
 async def test_a_turn_streams_text_and_tool_calls_then_saves_the_answer_and_resumes_the_session(
@@ -94,7 +94,7 @@ async def test_the_question_is_saved_before_the_answer_streams(
     assert saved_when_asked == [[("user", "Which saw for dovetails?")]]
 
 
-async def test_the_model_gets_only_mentor_tools_bound_to_the_conversations_group_of_channels(
+async def test_the_model_gets_only_seek_tools_bound_to_the_conversations_group_of_channels(
     client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource
 ) -> None:
     group, _, rex = await woodworkers(client, transcripts)

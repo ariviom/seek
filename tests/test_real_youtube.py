@@ -2,7 +2,7 @@
 
 import pytest
 
-from mentor.youtube import YouTubeSettings, YouTubeTranscriptSource
+from seek.youtube import YouTubeSettings, YouTubeTranscriptSource
 
 pytestmark = pytest.mark.real_youtube
 

@@ -51,7 +51,7 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
         {progress !== null && (
           // The work happens in the server this page is served from, not in the page.
           <p className="mt-1 text-xs text-muted-foreground">
-            Syncing carries on while mentor is running; you can close this tab.
+            Syncing carries on while Seek is running; you can close this tab.
           </p>
         )}
       </div>

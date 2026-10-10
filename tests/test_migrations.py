@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from harness import running
 
-from mentor import db
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek import db
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 
 SCHEMA_8 = 8
 SCHEMA_9 = 9
@@ -44,7 +44,7 @@ def citation(video_id: int, youtube_video_id: str) -> dict[str, object]:
 
 
 def schema_8_knowledge_base(path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
-    """A knowledge base as mentor left it before the Channel model: a Mentor with two Channels in a Group, a Video
+    """A knowledge base as Seek left it before the Channel model: a Mentor with two Channels in a Group, a Video
     with its Transcript, Segments, and vectors, a Conversation with a cited answer, and one whose Group is gone."""
     conn = db.connect(path)
     with pytest.MonkeyPatch.context() as pinned:
@@ -85,7 +85,7 @@ def schema_8_knowledge_base(path: Path, monkeypatch: pytest.MonkeyPatch) -> sqli
 def test_migration_9_keeps_channels_groups_and_conversations_and_drops_mentors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    conn = schema_8_knowledge_base(tmp_path / "mentor.db", monkeypatch)
+    conn = schema_8_knowledge_base(tmp_path / "seek.db", monkeypatch)
 
     db.migrate(conn)
 
@@ -118,7 +118,7 @@ def test_migration_9_keeps_channels_groups_and_conversations_and_drops_mentors(
 
 
 def test_migration_9_names_each_citations_channel_by_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = schema_8_knowledge_base(tmp_path / "mentor.db", monkeypatch)
+    conn = schema_8_knowledge_base(tmp_path / "seek.db", monkeypatch)
 
     db.migrate(conn)
 
@@ -131,7 +131,7 @@ def test_migration_9_names_each_citations_channel_by_id(tmp_path: Path, monkeypa
 
 
 def test_after_migration_9_deleting_a_channel_still_cascades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = schema_8_knowledge_base(tmp_path / "mentor.db", monkeypatch)
+    conn = schema_8_knowledge_base(tmp_path / "seek.db", monkeypatch)
     db.migrate(conn)
 
     conn.execute("DELETE FROM channels WHERE id = 3")
@@ -145,7 +145,7 @@ def test_after_migration_9_deleting_a_channel_still_cascades(tmp_path: Path, mon
 
 
 def test_migration_9_frees_channel_ids_from_reuse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = schema_8_knowledge_base(tmp_path / "mentor.db", monkeypatch)
+    conn = schema_8_knowledge_base(tmp_path / "seek.db", monkeypatch)
 
     db.migrate(conn)
     conn.execute("DELETE FROM channels WHERE id = 5")
@@ -158,7 +158,7 @@ def test_migration_9_frees_channel_ids_from_reuse(tmp_path: Path, monkeypatch: p
 
 
 def test_migration_10_counts_no_completed_videos_for_the_syncs_already_recorded(tmp_path: Path) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
     with pytest.MonkeyPatch.context() as pinned:
         pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_9])
         db.migrate(conn)
@@ -177,7 +177,7 @@ def test_migration_10_counts_no_completed_videos_for_the_syncs_already_recorded(
 
 
 def test_migration_14_credits_no_video_to_the_syncs_already_recorded(tmp_path: Path) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
     with pytest.MonkeyPatch.context() as pinned:
         pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_13])
         db.migrate(conn)
@@ -203,7 +203,7 @@ def test_migration_14_credits_no_video_to_the_syncs_already_recorded(tmp_path: P
 
 
 def test_migrations_15_and_16_add_storyboards_and_let_frames_be_turned_off(tmp_path: Path) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
     with pytest.MonkeyPatch.context() as pinned:
         pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_14])
         db.migrate(conn)
@@ -242,7 +242,7 @@ def test_migrations_15_and_16_add_storyboards_and_let_frames_be_turned_off(tmp_p
 
 
 def test_a_fresh_knowledge_base_runs_every_migration(tmp_path: Path) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
 
     db.migrate(conn)
 
@@ -254,7 +254,7 @@ def test_a_fresh_knowledge_base_runs_every_migration(tmp_path: Path) -> None:
 
 
 def test_a_rebuild_that_leaves_orphans_is_rolled_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
     db.migrate(conn)
 
     def orphan(conn: sqlite3.Connection) -> None:
@@ -272,7 +272,7 @@ def test_a_rebuild_that_leaves_orphans_is_rolled_back(tmp_path: Path, monkeypatc
     conn.close()
 
 
-async def test_server_refuses_a_knowledge_base_from_a_newer_mentor(config: Config, tmp_path: Path) -> None:
+async def test_server_refuses_a_knowledge_base_from_a_newer_seek(config: Config, tmp_path: Path) -> None:
     config.data_dir.mkdir(parents=True)
     conn = sqlite3.connect(config.database_path)
     conn.execute("PRAGMA user_version = 999")

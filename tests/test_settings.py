@@ -6,10 +6,10 @@ import pytest
 from fastapi import FastAPI
 from harness import add_channel, event_stream, running
 
-from mentor import db
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek import db
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 
 
 async def test_defaults_partial_updates_and_reset(client: httpx.AsyncClient) -> None:

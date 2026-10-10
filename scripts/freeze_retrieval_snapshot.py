@@ -1,4 +1,4 @@
-"""Freeze a populated SQLite database without starting Mentor or changing its schema.
+"""Freeze a populated SQLite database without starting Seek or changing its schema.
 
 Run with the project's Python environment. Keep the destination outside git and
 inside a private directory: the snapshot contains transcripts and personal data.

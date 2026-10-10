@@ -12,16 +12,16 @@ import pytest
 import uvicorn
 from harness import add_channel, serving, wait_for_syncs
 
-from mentor import cli
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek import cli
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 
 
 @pytest.fixture
 def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for key in os.environ:
-        if key.startswith("MENTOR_"):
+        if key.startswith("SEEK_"):
             monkeypatch.delenv(key)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
@@ -31,7 +31,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def command(monkeypatch: pytest.MonkeyPatch, platform: str, *args: str) -> None:
     # Change the CLI's OS view without changing the test runner's own platform.
-    monkeypatch.setattr(sys, "argv", ["mentor", *args])
+    monkeypatch.setattr(sys, "argv", ["seek", *args])
     monkeypatch.setattr(cli, "sys", SimpleNamespace(**(vars(sys) | {"platform": platform})))
 
 
@@ -42,7 +42,7 @@ def test_service_installation_off_linux_points_to_foreground_before_reading_conf
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("MENTOR_PORT", "invalid configuration must not obscure the platform message")
+    monkeypatch.setenv("SEEK_PORT", "invalid configuration must not obscure the platform message")
 
     def unexpected_process(*args: Any, **kwargs: Any) -> None:
         pytest.fail("service installation attempted an external command on a non-Linux platform")
@@ -54,7 +54,7 @@ def test_service_installation_off_linux_points_to_foreground_before_reading_conf
         cli.main()
 
     assert "Linux" in str(error.value)
-    assert "mentor serve" in str(error.value)
+    assert "seek serve" in str(error.value)
     assert not list(tmp_path.iterdir())
 
 
@@ -62,14 +62,14 @@ def test_service_installation_off_linux_points_to_foreground_before_reading_conf
 def test_foreground_startup_creates_directories_and_explains_url_and_terminal_lifetime(
     isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], platform: str
 ) -> None:
-    monkeypatch.setenv("MENTOR_PORT", "7468")
+    monkeypatch.setenv("SEEK_PORT", "7468")
     reached_server = False
 
     def start_server(app: Any, **kwargs: Any) -> None:
         nonlocal reached_server
         reached_server = True
-        assert (isolated_home / "config" / "mentor").is_dir()
-        assert (isolated_home / "data" / "mentor").is_dir()
+        assert (isolated_home / "config" / "seek").is_dir()
+        assert (isolated_home / "data" / "seek").is_dir()
         assert kwargs["host"] == "127.0.0.1"
         assert kwargs["port"] == 7468
         assert kwargs["proxy_headers"] is False
@@ -77,7 +77,7 @@ def test_foreground_startup_creates_directories_and_explains_url_and_terminal_li
         output = capsys.readouterr().out
         assert "http://127.0.0.1:7468/" in output
         assert "Starting" in output
-        assert "Closing this terminal stops Mentor" in output
+        assert "Closing this terminal stops Seek" in output
 
     monkeypatch.setattr(uvicorn, "run", start_server)
     command(monkeypatch, platform, "serve")
@@ -107,7 +107,7 @@ async def test_sync_commands_off_linux_queue_work_on_the_foreground_server_witho
     )
     async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
         await add_channel(client, "@woodbywright", "Wood By Wright")
-        monkeypatch.setenv("MENTOR_PORT", str(urlsplit(url).port))
+        monkeypatch.setenv("SEEK_PORT", str(urlsplit(url).port))
         command(monkeypatch, platform, subcommand, "--all")
         await asyncio.to_thread(cli.main)
         finished = await wait_for_syncs(client)
@@ -119,9 +119,9 @@ async def test_sync_commands_off_linux_queue_work_on_the_foreground_server_witho
 def test_startup_preserves_existing_config_and_database(
     isolated_home: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_file = isolated_home / "config" / "mentor" / "config.toml"
+    config_file = isolated_home / "config" / "seek" / "config.toml"
     config_file.parent.mkdir(parents=True)
-    database = isolated_home / "data" / "mentor" / "mentor.db"
+    database = isolated_home / "data" / "seek" / "seek.db"
     database.parent.mkdir(parents=True)
     config_file.write_text("port = 7469\n")
     database.write_bytes(b"existing knowledge base")
@@ -141,7 +141,7 @@ def test_directory_creation_failure_identifies_the_path_before_starting_the_serv
 ) -> None:
     blocked = isolated_home / "blocked"
     blocked.write_text("existing file")
-    monkeypatch.setenv("MENTOR_DATA_DIR", str(blocked))
+    monkeypatch.setenv("SEEK_DATA_DIR", str(blocked))
 
     def unexpected_server(*args: Any, **kwargs: Any) -> None:
         pytest.fail("server started despite an unusable data directory")
@@ -151,10 +151,10 @@ def test_directory_creation_failure_identifies_the_path_before_starting_the_serv
     with pytest.raises(SystemExit) as error:
         cli.main()
 
-    assert "mentor:" in str(error.value)
+    assert "seek:" in str(error.value)
     assert str(blocked) in str(error.value)
     assert blocked.read_text() == "existing file"
-    assert "Starting Mentor" not in capsys.readouterr().out
+    assert "Starting Seek" not in capsys.readouterr().out
 
 
 def test_server_startup_failure_remains_visible_and_does_not_claim_readiness(
@@ -172,6 +172,6 @@ def test_server_startup_failure_remains_visible_and_does_not_claim_readiness(
     assert error.value.code == 1
     captured = capsys.readouterr()
     assert "address already in use" in captured.err
-    assert "Starting Mentor" in captured.out
+    assert "Starting Seek" in captured.out
     assert "watch the startup log for readiness" in captured.out
     assert "is running" not in captured.out

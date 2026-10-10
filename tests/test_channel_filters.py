@@ -14,8 +14,8 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor.config import Config
-from mentor.fakes import FakeTranscriptSource
+from seek.config import Config
+from seek.fakes import FakeTranscriptSource
 
 NO_FILTERS: Json = {"published_after": None, "published_before": None, "playlist_id": None, "most_recent": None}
 

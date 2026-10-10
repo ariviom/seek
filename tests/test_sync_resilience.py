@@ -18,11 +18,11 @@ from harness import (
     wait_for_syncs,
 )
 
-from mentor import db, syncs
-from mentor.app import create_app
-from mentor.config import Config
-from mentor.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from mentor.ports import GpuOutOfMemory, ModelUnavailable, VideoUnavailable
+from seek import db, syncs
+from seek.app import create_app
+from seek.config import Config
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.ports import GpuOutOfMemory, ModelUnavailable, VideoUnavailable
 
 
 @dataclass
@@ -485,7 +485,7 @@ async def test_a_video_left_failed_by_an_earlier_sync_is_work_the_next_one_still
 
 
 def test_marking_a_video_finished_again_does_not_count_it_again(tmp_path: Path) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
     db.migrate(conn)
     conn.executescript(
         """
@@ -551,7 +551,7 @@ async def test_a_failure_retried_while_a_sync_runs_is_left_to_the_retry_rather_t
 
 
 def test_a_video_leaving_the_completed_count_starts_the_rate_interval_again(tmp_path: Path) -> None:
-    conn = db.connect(tmp_path / "mentor.db")
+    conn = db.connect(tmp_path / "seek.db")
     db.migrate(conn)
     conn.executescript(
         """

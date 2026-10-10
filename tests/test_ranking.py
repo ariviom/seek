@@ -2,8 +2,8 @@ from datetime import date, timedelta
 
 import pytest
 
-from mentor.ranking import Recency, fuse, matched_seconds, recency_score
-from mentor.segmentation import SegmentCue
+from seek.ranking import Recency, fuse, matched_seconds, recency_score
+from seek.segmentation import SegmentCue
 
 
 def test_fusion_ranks_hits_found_by_both_searches_above_hits_found_by_one() -> None:

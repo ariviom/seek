@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 import yt_dlp
 
-from mentor.ports import Chapter, ChannelNotFound, Cue, Storyboard, VideoDetails, VideoListing, VideoUnavailable
-from mentor.youtube import (
+from seek.ports import Chapter, ChannelNotFound, Cue, Storyboard, VideoDetails, VideoListing, VideoUnavailable
+from seek.youtube import (
     CaptionTrack,
     caption_track,
     channel_url,
