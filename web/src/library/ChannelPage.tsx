@@ -34,12 +34,14 @@ function channelCounts(channel: Channel, syncs: Sync[] | null): Record<Stage, nu
 const checkLabels: Record<string, string> = { "6": "Every 6 hours", "24": "Daily", "168": "Weekly", off: "Off" };
 
 // The server checks again once the latest Sync was queued longer ago than the interval; the list holds the newest
-// Syncs, and a Channel whose latest has dropped off it is judged by when it last synced.
+// Syncs, and a Channel whose latest has dropped off it is judged by when it last synced. One never synced waits
+// for its first Sync, which the user starts.
 function nextCheck(channel: Channel, syncs: Sync[] | null, now: number): string | null {
   if (!channel.indexed) return "Paused channels aren’t checked.";
   if (channel.check_every_hours === null) return null;
   const since = syncs?.find((sync) => sync.channel_id === channel.id)?.queued_at ?? channel.last_synced_at;
-  const due = since === null ? now : new Date(since).getTime() + channel.check_every_hours * 3_600_000;
+  if (since === null) return "Checks start after its first sync.";
+  const due = new Date(since).getTime() + channel.check_every_hours * 3_600_000;
   return due <= now ? "Next check soon." : `Next check around ${formatWhen(new Date(due).toISOString())}.`;
 }
 

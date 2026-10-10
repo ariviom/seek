@@ -18,7 +18,7 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 @pytest.mark.parametrize(
     ("indexed", "every", "open_sync", "last_queued", "due"),
     [
-        (True, 24, False, None, True),
+        (True, 24, False, None, False),
         (True, 24, False, NOW - timedelta(hours=23), False),
         (True, 24, False, NOW - timedelta(hours=25), True),
         (True, 6, False, NOW - timedelta(hours=7), True),
@@ -31,7 +31,7 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
         (True, 24, True, NOW - timedelta(days=30), False),
     ],
     ids=[
-        "never synced",
+        "never synced, so its first sync is the user's",
         "recent",
         "overdue",
         "overdue at six hours",
@@ -150,10 +150,10 @@ async def test_the_server_queues_one_sync_for_each_due_channel_at_start_and_as_o
         gate.released.set()
 
     new_at_start = [s for s in at_start if s["id"] > 6]
-    assert sorted(s["channel_name"] for s in new_at_start) == ["never synced", "overdue"]
+    assert sorted(s["channel_name"] for s in new_at_start) == ["overdue"]
     assert all(s["status"] == "queued" for s in new_at_start)
     assert syncs_per_channel(at_start) == {
-        "never synced": 1, "recent": 1, "overdue": 2, "paused": 1, "off": 1, "queued": 1, "running": 1
+        "recent": 1, "overdue": 2, "paused": 1, "off": 1, "queued": 1, "running": 1
     }
     # Six hours on, the 6-hourly Channel is due; the others either wait on the Sync already queued or aren't checked.
     assert syncs_per_channel(later) == syncs_per_channel(at_start) | {"recent": 2}

@@ -176,8 +176,8 @@ environment and restarts the service.
 ## Check for new videos automatically or from the command line
 
 While Seek runs, it checks each active Channel for new videos on its own: every 6 hours, daily or weekly, or not at
-all, chosen under **Check for new videos** on the Channel's page. New Channels check daily, and one never synced is
-due at once, so a newly added Channel has its first Sync within a few minutes unless you start it sooner. A check is a
+all, chosen under **Check for new videos** on the Channel's page. New Channels check daily, but only after their first
+Sync, which you start: it ingests the whole catalogue, so set any Filters before it. A check is a
 normal Sync, queued once the Channel's latest Sync was queued longer ago than its interval, and never while one is
 already queued or running; like any later Sync it stops listing at videos Seek already knows (see below) and ingests
 the new ones. Checks happen only while Seek is running, on macOS and Linux alike; any that came due while it was

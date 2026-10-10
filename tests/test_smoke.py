@@ -675,9 +675,9 @@ async def test_choosing_how_often_a_channel_is_checked_persists_and_says_when_th
 
             videos_card = main.locator("section").filter(has=page.get_by_role("heading", name="Videos"))
             checks = main.get_by_role("combobox", name="Check for new videos")
-            # A new Channel checks daily, and one never synced is due at the next check.
+            # A new Channel checks daily, but only once its first Sync, which the user starts, has run.
             await expect(checks).to_have_text("Daily")
-            await expect(videos_card).to_contain_text("Next check soon.")
+            await expect(videos_card).to_contain_text("Checks start after its first sync.")
             await main.get_by_role("button", name="Sync now").click()
             await expect(videos_card).to_contain_text("last synced", timeout=15_000)
             await expect(videos_card).to_contain_text("Next check around ")

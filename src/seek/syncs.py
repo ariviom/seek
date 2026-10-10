@@ -157,10 +157,11 @@ def is_due(
     indexed: bool, check_every_hours: int | None, open_sync: bool, last_queued_at: datetime | None, now: datetime
 ) -> bool:
     """Whether the Channel's automatic check should queue a Sync now: it is Active with checks on, has no Sync
-    queued or running, and its latest Sync was queued longer ago than its interval, or it has never had one."""
-    if not indexed or check_every_hours is None or open_sync:
+    queued or running, and its latest Sync was queued longer ago than its interval. A Channel never synced isn't
+    checked: its first Sync, which ingests its whole catalogue, stays the user's to start once its Filters are set."""
+    if not indexed or check_every_hours is None or open_sync or last_queued_at is None:
         return False
-    return last_queued_at is None or now - last_queued_at > timedelta(hours=check_every_hours)
+    return now - last_queued_at > timedelta(hours=check_every_hours)
 
 
 def enqueue_due(conn: sqlite3.Connection, now: datetime) -> list[Sync]:
