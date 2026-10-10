@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -1 329.5 102">
+  <clipPath id="cut"><polygon points="-10,-10 80,-10 40,30 80,30 80,110 -10,110 30,70 -10,70"/></clipPath>
+  <path clip-path="url(#cut)" d="M80 10H32A20 20 0 0 0 32 50H38A20 20 0 0 1 38 90H-10" fill="none" stroke="#0e0e10" stroke-width="20"/>
+  <path d="M149.5 10H89.5V90H149.5M89.5 50H141.5M233.5 10H173.5V90H233.5M173.5 50H225.5" fill="none" stroke="#0e0e10" stroke-width="20"/>
+  <g fill="#ff4a2b"><rect x="247.5" y="0" width="20" height="100"/><polygon points="274.5,50 329.5,-1 329.5,101"/></g>
+</svg>

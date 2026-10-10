@@ -30,6 +30,9 @@ The shared prerequisites below still apply before implementation starts.
 | [08 — Diagnostics and MCP configuration](issues/08-diagnostics-and-mcp-config.md) | Pasteable support output and usable local agent registration | 02, 06 |
 | [09 — First Channel and honest Sync progress](issues/09-first-channel-and-sync-progress.md) | Start-small guidance, explicit rate and ETA, verified restart/failure behaviour | None |
 | [10 — Friends installation and release verification](issues/10-friends-installation.md) | Documented public-repository install and upgrade, verified on a Mac | 03, 07, 08, 09 |
+| [11 — Cited-moment frames](issues/11-cited-moment-thumbnails.md) | Frames of the moment a result or source cites | None |
+| [12 — Keeping stored frames usable](issues/12-keeping-stored-frames-usable.md) | Frames that survive their signed links ageing | 11, a measured link lifetime |
+| [13 — Rename to Seek](issues/13-rename-to-seek.md) | One name everywhere before the first public push | None; blocks 10's publication |
 
 ## Before implementation
 
