@@ -44,7 +44,7 @@ def citation(video_id: int, youtube_video_id: str) -> dict[str, object]:
 
 
 def schema_8_knowledge_base(path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
-    """A knowledge base as Seek left it before the Channel model: a Mentor with two Channels in a Group, a Video
+    """A knowledge base as Mentor left it before the Channel model: a Mentor with two Channels in a Group, a Video
     with its Transcript, Segments, and vectors, a Conversation with a cited answer, and one whose Group is gone."""
     conn = db.connect(path)
     with pytest.MonkeyPatch.context() as pinned:

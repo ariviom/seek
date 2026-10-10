@@ -87,7 +87,7 @@ export function Rail({
       className="fixed inset-x-0 bottom-0 z-20 flex h-14 w-full flex-row items-center justify-center gap-1 border-t bg-sidebar md:static md:h-auto md:w-12 md:shrink-0 md:flex-col md:justify-start md:gap-1 md:border-t-0 md:border-r md:py-2"
     >
       {/* Seek's mark: the K of the wordmark, a player's "previous" icon (docs/brand/seek-mark.svg). */}
-      <svg aria-hidden viewBox="0 -1 82 102" className="hidden h-5 w-auto fill-[#ff4a2b] md:my-1 md:block">
+      <svg aria-hidden viewBox="0 -1 82 102" className="hidden h-5 w-auto fill-brand md:my-1 md:block">
         <rect x="0" y="0" width="20" height="100" />
         <polygon points="27,50 82,-1 82,101" />
       </svg>

@@ -1,9 +1,9 @@
-# Mentor Desktop: MVP technical brief
+# Seek Desktop: MVP technical brief
 
 Status: draft, 2026-09-17. Product rationale is in the evaluation thread; this is the engineering shape.
 
 Superseded in part on 2026-09-17 by `docs/specs/0003-build-0-friends-release.md`, which is the plan of record for what
-ships next. A grilling session cut the first release to what a friend needs to run Mentor at all and deferred the
+ships next. A grilling session cut the first release to what a friend needs to run Seek at all and deferred the
 rest; ADR 0004 and ADR 0005 record the two decisions that changed. This brief stands as the longer-range roadmap.
 
 ## What we are building
@@ -17,7 +17,7 @@ Non-goals for the MVP: hosted anything, accounts, payments, shared index packs, 
 - Python 3.13 service: FastAPI + uvicorn, one SQLite file with sqlite-vec and FTS5 (ADR 0002), hybrid search fused and reranked, recency adjustment.
 - Ingestion: yt-dlp lists a channel and fetches captions, segmentation by chapter and time window, Qwen3-Embedding-0.6B (1024-d) via sentence-transformers and torch on an NVIDIA GPU, mxbai-rerank-base-v2 cross-encoder.
 - Retrieval is the product (ADR 0001): six MCP tools (`list_groups`, `list_channels`, `search`, `expand`, `get_video`, `sql`) served over streamable HTTP at `/mcp`.
-- Web chat drives the local Claude CLI through the Claude Agent SDK, locked to the mentor tools (`claude_chat.py`, behind the `ChatEngine` port).
+- Web chat drives the local Claude CLI through the Claude Agent SDK, locked to the Seek tools (`claude_chat.py`, behind the `ChatEngine` port).
 - React 19 + Vite + Tailwind v4 + shadcn UI, inline player that seeks to the citation.
 - Linux only: systemd user service, Deno on PATH for yt-dlp's JS challenges, about 3.5 GB of GPU.
 
@@ -79,7 +79,7 @@ Cheap version, in scope: YouTube storyboard sprites (yt-dlp exposes them as `sb*
 
 - Shell: Tauri, with the Python service as a sidecar built by PyInstaller. Tauri gives a small installer, tray icon, auto-update, and keychain access; the existing Vite UI loads unchanged.
 - The sidecar owns everything it owns today: SQLite, models, MCP endpoint on `127.0.0.1:7337`. Agents register the same URL as now.
-- Replace systemd with the app lifecycle: the sidecar starts with the app, scheduled Sync becomes an in-app timer, `mentor sync` and `mentor status` keep working against the running sidecar.
+- Replace systemd with the app lifecycle: the sidecar starts with the app, scheduled Sync becomes an in-app timer, `seek sync` and `seek status` keep working against the running sidecar.
 - Targets: macOS Apple Silicon first (largest laptop share among likely users), Linux, then Windows.
 
 Distribution as `uv tool install` stays for developers and is the path friends use before the shell exists.

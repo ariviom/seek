@@ -114,11 +114,11 @@ were replaced with repository names in that committed artifact; the original rep
 beside the private snapshot as `cuda-results.json`.
 
 The command above was run with `SEEK_RETRIEVAL_RESULTS` set to
-`/home/drew/.local/share/mentor-baselines/build-0/cuda-results.json`. Seek was active before
+`/home/drew/.local/share/mentor-baselines/build-0/cuda-results.json`. Mentor was active before
 the run, stopped and confirmed inactive before model loading, then restored by the EXIT trap.
-The RTX 3090 had **21,590 MiB free / 24,576 MiB total** after stopping Seek; driver
+The RTX 3090 had **21,590 MiB free / 24,576 MiB total** after stopping Mentor; driver
 595.84, CUDA 13.0, precision bfloat16. No unrelated workload was evicted. After the run,
-Seek was active and `/api/health` reported both models ready. The live Group count remains
+Mentor was active and `/api/health` reported both models ready. The live Group count remains
 zero, confirming the approved scope preparation was confined to the copy.
 
 | Question | Required Video | First matching Segment rank | Result |

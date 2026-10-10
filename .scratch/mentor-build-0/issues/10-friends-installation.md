@@ -1,7 +1,7 @@
 # 10 — Ship and verify the documented friends installation path
 
 **What to build:** A friend on Apple Silicon can follow the README, install from the public repository with uv,
-run Mentor, ingest a small Channel, ask a cited question and later update with one command. Linux retains its
+run Seek, ingest a small Channel, ask a cited question and later update with one command. Linux retains its
 supported service path. (Stories 1–2, 8, 33, 40, 47; final verification of the full build.)
 
 **Blocked by:** 03 — MPS retrieval comparison; 07 — Chat settings UI; 08 — Diagnostics and MCP configuration;
@@ -34,7 +34,7 @@ release. Ticket 03's hardware-dependent comparison is likewise parked, not passe
   revision, including delivery of a changed yt-dlp pin. Record exact tested commands and versions; do not assume a
   VCS source refresh works merely because package-index upgrades do.
 - [ ] Document foreground URL/start/stop, conventional paths, first-run model download size and approximate time,
-  and cached offline local use. State that closing the terminal stops Mentor, that off-Linux Sync is manual, and
+  and cached offline local use. State that closing the terminal stops Seek, that off-Linux Sync is manual, and
   that provider chat/YouTube ingestion still need connectivity.
 - [ ] Document UI-only preference/key setup, the configuration/preferences/secrets separation and macOS keychain
   allow/always-allow prompts after interpreter replacement during upgrade. Include keyless capabilities and the
@@ -42,7 +42,7 @@ release. Ticket 03's hardware-dependent comparison is likewise parked, not passe
 - [ ] Measure ingestion on a real small Channel on the Mac. Record hardware, model devices, video duration,
   catalogue size, elapsed time and download versus ingestion time. Publish a clearly rough time per hour of Video,
   explaining variation from caption pacing and video count rather than copying the roadmap's speculative rate.
-- [ ] On a Mac using the published install path, begin without an API key or Claude CLI, start Mentor, add and Sync
+- [ ] On a Mac using the published install path, begin without an API key or Claude CLI, start Seek, add and Sync
   a friend-chosen small Channel, verify keyless search/MCP, configure a key in the UI, ask a question with a working
   Citation, reopen the Conversation, inspect usage, and produce redacted diagnostics. Check cached startup/search
   offline and the final revision against the unchanged retrieval regression fixture.

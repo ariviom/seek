@@ -18,6 +18,6 @@ class WebBundleHook(BuildHookInterface):  # type: ignore[misc]
         web = Path(self.root) / "web"
         pnpm = shutil.which("pnpm")
         if pnpm is None:
-            raise RuntimeError("pnpm is required to build the seek web UI: install Node 22 and run `corepack enable`")
+            raise RuntimeError("pnpm is required to build the Seek web UI: install Node 22 and run `corepack enable`")
         subprocess.run([pnpm, "install", "--frozen-lockfile"], cwd=web, check=True)
         subprocess.run([pnpm, "run", "build"], cwd=web, check=True)

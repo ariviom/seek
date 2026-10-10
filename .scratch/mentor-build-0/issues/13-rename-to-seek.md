@@ -6,9 +6,11 @@ once, by hand.
 
 **Blocked by:** None. Ticket 10's publication step waits for this.
 
-**Status:** implemented — 572 tests passing, mypy and web typecheck clean, served bundle rebuilt, and the rail mark
-and favicon checked in light, dark and at 390px. Drew's one-time migration is written in HANDOFF but not yet run: it
-needs the rename on `main` and the key re-entered in Settings.
+**Status:** implemented — 572 tests passing, mypy and web typecheck clean, served bundle rebuilt. Nothing in the UI
+showed the product name (the rail had an "m" badge, and at 48px wide it can't hold a wordmark), so the K mark
+replaces the badge, in a `brand` colour token, and is the favicon. The wordmark stays in `docs/brand/` for the README
+and release. Checked in a real browser in light and dark; at 390px the rail is a bottom bar that hides the mark, as it
+hid the badge. Drew's one-time migration is written in HANDOFF but not yet run: it needs the rename on `main`.
 
 **Decisions (Drew, 2026-10-10):** the name is Seek, and the public repository is `git@github.com:ariviom/seek.git`
 (public, empty). The rename lands before the first push. The logo is option 3 from the brand exploration: a custom

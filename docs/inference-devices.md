@@ -74,7 +74,7 @@ Linux execution on clean `b7b39adbd78967c3f8e34a9db5f1a6b1d40e3626`, 2026-09-19:
   -5.34743. Both models are ready on CPU, with fully cached offline execution. Full report:
   [ticket-02-cpu.json](baselines/ticket-02-cpu.json). The CPU name was recorded using `lscpu`
   because Python's `platform.processor()` returned an empty string.
-- Seek was stopped around these runs with an EXIT trap to restore its prior active state.
+- Mentor was stopped around these runs with an EXIT trap to restore its prior active state.
   GPU memory was checked before CUDA loading; no unrelated workloads were evicted. After
   restoration the installed service was active and both models ready. The service remains
   on its prior installed code; this branch was not installed into the live service.

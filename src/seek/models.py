@@ -123,19 +123,19 @@ class _HubModel[M]:
             torch.cuda.empty_cache()
             return (
                 f"The GPU ran out of memory loading the {self._role} model {self._name}; free GPU memory used by "
-                "other programs and restart seek"
+                "other programs and restart Seek"
             )
         if isinstance(error, GatedRepoError):
             return (
                 f"The {self._role} model {self._name} is gated on Hugging Face; accept its terms and log in with "
-                "`hf auth login`, then restart seek"
+                "`hf auth login`, then restart Seek"
             )
         if isinstance(error, RepositoryNotFoundError):
             return f"Hugging Face has no model named {self._name}; check the configured {self._role} model"
         if isinstance(error, LocalEntryNotFoundError):
             return (
                 f"The {self._role} model {self._name} isn't downloaded yet and Hugging Face can't be reached; "
-                "restart seek once online"
+                "restart Seek once online"
             )
         return None
 

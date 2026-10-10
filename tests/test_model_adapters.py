@@ -224,7 +224,7 @@ def test_offline_cached_model_loads_or_explains_missing_cache(
         assert reranker.status().state == "ready"
     else:
         assert reranker.status().state == "failed"
-        assert "restart seek once online" in (reranker.status().error or "")
+        assert "restart Seek once online" in (reranker.status().error or "")
 
 
 def test_download_progress_keeps_byte_totals_and_selected_device(monkeypatch: pytest.MonkeyPatch) -> None:
