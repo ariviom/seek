@@ -1,48 +1,128 @@
-# Seek
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/seek-logo-accent-dark.svg">
+    <img alt="Seek" src="docs/brand/seek-logo-accent.svg" width="320">
+  </picture>
+</p>
 
-Turns YouTube channels into a cited, searchable knowledge base. You add the YouTube channels you learn from, Sync
-them, group them, and then ask questions: in the web UI, or from Claude Code, Codex, or Claude Desktop over MCP. Every
-answer links back to the moment in the Video where it was said.
+<p align="center">
+  <strong>Ask the YouTube channels you learn from. Every answer cites the moment it was said.</strong>
+</p>
 
-## Requirements
+<p align="center">
+  <img alt="Python 3.13" src="https://img.shields.io/badge/python-3.13-0e0e10?style=flat-square">
+  <img alt="Runs locally" src="https://img.shields.io/badge/runs-locally-0e0e10?style=flat-square">
+  <img alt="MCP server" src="https://img.shields.io/badge/MCP-server-ff4a2b?style=flat-square">
+</p>
 
-- [uv](https://docs.astral.sh/uv/); the optional Linux service also requires systemd
-- Node 22.12 or later and pnpm, to build the web UI during install
-- Inference uses NVIDIA CUDA when available, then Apple Silicon MPS, then CPU. CPU is supported but slower.
-- [Deno](https://deno.com) on PATH: yt-dlp needs it to solve YouTube's JavaScript challenges
-- For the web chat: either an Anthropic API key, or Claude Code installed and logged in to your subscription
-- For live backups: the `sqlite3` command
+---
+
+Seek turns YouTube channels into a knowledge base you can question. Add the channels you learn from (woodworking,
+positioning, TypeScript, whatever you watch to get better at something), let Seek read every video's transcript, and
+then ask in plain language. Search goes by what was actually *said*, not by titles, tags or descriptions. Every answer
+links back to the exact timestamp, with frames of what was on screen, so you can check the advice against the source.
+
+Everything runs on your machine: the transcripts, the search index, and the models that read them. You can ask in the
+web UI, or give your coding agents (Claude Code, Codex) the same library over MCP.
+
+## Contents
+
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Install](#install)
+- [First run](#first-run)
+- [Upgrade](#upgrade)
+- Reference: [Sync from the command line](#sync-from-the-command-line-or-on-a-schedule) ·
+  [Status and diagnostics](#check-on-it-from-the-command-line) · [Data](#data) · [Configuration](#configuration) ·
+  [Reverse proxy](#publishing-through-a-reverse-proxy) · [Agents (MCP)](#register-seek-with-your-agents) ·
+  [Settings](#settings) · [Web chat](#web-chat) · [Troubleshooting](#troubleshooting) · [Development](#development)
+
+## What it does
+
+- **Search by meaning, across hours of video.** Ask "how do I flatten a workbench top?" and get the passages where
+  someone explains it, even if they never used those words.
+- **Answers you can check.** The web chat answers from your channels and cites the moments it draws on, as
+  timestamped links. The sources panel shows frames from each cited moment.
+- **Group what belongs together.** Put channels into Groups ("woodworking", "pricing") and ask a whole Group at once,
+  or just one channel.
+- **Prefer what's current.** Advice ages. Searches can gently or strongly favour newer videos.
+- **Bring it to your agents.** Seek is an MCP server, so Claude Code or Codex can search your library while they work.
+- **Keyless by default.** Search, the Library, Syncs and the MCP tools need no account or API key. Only the web chat
+  needs an engine: an Anthropic API key, or Claude Code logged in to your subscription.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[YouTube channel] -->|Sync: captions via yt-dlp| B[Transcripts]
+    B -->|cut into timestamped Segments| C[(seek.db<br/>SQLite)]
+    C --> D{Search}
+    D -->|keyword + vector,<br/>fused and reranked| E[Web UI]
+    D --> F[Web chat<br/>with Citations]
+    D --> G[MCP tools<br/>for your agents]
+```
+
+A **Sync** lists a channel's videos, fetches their captions, and cuts each transcript into timestamped Segments. A local
+embedding model ([Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)) turns each Segment into a
+vector. Search combines full-text and vector matches, then a local reranker
+([mxbai-rerank-base-v2](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v2)) puts the best first. Everything
+lives in one SQLite file. The models run on an NVIDIA GPU when there is one, on Apple Silicon's GPU on a Mac, and on
+the CPU otherwise.
 
 ## Install
 
-Clone this repository to, say, `~/src/seek`, then install and run it in a terminal:
+Seek installs from this repository with [uv](https://docs.astral.sh/uv/) and runs in a terminal.
+
+> [!NOTE]
+> **Linux** is the tested platform. **macOS on Apple Silicon** is supported, but it hasn't been verified on real Mac
+> hardware yet. Windows isn't supported.
+
+### 1. Check the prerequisites
+
+| Tool | Why | Check | Install |
+| --- | --- | --- | --- |
+| [uv](https://docs.astral.sh/uv/) | Installs Seek, and fetches Python 3.13 for it if you don't have it | `uv --version` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (macOS: or `brew install uv`) |
+| [Node](https://nodejs.org) 22.12+ | Builds the web UI during install | `node --version` | [nodejs.org](https://nodejs.org), `brew install node`, or [nvm](https://github.com/nvm-sh/nvm) |
+| [pnpm](https://pnpm.io) | Same | `pnpm --version` | `corepack enable` (ships with Node), or `brew install pnpm` |
+| [Deno](https://deno.com) | yt-dlp needs it to solve YouTube's JavaScript challenges | `deno --version` | `curl -fsSL https://deno.land/install.sh \| sh` (macOS: or `brew install deno`) |
+| git | Fetches this repository | `git --version` | Usually present. On macOS, `xcode-select --install` |
+
+Each one takes a minute or two to install. Optionally, for the web chat, install
+[Claude Code](https://claude.com/claude-code) and log in, or have an
+[Anthropic API key](https://console.anthropic.com/settings/keys) ready. Seek works without either.
+
+### 2. Install Seek
 
 ```sh
-uv tool install ~/src/seek
+uv tool install git+https://github.com/ariviom/seek
 uv tool update-shell   # once, if ~/.local/bin isn't on your PATH yet
+```
+
+The install builds the web UI, so the first one takes a few minutes. Check it with `seek --help`.
+
+### 3. Start it
+
+```sh
 seek serve
 ```
 
-Foreground startup prints the loopback URL using the configured port (normally
-<http://127.0.0.1:7337/>) and tells you that closing the terminal stops Seek. The startup
-message announces the attempt; wait for Uvicorn's startup/listening confirmation before
-opening the URL. Errors stay in the terminal. Use Ctrl+C to stop it. Initial startup creates
-missing config and data directories, preserving any existing configuration and database.
+Seek prints its address (normally <http://127.0.0.1:7337/>). Wait for Uvicorn's line saying it's listening, then open
+the address in your browser. **Closing the terminal stops Seek**; so does Ctrl+C. On first start it creates its config
+and data directories, and keeps any that already exist.
 
-Foreground mode does not need systemd. Off Linux, Sync is manual through the UI or
-`seek sync`; `seek install-service` refuses with a pointer to `seek serve`, including
-when `--timer` was requested. Apple Silicon hardware checks are currently deferred, so these
-path and lifecycle rules do not claim a verified Mac installation. Windows path resolution
-is preparatory work, not a supported native Windows release.
+The first start also downloads the two models into the Hugging Face cache (`~/.cache/huggingface`, or `HF_HOME`),
+about 2.2 GB. The dot at the foot of the left rail shows their progress: hover it for the reason, click it for the
+details. After that, Seek starts and searches offline. Syncing and the web chat still need a connection.
 
-### Optional Linux service
+### Optional: run it as a Linux service
 
-Run `seek install-service` from an ordinary terminal (not an editor or agent session,
-whose PATH the service would copy).
+On Linux, Seek can run in the background and start at login instead. Run `seek install-service` from an ordinary
+terminal (not an editor or agent session, whose PATH the service would copy).
 
 `seek install-service` writes `~/.config/systemd/user/seek.service`, enables it, starts it, and waits until the server
 answers on <http://127.0.0.1:7337/>. From then on it starts whenever you log in. To start it at boot without logging in, run
-`loginctl enable-linger`. To run it in the foreground instead, use `seek serve`.
+`loginctl enable-linger`. To run it in the foreground instead, use `seek serve`. Off Linux, `install-service` refuses
+and points to `seek serve`, and Sync is manual, from the web UI or `seek sync`.
 
 The unit records the `seek` you ran and the PATH of the shell you ran it from, so the service finds `deno` the same
 way you do. Unless `claude_cli_path` is configured, it also records the first `claude` on that PATH as it appears
@@ -52,27 +132,46 @@ there (for a standard install, the `~/.local/bin/claude` link, which survives Cl
 `ANTHROPIC_API_KEY` from the service's environment, because the chat would bill that key instead of your subscription.
 It warns if `claude` or `deno` can't be found.
 
-On first start, the models download into the Hugging Face cache (`~/.cache/huggingface`, or `HF_HOME`). They are about
-2.2 GB. The health dot at the foot of the rail shows their progress: hover it for the reason, click it for the
-details. Syncs wait until the models are ready, and until then Search answers
-that they are still loading.
-
-To upgrade a foreground installation, stop Seek with Ctrl+C, pull and reinstall, then start it again:
-
-```sh
-git -C ~/src/seek pull
-uv tool install --reinstall ~/src/seek
-seek serve
-```
-
-For a Linux service installation, replace the final command with `seek install-service`,
-which refreshes the recorded environment and restarts the service.
-
 Recorded variables override the config file, like any `SEEK_*` variable. That includes the recorded
 `SEEK_CLAUDE_CLI_PATH`. Rerun `seek install-service` whenever they should change, including after you set
 `claude_cli_path`. Other config file changes only need a restart: `systemctl --user restart seek`.
 
 Status: `systemctl --user status seek`. Logs: `journalctl --user -u seek`.
+
+## First run
+
+1. **Add a channel.** Open **Library**, choose **Add channel**, and paste a channel's URL or `@handle`. Start with a
+   small one, a few dozen videos: Seek fetches and indexes every video it finds, and YouTube limits how fast it can
+   (roughly 300 videos an hour without a signed-in cookie file).
+2. **Watch it Sync.** **Syncs** shows each video as it becomes searchable, with the rate, an estimated finish, and any
+   failures. You can close the tab: syncing carries on while Seek runs, and an interrupted Sync resumes where it
+   stopped.
+3. **Search.** Use **Search** as soon as the first videos are ready. Results link to the moment in the video.
+4. **Set up chat (optional).** Open **Settings** (the gear) and either paste an Anthropic API key or check that Claude
+   Code shows as ready. Then start a chat on a channel or Group from the Library, and ask away. Answers cite the moments
+   they draw on, and the chat shows the tokens each Conversation used.
+5. **Connect your agents (optional).** Run `seek mcp-config` for the exact command, or see
+   [Register Seek with your agents](#register-seek-with-your-agents). For Claude Code:
+
+   ```sh
+   claude mcp add --transport http --scope user seek http://127.0.0.1:7337/mcp
+   ```
+
+If something looks wrong, `seek doctor` prints one block, with secrets redacted, to paste to whoever is helping.
+
+## Upgrade
+
+Stop Seek (Ctrl+C), reinstall from the repository, and start it again:
+
+```sh
+uv tool install --reinstall git+https://github.com/ariviom/seek
+seek serve
+```
+
+`--reinstall` fetches the latest revision. Your config, knowledge base, preferences and stored key all stay where they
+are. On macOS, the new install can trigger a keychain prompt to allow access to the stored key: choose **Always Allow**.
+For a Linux service installation, run `seek install-service` instead of `seek serve`, which refreshes the recorded
+environment and restarts the service.
 
 ## Sync from the command line or on a schedule
 
