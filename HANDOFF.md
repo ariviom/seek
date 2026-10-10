@@ -4,7 +4,8 @@
 MCP server and tool names (`mcp__seek__…`), `SEEK_*` environment variables and web UI are all Seek now, with the
 logo from `docs/brand/`. Entries below this one are history and keep the old name. The old schema's own names
 (`mentors`, `mentor_groups`, `mentor_id`…) and `~/.local/share/mentor-baselines` deliberately stay. Drew's
-installation moves once, from an ordinary terminal (not an agent session), after the rename reaches `main`:
+installation moved on 2026-10-10 (all seven steps run, data counts identical before and after, and `seek` MCP
+re-registered in both `~/.claude.json` and `~/.claude/.claude.json`). The steps, for the record:
 
 1. `systemctl --user disable --now mentor.service`, then remove `~/.config/systemd/user/mentor.service` and
    `systemctl --user daemon-reload` (no Sync timer is installed).

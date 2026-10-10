@@ -10,7 +10,9 @@ once, by hand.
 showed the product name (the rail had an "m" badge, and at 48px wide it can't hold a wordmark), so the K mark
 replaces the badge, in a `brand` colour token, and is the favicon. The wordmark stays in `docs/brand/` for the README
 and release. Checked in a real browser in light and dark; at 390px the rail is a bottom bar that hides the mark, as it
-hid the badge. Drew's one-time migration is written in HANDOFF but not yet run: it needs the rename on `main`.
+hid the badge. **Complete (2026-10-10):** the rename is on `main` (`f648458`) and Drew's installation has moved. The data is
+intact (8 Channels, 2,772 Videos, 55,116 Segments, 6 Conversations, 20 messages, before and after), both models
+are ready on CUDA, search answers, and `seek` MCP is connected in both Claude configurations.
 
 **Decisions (Drew, 2026-10-10):** the name is Seek, and the public repository is `git@github.com:ariviom/seek.git`
 (public, empty). The rename lands before the first push. The logo is option 3 from the brand exploration: a custom
@@ -39,7 +41,7 @@ geometric S with 45° cut ends, and a K that is a video player's "previous" icon
   HANDOFF recording the rename.
 - [x] Use the logo in the web UI (a favicon from `seek-mark.svg`, plus the wordmark wherever the rail or header shows
   the product name). Check it in light, dark and at 390px.
-- [ ] Write Drew's one-time migration as documented manual steps, not code. Stop and uninstall `mentor.service` and
+- [x] Write Drew's one-time migration as documented manual steps, not code. Stop and uninstall `mentor.service` and
   its timer; move `~/.config/mentor` → `~/.config/seek` and `~/.local/share/mentor` → `~/.local/share/seek`, renaming
   `mentor.db` → `seek.db`; reinstall the tool as `seek`; `seek install-service`; re-enter the Anthropic key in Settings
   (the old keychain item can then be deleted); re-register MCP clients under `seek`. Run them, and check that Channels,
