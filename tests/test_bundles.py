@@ -311,13 +311,19 @@ async def test_export_runs_beside_the_server_while_a_sync_holds_the_lease(
     assert arrived == {"Chisels": "done"}
 
 
-def altered(bundle: Path, name: str, change: str) -> Path:
-    """A copy of the Bundle with one statement run on it, as someone editing the file could."""
+def altered(bundle: Path, name: str, *changes: str) -> Path:
+    """A copy of the Bundle with the statements run on it, as someone editing the file could."""
     copy = bundle.with_name(name)
     shutil.copy(bundle, copy)
     with closing(sqlite3.connect(copy, autocommit=True)) as conn:
-        conn.execute(change)
+        for change in changes:
+            conn.execute(change)
     return copy
+
+
+def unconstrained(table: str) -> list[str]:
+    """Statements rebuilding one of a Bundle's tables without its key and NOT NULLs, for a change they would stop."""
+    return [f"CREATE TABLE loose AS SELECT * FROM {table}", f"DROP TABLE {table}", f"ALTER TABLE loose RENAME TO {table}"]
 
 
 async def test_import_refuses_a_file_it_cannot_read_as_a_bundle_and_writes_nothing(
@@ -383,6 +389,7 @@ async def test_import_says_what_it_added_and_what_to_do_next_and_refuses_a_chann
 
     assert format_import(imported).splitlines() == [
         "Imported Paul Wright: 2 Videos added, searchable now.",
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
         "Next, start a Sync to pick up the Videos published since: seek sync --channel UC-wright",
     ]
     async with running(app_on(friend, FakeTranscriptSource())) as client:
@@ -431,3 +438,391 @@ async def test_import_refuses_a_bundle_whose_videos_the_library_credits_to_anoth
         assert (await client.get("/api/channels")).json() == []
         [video] = await list_playlist_videos(client, playlist["id"])
     assert (video["title"], video["channel_name"], video["stage"]) == ("Chisels", "Rex Krueger", "done")
+
+
+async def sound_bundle(sender: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> Path:
+    """A Bundle of Wood By Wright's one Video, cut into two Segments, for a test to damage."""
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video(
+            "v-dovetails",
+            "Hand-cut dovetails",
+            published_on=date(2024, 5, 17),
+            chapters=[Chapter(title="Intro", start=0, end=30), Chapter(title="Sawing", start=30, end=600)],
+            cues=[
+                Cue(start=0, end=30, text="Welcome back to the shop"),
+                Cue(start=30, end=35, text="First knife the baseline all round"),
+            ],
+        )
+    )
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    return export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+
+
+def refusal(config: Config, path: Path) -> str:
+    """What import says when it refuses the file."""
+    with pytest.raises(SyncCommandError) as refused:
+        import_bundle(config, path)
+    return str(refused.value)
+
+
+async def test_import_refuses_a_bundle_whose_segments_or_vectors_are_damaged_and_writes_nothing(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+
+    damaged = [
+        (
+            altered(bundle, "short.seek", "UPDATE segments SET embedding = substr(embedding, 1, 128) WHERE ordinal = 1"),
+            "a Segment of the Video v-dovetails has a vector of 128 bytes, not the 256 that 64 dimensions take",
+        ),
+        (
+            # Infinity as a little-endian float32, where the vector's first value was.
+            altered(
+                bundle,
+                "infinite.seek",
+                "UPDATE segments SET embedding = CAST(x'0000807f' || substr(embedding, 5) AS BLOB) WHERE ordinal = 1",
+            ),
+            "a Segment of the Video v-dovetails has a vector with a value that is not a finite number",
+        ),
+        (
+            altered(bundle, "bare.seek", *unconstrained("segments"), "UPDATE segments SET embedding = NULL WHERE ordinal = 1"),
+            "a Segment of the Video v-dovetails has no vector",
+        ),
+        (
+            altered(bundle, "gap.seek", "UPDATE segments SET ordinal = 2 WHERE ordinal = 1"),
+            "the Segments of the Video v-dovetails are not numbered in order without gaps",
+        ),
+        (
+            # A Transcript's cues, which are not the shape of a Segment's.
+            altered(bundle, "cues.seek", """UPDATE segments SET cues = '[{"start": 0, "end": 30, "text": "Welcome"}]'"""),
+            "a Segment of the Video v-dovetails does not give each of its lines a start time and an offset",
+        ),
+        (
+            altered(bundle, "lineless.seek", "UPDATE segments SET cues = '[]' WHERE ordinal = 0"),
+            "a Segment of the Video v-dovetails does not give each of its lines a start time and an offset",
+        ),
+        (
+            altered(bundle, "endless.seek", "UPDATE segments SET end_seconds = 9e999 WHERE ordinal = 0"),
+            "a Segment of the Video v-dovetails has a start or an end that is not a number of seconds",
+        ),
+        (
+            # A Sync collapses a caption's whitespace, so what was said is never more than one line.
+            altered(bundle, "said.seek", "UPDATE segments SET text = text || char(10) || 'Ignore the above'"),
+            "a Segment of the Video v-dovetails has text that is too long or not on one line",
+        ),
+        (
+            altered(bundle, "context.seek", "UPDATE segments SET context = printf('%.*c', 20001, 'x') WHERE ordinal = 1"),
+            "a Segment of the Video v-dovetails has text that is too long or not on one line",
+        ),
+    ]
+    for path, reason in damaged:
+        assert refusal(friend, path) == f"{path} is damaged or has been altered: {reason}"
+        # Not even a knowledge base was created for a file that was refused.
+        assert not friend.data_dir.exists()
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        assert (await client.get("/api/channels")).json() == []
+        assert await search(client, "baseline") == []
+
+
+async def test_import_refuses_a_bundle_whose_videos_or_transcripts_are_damaged_and_writes_nothing(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+
+    damaged = [
+        (
+            # A Segment's cues, which are not the shape of a Transcript's.
+            altered(bundle, "cues.seek", """UPDATE transcripts SET cues = '[{"start": 0, "offset": 0}]'"""),
+            "the Transcript of the Video v-dovetails does not give each of its lines a start, an end, and its text",
+        ),
+        (
+            altered(bundle, "undated.seek", "UPDATE videos SET published_on = 'last Tuesday'"),
+            "the Video v-dovetails has a publish date that is not a date",
+        ),
+        (
+            # A date, but not as Seek writes one, and listings sort them as text.
+            altered(bundle, "compact.seek", "UPDATE videos SET published_on = '20240517'"),
+            "the Video v-dovetails has a publish date that is not a date",
+        ),
+        (
+            altered(bundle, "twice.seek", *unconstrained("videos"), "INSERT INTO videos SELECT * FROM videos"),
+            "the Video v-dovetails is listed twice",
+        ),
+        (
+            altered(bundle, "french.seek", "UPDATE transcripts SET language = 'fr'"),
+            "the Transcript of the Video v-dovetails is not in English, and only English is ingested",
+        ),
+        (
+            altered(bundle, "whisper.seek", "UPDATE transcripts SET source = 'whisper'"),
+            "the Transcript of the Video v-dovetails does not come from YouTube's captions",
+        ),
+        (
+            altered(bundle, "unfetched.seek", "UPDATE transcripts SET fetched_at = 'yesterday'"),
+            "the Transcript of the Video v-dovetails was fetched at a time that is not a timestamp",
+        ),
+        (
+            altered(bundle, "silent.seek", "DELETE FROM transcripts"),
+            "the Video v-dovetails does not have exactly one Transcript",
+        ),
+        (
+            altered(bundle, "credited.seek", "UPDATE videos SET youtube_channel_id = 'UC-rex'"),
+            "the Video v-dovetails is credited to a creator other than the Bundle's Channel",
+        ),
+        (
+            # What a Sync would put in the URL it asks yt-dlp for.
+            altered(bundle, "id.seek", "UPDATE videos SET youtube_video_id = 'v-dovetails&list=PL-picks'"),
+            "one of its Videos has an id that is not a YouTube id",
+        ),
+        (
+            # An escape sequence that would clear the terminal a listing prints the title to.
+            altered(bundle, "escape.seek", "UPDATE videos SET title = 'Dovetails' || char(27) || '[2J'"),
+            "the Video v-dovetails has a title that is empty, too long, or holds control characters",
+        ),
+        (
+            # A line separator, which breaks a line as a newline does.
+            altered(bundle, "broken.seek", "UPDATE videos SET title = 'Dovetails' || char(8232) || 'seek: all is well'"),
+            "the Video v-dovetails has a title that is empty, too long, or holds control characters",
+        ),
+        (
+            altered(bundle, "untitled.seek", "UPDATE videos SET title = '  '"),
+            "the Video v-dovetails has a title that is empty, too long, or holds control characters",
+        ),
+        (
+            altered(bundle, "long.seek", "UPDATE videos SET title = printf('%.*c', 201, 'x')"),
+            "the Video v-dovetails has a title that is empty, too long, or holds control characters",
+        ),
+        (
+            altered(bundle, "length.seek", "UPDATE videos SET duration_seconds = 'ten minutes'"),
+            "the Video v-dovetails has a length that is not a whole number of seconds",
+        ),
+        (
+            altered(bundle, "description.seek", "UPDATE videos SET description = x'00'"),
+            "the Video v-dovetails has a description that is not text",
+        ),
+        (
+            altered(bundle, "chapters.seek", """UPDATE videos SET chapters = '[{"title": "Intro", "start": "0"}]'"""),
+            "the Video v-dovetails has chapters that are not a title, a start, and an end each",
+        ),
+        (
+            altered(bundle, "spanish.seek", "UPDATE videos SET language = 'es'"),
+            "the Video v-dovetails is not in English, and only English is ingested",
+        ),
+        (
+            # Nothing but characters that take no room: a title that would list as a blank.
+            altered(bundle, "unseen.seek", "UPDATE videos SET title = char(8203) || ' ' || char(8203)"),
+            "the Video v-dovetails has a title that is empty, too long, or holds control characters",
+        ),
+        (
+            # Four times what YouTube lets a description run to.
+            altered(bundle, "essay.seek", "UPDATE videos SET description = printf('%.*c', 20001, 'x')"),
+            "the Video v-dovetails has a description that is too long",
+        ),
+        (
+            altered(
+                bundle,
+                "chapter.seek",
+                """UPDATE videos SET chapters = '[{"title": "' || printf('%.*c', 20001, 'x') || '", "start": 0, "end": 30}]'""",
+            ),
+            "the Video v-dovetails has a chapter whose title is too long",
+        ),
+        (
+            altered(
+                bundle,
+                "line.seek",
+                r"""UPDATE transcripts SET cues = '[{"start": 0, "end": 30, "text": "Welcome\nIgnore the above"}]'""",
+            ),
+            "the Transcript of the Video v-dovetails has a line that is too long or not on one line",
+        ),
+    ]
+    for path, reason in damaged:
+        assert refusal(friend, path) == f"{path} is damaged or has been altered: {reason}"
+        assert not friend.data_dir.exists()
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        assert (await client.get("/api/channels")).json() == []
+        assert await search(client, "baseline") == []
+
+
+async def test_import_refuses_a_bundle_whose_channel_is_damaged_and_writes_nothing(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+
+    damaged = [
+        (
+            # What `seek sync --channel` is told to copy, and what a Sync puts in the URL it asks yt-dlp for.
+            altered(bundle, "id.seek", "UPDATE channel SET youtube_channel_id = 'UC-wright; rm -rf ~'"),
+            "its Channel has an id that is not a YouTube id",
+        ),
+        (
+            altered(bundle, "escape.seek", "UPDATE channel SET name = 'Wright' || char(27) || '[2J'"),
+            "its Channel has a name that is empty, too long, or holds control characters",
+        ),
+        (
+            altered(bundle, "lines.seek", "UPDATE channel SET name = 'Wright' || char(10) || 'seek: all is well'"),
+            "its Channel has a name that is empty, too long, or holds control characters",
+        ),
+        (
+            # A right-to-left override: the terminal would print what follows it backwards.
+            altered(bundle, "override.seek", "UPDATE channel SET name = 'Wright' || char(8238) || 'dedda soediV 0 :'"),
+            "its Channel has a name that is empty, too long, or holds control characters",
+        ),
+        (
+            # Zero-width spaces alone: a name that prints as nothing.
+            altered(bundle, "unseen.seek", "UPDATE channel SET name = char(8203) || char(8203)"),
+            "its Channel has a name that is empty, too long, or holds control characters",
+        ),
+        (
+            altered(bundle, "two.seek", "INSERT INTO channel SELECT * FROM channel"),
+            "it does not hold exactly one Channel",
+        ),
+        (altered(bundle, "none.seek", "DELETE FROM channel"), "it does not hold exactly one Channel"),
+        (
+            altered(bundle, "recent.seek", "UPDATE channel SET most_recent = 0"),
+            "its Channel has filters outside what Seek accepts",
+        ),
+        (
+            altered(bundle, "many.seek", "UPDATE channel SET most_recent = 100001"),
+            "its Channel has filters outside what Seek accepts",
+        ),
+        (
+            altered(bundle, "soon.seek", "UPDATE channel SET published_after = 'soon'"),
+            "its Channel has filters outside what Seek accepts",
+        ),
+        (
+            altered(
+                bundle,
+                "backwards.seek",
+                "UPDATE channel SET published_after = '2024-06-01', published_before = '2024-01-01'",
+            ),
+            "its Channel has filters outside what Seek accepts",
+        ),
+    ]
+    for path, reason in damaged:
+        assert refusal(friend, path) == f"{path} is damaged or has been altered: {reason}"
+        assert not friend.data_dir.exists()
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        assert (await client.get("/api/channels")).json() == []
+        assert await search(client, "baseline") == []
+
+
+async def test_import_refuses_as_no_bundle_a_file_whose_tables_are_not_a_bundles_and_writes_nothing(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+    cut_short = tmp_path / "short.seek"
+    cut_short.write_bytes(bundle.read_bytes()[:6000])
+    segment_columns = "youtube_video_id, ordinal, start_seconds, end_seconds, text, chapter_title, context, cues, embedding"
+
+    not_bundles = [
+        altered(bundle, "two.seek", "INSERT INTO meta SELECT * FROM meta"),
+        altered(bundle, "empty.seek", "DELETE FROM meta"),
+        altered(bundle, "group.seek", "UPDATE meta SET kind = 'group'"),
+        # Neither can be quoted in the sentence that names the two embedding models.
+        altered(bundle, "escape.seek", "UPDATE meta SET embedding_model = 'fake-embedder' || char(27) || '[2J'"),
+        altered(bundle, "override.seek", "UPDATE meta SET embedding_model = 'fake' || char(8238) || 'redlebme-'"),
+        altered(bundle, "wide.seek", "UPDATE meta SET embedding_dimension = 'sixty-four'"),
+        altered(bundle, "missing.seek", "DROP TABLE transcripts"),
+        # A virtual table this SQLite can open, holding the same rows.
+        altered(
+            bundle,
+            "indexed.seek",
+            "ALTER TABLE segments RENAME TO plain",
+            f"CREATE VIRTUAL TABLE segments USING fts5({segment_columns})",
+            f"INSERT INTO segments ({segment_columns}) SELECT {segment_columns} FROM plain",
+        ),
+        # And one it can't: the vector table's module is an extension import never loads.
+        altered(
+            bundle,
+            "vectors.seek",
+            "PRAGMA writable_schema = ON",
+            "UPDATE sqlite_schema SET sql = 'CREATE VIRTUAL TABLE segments USING vec0(embedding float[64])', "
+            "rootpage = 0 WHERE name = 'segments'",
+        ),
+        # A view can run whatever SQL its maker wrote, for as long as they like.
+        altered(
+            bundle, "view.seek", "ALTER TABLE videos RENAME TO held", "CREATE VIEW videos AS SELECT * FROM held"
+        ),
+        # Bytes that are not text where a title goes.
+        altered(bundle, "bytes.seek", "UPDATE videos SET title = CAST(x'ff' AS TEXT)"),
+        cut_short,
+    ]
+    for path in not_bundles:
+        assert refusal(friend, path) == f"{path} is not a Seek Bundle"
+        assert not friend.data_dir.exists()
+    # A later format may keep its tables another way, and its file is still a Bundle to upgrade for.
+    later = altered(bundle, "later.seek", "UPDATE meta SET format_version = 2", "DROP TABLE segments")
+    assert refusal(friend, later) == (
+        f"{later} was made by a newer Seek (Bundle format 2, this build reads 1); upgrade Seek"
+    )
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        assert (await client.get("/api/channels")).json() == []
+        assert await search(client, "baseline") == []
+
+
+async def test_a_bundle_imports_with_the_text_youtube_really_gives_a_video(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+    # Whatever a Sync stores must import. A title with a phone number wrapped in a left-to-right embedding and an
+    # emoji joined by a zero-width joiner; a description with Windows line ends, a tab, and a word processor's
+    # vertical tab; a chapter YouTube gave no title, and one cut from a description line with a tab in it.
+    title = "Call \u202a+1 555 0100\u202c for the \U0001f9d1\u200d\U0001f373 plans"
+    as_youtube_gives_it = altered(
+        bundle,
+        "real.seek",
+        f"UPDATE videos SET title = '{title}', description = 'Plans:' || char(13, 10, 9, 11) || 'in the link'",
+        r"""UPDATE videos SET chapters = '[{"title": "", "start": 0, "end": 30}, {"title": "Saw\tcuts", "start": 30, "end": 600}]'""",
+        "UPDATE segments SET chapter_title = 'Saw' || char(9) || 'cuts', context = context || char(9) || 'cuts' WHERE ordinal = 1",
+    )
+
+    import_bundle(friend, as_youtube_gives_it)
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [channel] = (await client.get("/api/channels")).json()
+        assert list(await list_videos(client, channel["id"])) == [title]
+        found = await search(client, "knife the baseline")
+    assert found[0]["chapter_title"] == "Saw\tcuts"
+
+
+async def test_a_channel_whose_name_joins_an_emoji_imports_and_is_listed_under_that_name(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+    # A cook, drawn as a person joined to a frying pan by a zero-width joiner.
+    name = "Wright \U0001f9d1\u200d\U0001f373 Cooks"
+
+    imported = import_bundle(friend, altered(bundle, "cook.seek", f"UPDATE channel SET name = '{name}'"))
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [channel] = (await client.get("/api/channels")).json()
+    assert channel["name"] == name
+    assert format_import(imported).splitlines()[0] == f"Imported {name}: 1 Videos added, searchable now."
+
+
+async def test_an_avatar_that_youtube_does_not_serve_is_dropped_and_the_bundle_still_imports(
+    sender: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await sound_bundle(sender, transcripts, tmp_path)
+    elsewhere = {
+        "tracker": "https://tracker.example/wright.png",
+        "plain": "http://yt3.googleusercontent.com/wright-avatar",
+        "suffix": "https://yt3.googleusercontent.com.tracker.example/wright-avatar",
+        "userinfo": "https://yt3.googleusercontent.com@tracker.example/wright-avatar",
+    }
+
+    avatars = {}
+    for name, url in {**elsewhere, "ggpht": "https://yt3.ggpht.com/ytc/wright=s176"}.items():
+        friend = bundle_config(tmp_path / name)
+        import_bundle(friend, altered(bundle, f"{name}.seek", f"UPDATE channel SET avatar_url = '{url}'"))
+        async with running(app_on(friend, FakeTranscriptSource())) as client:
+            [channel] = (await client.get("/api/channels")).json()
+            assert sorted(await list_videos(client, channel["id"])) == ["Hand-cut dovetails"]
+        avatars[name] = channel["avatar_url"]
+
+    # Dropped, not refused: the Channel shows initials until a Sync's listing supplies an avatar.
+    assert avatars == {**dict.fromkeys(elsewhere), "ggpht": "https://yt3.ggpht.com/ytc/wright=s176"}

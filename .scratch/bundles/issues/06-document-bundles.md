@@ -14,3 +14,7 @@
 - [ ] HANDOFF mentions Bundles.
 - [ ] ADR 0007 records the format decision: a single SQLite file read as untrusted input, over a zip of JSON lines with a vector array. It records as accepted that a Bundle is unsigned, so a hostile one can put invented text under a real Video's id; and that import is the first command to write beside a running server, which the Sync lease and the busy timeout answer (ADR 0002).
 - [ ] The docs describe the behaviour as it landed in tickets 01 to 05, including any reading recorded in their comments.
+
+## Comments
+
+**2026-10-11, from ticket 02's commit security review.** ADR 0007 should record two more things as accepted with an unsigned Bundle, both reasoned in ticket 02's comments. A Bundle's text reaches a model's context with whatever characters it holds, invisible ones included, as a Transcript fetched from YouTube does; the untrusted-content framing is the defence, and import filters no characters out of what a Sync could have stored. And a Segment's context and vector are taken as given, so a hostile Bundle can make a Segment rank for words it never shows; the context is in the lexical index beside the text, and checking either would mean embedding the Bundle again.

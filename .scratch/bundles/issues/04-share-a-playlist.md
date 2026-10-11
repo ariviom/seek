@@ -17,3 +17,7 @@
 - [ ] A Sync of the imported Playlist fetches no Transcript for an imported Video. A playlist the recipient can't list fails that Sync with the existing message and removes nothing.
 - [ ] The report's counts work as for a Channel, with "left out" meaning under the minimum length.
 - [ ] Tests cover the round trip, positions, creators outside the Library, inclusion winning over a Library Channel's filter, the name clash and `--name`, and merging into a Playlist already added.
+
+## Comments
+
+**2026-10-11, from ticket 02.** Import refuses, as not a Bundle, any `kind` but `channel` and any file where one of the tables it reads is missing or not a plain table (`_meta` and `_TABLES` in `bundles.py`). A Playlist Bundle needs both widened by kind, and its own entry tables checked before the first write as the Channel's are: the playlist id and each creator's id through `_is_youtube_id`, the Playlist's and each creator's name through `_is_name` (`seek list` prints both), each creator once, each avatar under `_AVATAR_HOSTS`, positions as whole numbers, and "credited to a creator the Bundle lists" in place of `_videos`' check against the one Channel.
