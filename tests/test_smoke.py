@@ -230,6 +230,13 @@ async def test_add_a_channel_sync_search_group_chat_theme_and_reload(
             assert await embedded_at(sources.locator("iframe")) == (*embed, ["65"])
             # The saved Citation is listed once in the panel, and the chat is filed under its Group.
             await expect(sources.get_by_role("button").filter(has_text="Flattening a Workbench")).to_have_count(1)
+            # Under the answer its Sources stay folded behind their count until asked for.
+            answer_sources = conversation.get_by_role("list", name="Sources")
+            referenced = conversation.get_by_role("button", name="1 Video Referenced")
+            await expect(referenced).to_have_attribute("aria-expanded", "false")
+            await expect(answer_sources).to_have_count(0)
+            await referenced.click()
+            await expect(answer_sources.get_by_role("button").first).to_contain_text("Flattening a Workbench")
             chats = page.get_by_role("complementary", name="Chats")
             await expect(chats.get_by_role("button", name=re.compile(r"^Benches"))).to_be_visible()
             await expect(chats.get_by_role("button").filter(has_text="How do I flatten a bench?")).to_be_visible()

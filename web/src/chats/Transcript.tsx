@@ -1,4 +1,5 @@
-import { AlertCircle, FileSearch, Globe2, Loader2, Search } from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, ChevronDown, FileSearch, Globe2, Loader2, Search } from "lucide-react";
 import type { ChatMessage, Citation } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { useChannelAvatars } from "@/lib/channel-avatars";
@@ -120,6 +121,9 @@ function AnswerView({
 }) {
   const consulted = [...new Set(answer.tools.flatMap((tool) => tool.consulted))];
   const avatarOf = useChannelAvatars();
+  // The Sources start folded behind their count: a long answer cites enough moments to bury the next question.
+  const [referencedOpen, setReferencedOpen] = useState(false);
+  const referenced = new Set(answer.citations.map((citation) => citation.video_id)).size;
   return (
     <div className="space-y-2.5">
       {answer.tools.length > 0 && (
@@ -151,29 +155,49 @@ function AnswerView({
       )}
       {answer.text !== "" && <Markdown text={answer.text} citations={answer.citations} onPlay={onPlay} />}
       {answer.citations.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5 pt-0.5" aria-label="Sources">
-          {answer.citations.map((citation) => {
-            const key = playableKey(citation);
-            return (
-              <li key={key}>
-                <button
-                  type="button"
-                  aria-current={key === playingKey ? "true" : undefined}
-                  title={`${citation.channel_name} · ${citation.video_title} at ${formatDuration(citation.seconds)}`}
-                  onClick={() => onPlay(citation)}
-                  className={cn(
-                    "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border pr-2 pl-1.5 text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50",
-                    key === playingKey && "border-foreground/40 bg-accent",
-                  )}
-                >
-                  <Avatar name={citation.channel_name} src={avatarOf(citation.channel_id)} size="xs" />
-                  <span className="max-w-[15rem] truncate">{citation.video_title}</span>
-                  <span className="text-muted-foreground tabular-nums">{formatDuration(citation.seconds)}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="space-y-2">
+          <button
+            type="button"
+            aria-expanded={referencedOpen}
+            onClick={() => setReferencedOpen((open) => !open)}
+            className="flex w-full items-center gap-3 rounded-md py-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <span aria-hidden className="h-px flex-1 bg-border" />
+            <span className="inline-flex items-center gap-1">
+              {plural(referenced, "Video")} Referenced
+              <ChevronDown
+                className={cn("size-3.5 transition-transform", referencedOpen && "rotate-180")}
+                aria-hidden
+              />
+            </span>
+            <span aria-hidden className="h-px flex-1 bg-border" />
+          </button>
+          {referencedOpen && (
+            <ul className="flex flex-wrap gap-1.5" aria-label="Sources">
+              {answer.citations.map((citation) => {
+                const key = playableKey(citation);
+                return (
+                  <li key={key}>
+                    <button
+                      type="button"
+                      aria-current={key === playingKey ? "true" : undefined}
+                      title={`${citation.channel_name} · ${citation.video_title} at ${formatDuration(citation.seconds)}`}
+                      onClick={() => onPlay(citation)}
+                      className={cn(
+                        "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border pr-2 pl-1.5 text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50",
+                        key === playingKey && "border-foreground/40 bg-accent",
+                      )}
+                    >
+                      <Avatar name={citation.channel_name} src={avatarOf(citation.channel_id)} size="xs" />
+                      <span className="max-w-[15rem] truncate">{citation.video_title}</span>
+                      <span className="text-muted-foreground tabular-nums">{formatDuration(citation.seconds)}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
       {answer.state === "streaming" && answer.text === "" && answer.tools.length === 0 && (
         <p className="text-sm text-muted-foreground">Thinking…</p>
