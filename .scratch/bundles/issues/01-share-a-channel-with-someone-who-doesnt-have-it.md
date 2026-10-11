@@ -40,4 +40,5 @@ For later tickets:
 - 02: import never reads `kind`; a Bundle with no `channel` row, a non-ISO date, or a Video without a Transcript is a traceback; the avatar is stored as given; opening read-only with `trusted_schema` off is the only hardening so far. Validation has to run before `_open_knowledge_base` and before the first write, where the known-Channel check sits now.
 - 03: `_known` and its refusal go. `ImportReport.added` is the Bundle's Video count, and the minimum length is not judged at import, so the first Sync excludes a Video under it.
 - 05: import takes no lease and has no progress callback. `cli.import_` also catches `Conflict`, for a Channel added on the server between the check and the insert.
-- A killed export leaves `NAME.seek.<pid>.tmp` beside the destination. `wright.SEEK` becomes `wright.SEEK.seek`.
+- A killed export leaves `NAME.seek.<random>.tmp` beside the destination. `wright.SEEK` becomes `wright.SEEK.seek`.
+- A Bundle is written readable by its owner alone (the temporary file is made with `mkstemp`), whatever the umask.

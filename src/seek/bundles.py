@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import os
 import sqlite3
+import tempfile
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -139,9 +140,9 @@ def export_channel(config: Config, channel: str, path: Path) -> ExportReport:
             raise SyncCommandError(f"The Channel {found.name!r} has no indexed Videos to export")
         model = conn.execute("SELECT name, dimension FROM embedding_model").fetchone()
         # Written under another name and renamed once complete, so a `.seek` file is never half a Bundle.
-        temporary = destination.with_name(f"{destination.name}.{os.getpid()}.tmp")
+        temporary, bundle = _new_bundle(destination)
         try:
-            with closing(_new_bundle(temporary, destination)) as bundle:
+            with closing(bundle):
                 bundle.execute(
                     """
                     INSERT INTO meta (format_version, seek_version, embedding_model, embedding_dimension, kind,
@@ -190,18 +191,31 @@ def _refuse_existing(destination: Path) -> None:
         raise SyncCommandError(f"{destination} already exists; export never replaces a file")
 
 
-def _new_bundle(path: Path, destination: Path) -> sqlite3.Connection:
-    """An empty Bundle at the path, inside a transaction for the caller to commit."""
+def _new_bundle(destination: Path) -> tuple[Path, sqlite3.Connection]:
+    """An empty Bundle under a temporary name beside the destination, inside a transaction for the caller to
+    commit; returns that name with it.
+
+    The file is created here, exclusively and under a name nobody can guess, and is readable by its owner alone:
+    in a directory others can write to, a link planted where the Bundle was about to go would otherwise have the
+    Transcripts written through it.
+    """
     try:
-        bundle = sqlite3.connect(path, autocommit=True)
+        handle, name = tempfile.mkstemp(dir=destination.parent, prefix=f"{destination.name}.", suffix=".tmp")
+        os.close(handle)
+    except OSError as e:
+        raise SyncCommandError(f"Could not write {destination}: {e}") from e
+    temporary = Path(name)
+    try:
+        bundle = sqlite3.connect(temporary, autocommit=True)
         bundle.execute(f"PRAGMA application_id = {APPLICATION_ID}")
         # A rollback journal, never WAL: once committed, a Bundle is exactly one file.
         bundle.execute("PRAGMA journal_mode = DELETE")
         bundle.execute("BEGIN")
         bundle.executescript(_SCHEMA)
     except sqlite3.Error as e:
+        temporary.unlink(missing_ok=True)
         raise SyncCommandError(f"Could not write {destination}: {e}") from e
-    return bundle
+    return temporary, bundle
 
 
 def format_export(report: ExportReport) -> str:

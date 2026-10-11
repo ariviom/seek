@@ -17,3 +17,12 @@
 - [ ] An avatar is kept only when it is an `https` URL on one of YouTube's avatar hosts. Any other is dropped, not refused, and the Channel shows initials.
 - [ ] A successful import prints that the Bundle's text came from whoever made the file.
 - [ ] Tests build each bad file with `sqlite3` and feed it through the import function: a wrong-length vector, a non-finite value, a Segment without a vector, a gap in the ordinals, malformed Transcript cues, malformed Segment cues, a publish date that isn't a date, a Video listed twice, a Transcript in another language, a Video credited to another creator, a second meta record, and a declared virtual table. Each asserts the message and that the Library is unchanged. One more file carries an avatar on another host and imports with it dropped.
+
+## Comments
+
+**2026-10-11, from the commit security review of ticket 01.** Import as it stands after 01 trusts the file, so it must not be merged or used on a Bundle from someone else until this ticket lands. The review named five ways that shows, each already a checkbox above:
+- Ids, names, dates, cues, and vectors go into the knowledge base as given. Malformed chapters, cues, or a publish date that isn't a date arrive `done`, and then break every search and listing that reads them until the Channel is deleted.
+- A Bundle's YouTube video and channel ids are later put into the URLs a Sync asks yt-dlp for. The id pattern closes that.
+- A row the knowledge base rejects stops the import partway with a traceback, leaving the Channel and the Videos before it, and 01's known-Channel refusal then blocks a second try. Validation before the first write closes that.
+- The avatar URL is stored and then loaded by the Library page from whatever server it names.
+- `format_import` prints the Bundle's Channel name and puts its YouTube channel id in a command to copy (`seek sync --channel ID`). The id pattern and the ban on control characters make both safe to print; check the refusal messages that quote a name as well.

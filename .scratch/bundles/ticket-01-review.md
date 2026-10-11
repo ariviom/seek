@@ -17,6 +17,12 @@ Left, and recorded in the ticket's comments: `database is locked` after the busy
 
 All fourteen checkboxes met after the fixes.
 
+## Commit security review
+
+Fixed: export's temporary file had a guessable name (`NAME.seek.<pid>.tmp`) and was opened without exclusive creation, so in a directory others can write to a planted link would have had the Bundle written through it. It is made with `mkstemp` now.
+
+Open until ticket 02, and recorded in its comments: import trusts the file's ids, names, dates, cues, vectors, and avatar URL, stops partway on a row the knowledge base rejects, and prints the Bundle's name and id. Import is not safe on a Bundle from someone else until 02 lands.
+
 ## Standards
 
 Found and fixed:
