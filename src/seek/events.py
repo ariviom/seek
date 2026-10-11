@@ -12,7 +12,7 @@ from fastapi.encoders import jsonable_encoder
 
 from seek.ports import ModelStatus
 from seek.syncs import Sync
-from seek.videos import Video
+from seek.videos import Source, Video
 
 # Events a subscriber may fall behind by before its stream is closed; the client reconnects and reloads.
 MAX_BACKLOG = 10_000
@@ -51,13 +51,14 @@ class Events:
         """The Sync's record changed."""
         self._publish({"type": "sync", "sync": sync})
 
-    def video(self, channel_id: int, video: Video) -> None:
-        """One Video changed."""
-        self._publish({"type": "video", "channel_id": channel_id, "video": video})
+    def video(self, source: Source, video: Video) -> None:
+        """One Video of the Channel or Playlist changed; the event carries the source's id as channel_id or
+        playlist_id."""
+        self._publish({"type": "video", source.column: source.id, "video": video})
 
-    def videos(self, channel_id: int) -> None:
-        """Many of the Channel's Videos may have changed; reload them."""
-        self._publish({"type": "videos", "channel_id": channel_id})
+    def videos(self, source: Source) -> None:
+        """Many of the Channel's or Playlist's Videos may have changed; reload them."""
+        self._publish({"type": "videos", source.column: source.id})
 
     def syncs(self) -> None:
         """Syncs were removed or their names changed; reload them."""

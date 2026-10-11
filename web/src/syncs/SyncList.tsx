@@ -42,7 +42,7 @@ export function SyncList({
               <ListRow selected={selection.sync === sync.id} onClick={() => select({ sync: sync.id })}>
                 <span aria-hidden className={`size-2 shrink-0 rounded-full ${syncStatus[sync.status].dot}`} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{sync.channel_name}</span>
+                  <span className="block truncate text-sm">{sync.source_name}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {isRunning(sync)
                       ? syncProgress(sync, now).label

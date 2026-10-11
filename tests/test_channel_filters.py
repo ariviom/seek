@@ -16,7 +16,7 @@ from harness import (
 )
 
 from seek.config import Config
-from seek.fakes import FakeTranscriptSource
+from seek.fakes import FakePlaylist, FakeTranscriptSource
 
 NO_FILTERS: Json = {"published_after": None, "published_before": None, "playlist_id": None, "most_recent": None}
 
@@ -140,7 +140,10 @@ async def test_a_playlist_filter_keeps_only_the_channels_videos_in_that_playlist
         fake_video("v-vlog", "Shop vlog"),
         fake_video("v-mortise", "Mortise and tenon"),
     ]
-    transcripts.playlists["PL-joinery"] = ["v-mortise", "v-someone-elses", "v-dovetails"]
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-someone-elses", "Someone else's joinery"))
+    transcripts.playlists["PL-joinery"] = FakePlaylist(
+        "Joinery", [("UC-wright", "v-mortise"), ("UC-rex", "v-someone-elses"), ("UC-wright", "v-dovetails")]
+    )
     channel = await add_channel(client, "@woodbywright", "Wood By Wright")
     channel_id = channel["id"]
 
@@ -160,7 +163,7 @@ async def test_a_playlist_filter_keeps_only_the_channels_videos_in_that_playlist
         "v-mortise",
     ]
     assert missing["status"] == "failed"
-    assert "PL-missing" in missing["error"]
+    assert "doesn't exist or is private" in missing["error"]
     assert stages(await list_videos(client, channel_id)) == stages(videos)
 
 

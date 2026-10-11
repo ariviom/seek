@@ -19,9 +19,10 @@ from harness import (
 from seek import db, syncs
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import ChatEngine, ChatEngineStatus, EngineName, ModelStatus, VideoUnavailable
 from seek.status_command import format_list, format_status, list_all, status
+from seek.videos import Source
 
 
 def _engines(
@@ -93,7 +94,7 @@ async def test_seek_status_reports_the_running_servers_models_both_engines_and_s
     assert report.models is not None
     assert {role: m.state for role, m in report.models.items()} == {"embedding": "ready", "reranker": "ready"}
     assert report.chat.engines == {"api": server_api.engine_status, "cli": server_cli.engine_status}
-    assert [(s.channel_name, s.status) for s in report.syncs] == [("Paul Wright", "running"), ("Rex Krueger", "queued")]
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Paul Wright", "running"), ("Rex Krueger", "queued")]
     assert format_status(report).splitlines() == [
         f"Server: running at {url}",
         "Models:",
@@ -109,6 +110,30 @@ async def test_seek_status_reports_the_running_servers_models_both_engines_and_s
     ]
 
 
+async def test_seek_status_lists_a_playlists_sync_under_the_playlists_name_from_the_server_or_the_store(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    gate = Gate()
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-held", "Held", before_fetch=gate))
+    transcripts.playlists["PL-rex"] = FakePlaylist("Rex picks", [("UC-rex", "v-held")])
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        playlist = (await client.post("/api/playlists", json={"playlist": "PL-rex", "name": "Sharpening"})).json()
+        await client.post(f"/api/playlists/{playlist['id']}/syncs")
+        await gate.wait_entered()
+        served = await status(server_config(config, url), _engines())
+    gate.released.set()
+    # The stopped server left its Sync marked running, which is how the store still has one to report.
+    stored = await status(replace(config, port=free_port()), _engines())
+
+    assert [(s.source_name, s.channel_id, s.playlist_id, s.status) for s in served.syncs] == [
+        ("Sharpening", None, playlist["id"], "running")
+    ]
+    assert format_status(served).splitlines()[-2:] == ["Syncs: 1 running, 0 queued", "  running  Sharpening"]
+    assert served.syncs == stored.syncs
+
+
 async def test_seek_status_reads_the_store_and_asks_both_engines_itself_when_no_server_answers(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
@@ -121,7 +146,7 @@ async def test_seek_status_reads_the_store_and_asks_both_engines_itself_when_no_
     )
     async with running(app) as client:
         wright = await add_channel(client, "@woodbywright", "Paul Wright")
-    await db.Database(config.database_path).run(lambda conn: syncs.enqueue(conn, wright["id"]))
+    await db.Database(config.database_path).run(lambda conn: syncs.enqueue(conn, Source("channel", wright["id"])))
 
     report = await status(offline, engines)
 
@@ -130,7 +155,7 @@ async def test_seek_status_reads_the_store_and_asks_both_engines_itself_when_no_
     # Neither engine can answer, which disables chat and nothing else.
     assert report.chat.active is None
     assert report.chat.engines["cli"] == cli.engine_status
-    assert [(s.channel_name, s.status) for s in report.syncs] == [("Paul Wright", "queued")]
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Paul Wright", "queued")]
     assert format_status(report).splitlines() == [
         "Server: not running (the models load when it starts)",
         "Chat: no engine ready",

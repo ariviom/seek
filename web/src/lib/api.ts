@@ -106,10 +106,12 @@ export type Video = {
   language: string | null;
   transcript_source: "youtube_auto" | "youtube_manual" | null;
 };
-export type Sync = {
+// What a Sync ingests: exactly one of a Channel and a Playlist.
+type SyncSource = { channel_id: number; playlist_id: null } | { channel_id: null; playlist_id: number };
+export type Sync = SyncSource & {
   id: number;
-  channel_id: number;
-  channel_name: string;
+  // The Channel's or the Playlist's name.
+  source_name: string;
   status: "queued" | "running" | "done" | "failed";
   error: string | null;
   queued_at: string;
@@ -302,6 +304,8 @@ export const api = {
     request<Group>(`groups/${id}/members`, { method: "PUT", body: { channel_ids: channelIds } }),
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
+  retryPlaylistFailed: (playlistId: number) =>
+    request<Sync>(`playlists/${playlistId}/retry-failed`, { method: "POST" }),
   retryVideo: (videoId: number) => request<Sync>(`videos/${videoId}/retry`, { method: "POST" }),
   // Queues a Sync for every active Channel.
   syncAll: () => request<Sync[]>("syncs", { method: "POST" }),

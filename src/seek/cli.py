@@ -116,12 +116,12 @@ def sync(channel: str | None, reindex: bool = False) -> None:
     if report.server_url is not None:
         print(f"Queued on the server at {report.server_url}, where their progress shows:")
         for queued in report.syncs:
-            print(f"  {queued.channel_name}")
+            print(f"  {queued.source_name}")
         return
     print("No server was running, so the Syncs ran here:")
     for finished in report.syncs:
         outcome = f"failed: {finished.error}" if finished.status == "failed" else f"{finished.new_videos} new Videos"
-        print(f"  {finished.channel_name}: {outcome}")
+        print(f"  {finished.source_name}: {outcome}")
     if any(s.status == "failed" for s in report.syncs):
         sys.exit(1)
 

@@ -119,7 +119,7 @@ def seed_knowledge_base(config: Config) -> None:
 def syncs_per_channel(syncs: list[dict[str, object]]) -> dict[object, int]:
     counts: dict[object, int] = {}
     for sync in syncs:
-        counts[sync["channel_name"]] = counts.get(sync["channel_name"], 0) + 1
+        counts[sync["source_name"]] = counts.get(sync["source_name"], 0) + 1
     return counts
 
 
@@ -152,7 +152,7 @@ async def test_the_server_queues_one_sync_for_each_due_channel_at_start_and_as_o
         gate.released.set()
 
     new_at_start = [s for s in at_start if s["id"] > 7]
-    assert sorted(s["channel_name"] for s in new_at_start) == ["overdue"]
+    assert sorted(s["source_name"] for s in new_at_start) == ["overdue"]
     assert all(s["status"] == "queued" for s in new_at_start)
     assert syncs_per_channel(at_start) == {
         "recent": 1, "overdue": 2, "paused": 1, "off": 1, "queued": 1, "running": 1, "outside the Library": 1

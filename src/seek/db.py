@@ -149,6 +149,70 @@ def _vectors_by_video(conn: sqlite3.Connection) -> None:
     )
 
 
+def _playlists(conn: sqlite3.Connection) -> None:
+    """Schema 21: Playlists and the Videos each includes, and a Sync that belongs to a Channel or a Playlist.
+
+    syncs.channel_id loses its NOT NULL and the table gains a CHECK, neither of which can be altered, so it is
+    rebuilt the way SQLite documents. videos.completed_by_sync_id references syncs by name, so renaming the new
+    table into place makes it resolve again; foreign keys are off meanwhile (see migrate), so dropping the old one
+    clears nothing.
+    """
+    conn.executescript(
+        """
+        -- AUTOINCREMENT: a queued Sync holds a Playlist id, as it does a Channel id.
+        CREATE TABLE playlists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            youtube_playlist_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            indexed INTEGER NOT NULL DEFAULT 1 CHECK (indexed IN (0, 1)),
+            -- As for a Channel: NULL is off.
+            check_every_hours INTEGER DEFAULT 24 CHECK (check_every_hours IN (6, 24, 168))
+        );
+        -- position is the Video's place in the playlist on YouTube, from 0.
+        CREATE TABLE playlist_videos (
+            playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+            video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (playlist_id, video_id)
+        ) WITHOUT ROWID;
+        CREATE INDEX playlist_videos_video_id ON playlist_videos(video_id);
+        CREATE TABLE syncs_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE,
+            playlist_id INTEGER REFERENCES playlists(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'failed')),
+            error TEXT,
+            queued_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            new_videos INTEGER NOT NULL DEFAULT 0,
+            stage_counts TEXT NOT NULL,
+            retry_failed INTEGER NOT NULL DEFAULT 0 CHECK (retry_failed IN (0, 1)),
+            reindex INTEGER NOT NULL DEFAULT 0 CHECK (reindex IN (0, 1)),
+            completed_videos INTEGER NOT NULL DEFAULT 0,
+            failed_videos INTEGER NOT NULL DEFAULT 0,
+            remaining_videos INTEGER NOT NULL DEFAULT 0,
+            counted_from INTEGER NOT NULL DEFAULT 0,
+            -- A Sync ingests exactly one Channel or one Playlist.
+            CHECK ((channel_id IS NULL) != (playlist_id IS NULL))
+        );
+        INSERT INTO syncs_new (id, channel_id, status, error, queued_at, started_at, finished_at, new_videos,
+                               stage_counts, retry_failed, reindex, completed_videos, failed_videos, remaining_videos,
+                               counted_from)
+            SELECT id, channel_id, status, error, queued_at, started_at, finished_at, new_videos, stage_counts,
+                   retry_failed, reindex, completed_videos, failed_videos, remaining_videos, counted_from
+            FROM syncs;
+        DROP TABLE syncs;
+        ALTER TABLE syncs_new RENAME TO syncs;
+        CREATE INDEX syncs_channel_id ON syncs(channel_id);
+        CREATE INDEX syncs_playlist_id ON syncs(playlist_id);
+        CREATE INDEX syncs_status ON syncs(status);
+        CREATE UNIQUE INDEX syncs_one_queued_per_channel ON syncs(channel_id) WHERE status = 'queued';
+        CREATE UNIQUE INDEX syncs_one_queued_per_playlist ON syncs(playlist_id) WHERE status = 'queued';
+        """
+    )
+
+
 # Applied in order; PRAGMA user_version records how many have run. Never edit a shipped entry.
 # A string entry runs with foreign keys ON inside a transaction, where they cannot be switched off: keep those
 # additive, because DROP TABLE on a parent would cascade-delete its children. A callable entry is a rebuild that
@@ -415,6 +479,7 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     -- creator: it is never synced, checked, or a scope of its own.
     ALTER TABLE channels ADD COLUMN in_library INTEGER NOT NULL DEFAULT 1 CHECK (in_library IN (0, 1));
     """,
+    _playlists,
 ]
 
 

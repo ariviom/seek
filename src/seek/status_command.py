@@ -133,7 +133,7 @@ def format_status(report: StatusReport) -> str:
     running = sum(s.status == "running" for s in report.syncs)
     lines.append(f"Syncs: {running} running, {len(report.syncs) - running} queued")
     for s in report.syncs:
-        lines.append(f"  {s.status:<8} {s.channel_name}")
+        lines.append(f"  {s.status:<8} {s.source_name}")
     return "\n".join(lines)
 
 

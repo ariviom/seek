@@ -31,6 +31,7 @@ from seek.ports import Storyboard, VideoUnavailable
 from seek.storyboards import Frame, Moment, frames_at
 from seek.storyboards_api import MAX_MOMENTS
 from seek.sync_command import SyncCommandError
+from seek.videos import Source
 
 # Every field a search result has carried since before frames existed; a signed sheet URL is not among them.
 SEARCH_RESULT_FIELDS = {
@@ -498,7 +499,7 @@ async def database_sync_queued(config: Config, channel_id: int) -> None:
     """A queued Sync in the knowledge base, as another process would have left one."""
     conn = db.connect(config.database_path)
     try:
-        syncs.enqueue(conn, channel_id)
+        syncs.enqueue(conn, Source("channel", channel_id))
     finally:
         conn.close()
 

@@ -200,6 +200,14 @@ async def add_channel(client: httpx.AsyncClient, channel: str, name: str | None 
     return added
 
 
+async def add_playlist(client: httpx.AsyncClient, playlist: str, name: str | None = None) -> Json:
+    """Adds the Playlist by URL or id, under the given name or else its title on YouTube."""
+    response = await client.post("/api/playlists", json={"playlist": playlist, "name": name})
+    assert response.status_code == 201, response.text
+    added: Json = response.json()
+    return added
+
+
 def fake_video(
     video_id: str,
     title: str,
@@ -249,6 +257,21 @@ async def start_sync(client: httpx.AsyncClient, channel_id: int) -> Json:
     assert response.status_code == 202, response.text
     sync: Json = response.json()
     return sync
+
+
+async def start_playlist_sync(client: httpx.AsyncClient, playlist_id: int) -> Json:
+    response = await client.post(f"/api/playlists/{playlist_id}/syncs")
+    assert response.status_code == 202, response.text
+    sync: Json = response.json()
+    return sync
+
+
+async def list_playlist_videos(client: httpx.AsyncClient, playlist_id: int) -> list[Json]:
+    """The Playlist's Videos, in playlist order."""
+    response = await client.get(f"/api/playlists/{playlist_id}/videos")
+    assert response.status_code == 200, response.text
+    videos: list[Json] = response.json()
+    return videos
 
 
 def fake_storyboard(

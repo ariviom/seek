@@ -20,7 +20,7 @@ from seek.devices import DeviceProbe
 from seek.doctor import Machine, diagnose
 from seek.events import Events
 from seek.service import UNIT_NAME, install_service
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeSecrets, FakeTranscriptSource
 from seek.ports import (
     ChatEngine,
     ChatEngineStatus,
@@ -212,6 +212,29 @@ async def test_doctor_without_a_server_reads_the_store_without_changing_it(
     ]:
         assert expected in lines
     assert config.database_path.read_bytes() == before
+
+
+async def test_doctor_reports_a_playlists_failed_sync_under_the_playlists_name(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    config = replace(config, port=free_port())
+    transcripts.playlists["PL-gone"] = FakePlaylist("Sharpening", [])
+    app = create_app(
+        config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none"
+    )
+    async with running(app) as client:
+        playlist = (await client.post("/api/playlists", json={"playlist": "PL-gone"})).json()
+        # Made private on YouTube since it was added.
+        del transcripts.playlists["PL-gone"]
+        await client.post(f"/api/playlists/{playlist['id']}/syncs")
+        [failed] = await wait_for_syncs(client)
+
+    report = await diagnose(config, tmp_path / "config.toml", None, stored_key(), engines(), machine())
+
+    lines = report.splitlines()
+    assert "  failed Syncs: 1, latest first:" in lines
+    assert f"    Sync of Sharpening at {failed['finished_at']}: {failed['error']}" in lines
+    assert failed["error"].startswith("This playlist doesn't exist or is private.")
 
 
 async def test_doctor_on_a_first_install_creates_nothing_and_labels_what_it_cannot_know(tmp_path: Path) -> None:

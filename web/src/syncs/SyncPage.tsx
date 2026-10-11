@@ -23,11 +23,11 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
   const progress = sync.status === "running" ? syncProgress(sync, now) : null;
 
   // The retry queues a new Sync; it arrives as an event.
-  async function retryFailed(channelId: number) {
+  async function retryFailed(sync: Sync) {
     setRetryError(null);
     setRetrying(true);
     try {
-      await api.retryFailed(channelId);
+      await (sync.channel_id !== null ? api.retryFailed(sync.channel_id) : api.retryPlaylistFailed(sync.playlist_id));
     } catch (e) {
       setRetryError(errorText(e));
     } finally {
@@ -38,7 +38,7 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold tracking-tight">{sync.channel_name}</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{sync.source_name}</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {syncStatus[sync.status].label} · {when(sync)}
           {sync.new_videos > 0 && ` · ${plural(sync.new_videos, "new video")}`}
@@ -74,7 +74,7 @@ export function SyncPage({ syncId, syncs }: { syncId: number; syncs: Sync[] | nu
           variant="outline"
           size="sm"
           disabled={retrying}
-          onClick={() => void retryFailed(sync.channel_id)}
+          onClick={() => void retryFailed(sync)}
         >
           Retry failed videos
         </Button>

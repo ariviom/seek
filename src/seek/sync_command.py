@@ -17,6 +17,7 @@ from seek.events import Events
 from seek.ports import Embedder, TranscriptSource
 from seek.sync_worker import SyncWorker
 from seek.syncs import Sync
+from seek.videos import Source
 
 # Loopback only: a proxy from the environment would never reach this machine's server.
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -130,7 +131,8 @@ async def _run_here(
     def enqueue(conn: sqlite3.Connection) -> list[Sync]:
         if channel is None:
             return syncs.enqueue_all(conn, reindex)
-        return [syncs.enqueue(conn, find_channel(channels.list_channels(conn), channel).id, reindex)]
+        found = find_channel(channels.list_channels(conn), channel)
+        return [syncs.enqueue(conn, Source("channel", found.id), reindex)]
 
     queued = await database.run(enqueue)
     if not queued:

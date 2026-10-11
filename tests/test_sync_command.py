@@ -24,6 +24,7 @@ from seek.app import create_app
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from seek.sync_command import SyncCommandError, sync_channels
+from seek.videos import Source
 
 
 def with_videos(transcripts: FakeTranscriptSource, gate: Gate | None = None) -> FakeTranscriptSource:
@@ -61,7 +62,7 @@ async def test_seek_sync_hands_the_syncs_to_the_running_server(
         finished = await wait_for_syncs(client)
 
     assert report.server_url == url
-    assert [(s.channel_name, s.status) for s in report.syncs] == [("Wood By Wright", "queued"), ("Rex Krueger", "queued")]
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Wood By Wright", "queued"), ("Rex Krueger", "queued")]
     assert [(s["id"], s["status"]) for s in finished] == [(s.id, "done") for s in reversed(report.syncs)]
     # The server's models did the work; this process loaded none and called nothing.
     assert cli_embedder.status().state == "waiting"
@@ -107,8 +108,8 @@ async def test_seek_sync_hands_one_channel_to_the_running_server_by_its_youtube_
         finished = await wait_for_syncs(client)
 
     assert report.server_url == url
-    assert [(s.channel_name, s.status) for s in report.syncs] == [("Rex Krueger", "queued")]
-    assert [(s["channel_name"], s["status"]) for s in finished] == [("Rex Krueger", "done")]
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Rex Krueger", "queued")]
+    assert [(s["source_name"], s["status"]) for s in finished] == [("Rex Krueger", "done")]
     assert fetched(transcripts) == ["v-rex"]
 
 
@@ -127,8 +128,8 @@ async def test_seek_sync_hands_one_channel_to_the_running_server_by_its_name(
         finished = await wait_for_syncs(client)
 
     assert report.server_url == url
-    assert [(s.channel_name, s.status) for s in report.syncs] == [("Rex Krueger", "queued")]
-    assert [(s["channel_name"], s["status"]) for s in finished] == [("Rex Krueger", "done")]
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Rex Krueger", "queued")]
+    assert [(s["source_name"], s["status"]) for s in finished] == [("Rex Krueger", "done")]
     assert fetched(transcripts) == ["v-rex"]
 
 
@@ -141,7 +142,7 @@ async def test_seek_sync_runs_a_channel_named_by_its_name_itself_when_no_server_
     report = await sync_channels(replace(config, port=free_port()), "rex krueger", cli_source, FakeEmbedder())
 
     assert report.server_url is None
-    assert [(s.channel_name, s.status, s.new_videos) for s in report.syncs] == [("Rex Krueger", "done", 1)]
+    assert [(s.source_name, s.status, s.new_videos) for s in report.syncs] == [("Rex Krueger", "done", 1)]
     assert fetched(cli_source) == ["v-rex"]
 
 
@@ -154,7 +155,7 @@ async def test_seek_sync_runs_a_channel_named_by_its_youtube_channel_id_itself_w
     report = await sync_channels(replace(config, port=free_port()), "UC-rex", cli_source, FakeEmbedder())
 
     assert report.server_url is None
-    assert [(s.channel_name, s.status, s.new_videos) for s in report.syncs] == [("Rex Krueger", "done", 1)]
+    assert [(s.source_name, s.status, s.new_videos) for s in report.syncs] == [("Rex Krueger", "done", 1)]
     assert fetched(cli_source) == ["v-rex"]
 
 
@@ -192,7 +193,7 @@ async def test_seek_sync_and_a_server_starting_meanwhile_never_both_run_syncs(
 
     assert response.status_code == 202
     assert server_calls_while_cli_ran == []
-    assert [(s.channel_name, s.status) for s in report.syncs] == [("Wood By Wright", "done"), ("Rex Krueger", "done")]
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Wood By Wright", "done"), ("Rex Krueger", "done")]
     assert all(s["status"] == "done" for s in finished)
     assert sorted(fetched(cli_source) + fetched(server_source)) == ["v-rex", "v-wright"]
 
@@ -217,7 +218,7 @@ async def test_a_second_seek_sync_waits_for_its_own_channel_while_the_first_runs
     assert await asyncio.to_thread(second_queued.wait, 5)
     # Another Sync of Wright, queued behind Rex, finds a new Video that holds the first command.
     fake_channel(first_source, "UC-wright").videos.append(fake_video("v-wright-2", "Wright two", before_fetch=later_gate))
-    await db.Database(config.database_path).run(lambda conn: syncs.enqueue(conn, 1))
+    await db.Database(config.database_path).run(lambda conn: syncs.enqueue(conn, Source("channel", 1)))
     first_gate.released.set()
     await later_gate.wait_entered()
     second_report = await asyncio.wait_for(second, 5)
@@ -225,7 +226,7 @@ async def test_a_second_seek_sync_waits_for_its_own_channel_while_the_first_runs
     first_report = await asyncio.wait_for(first, 5)
 
     assert second_report.server_url is None
-    assert [(s.channel_name, s.status) for s in second_report.syncs] == [("Rex Krueger", "done")]
+    assert [(s.source_name, s.status) for s in second_report.syncs] == [("Rex Krueger", "done")]
     assert second_report.syncs[0].id == first_report.syncs[1].id
     assert second_source.calls == []
     assert fetched(first_source) == ["v-wright", "v-rex", "v-wright-2"]

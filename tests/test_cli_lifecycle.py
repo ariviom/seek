@@ -132,7 +132,7 @@ async def test_sync_commands_off_linux_queue_work_on_the_foreground_server_witho
         finished = await wait_for_syncs(client)
 
     assert "Queued on the server at" in capsys.readouterr().out
-    assert [(s["channel_name"], s["status"]) for s in finished] == [("Wood By Wright", "done")]
+    assert [(s["source_name"], s["status"]) for s in finished] == [("Wood By Wright", "done")]
 
 
 def test_startup_preserves_existing_config_and_database(

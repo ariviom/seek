@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import sqlite_vec
-from harness import running
+from harness import Gate, running
 
 from seek import db
 from seek.app import create_app
@@ -19,6 +19,7 @@ SCHEMA_16 = 16
 SCHEMA_17 = 17
 SCHEMA_18 = 18
 SCHEMA_19 = 19
+SCHEMA_20 = 20
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -308,6 +309,96 @@ def test_migration_20_puts_every_existing_channel_in_the_library(tmp_path: Path)
     conn.close()
 
 
+SYNC_COLUMNS = (
+    "id, channel_id, status, error, queued_at, started_at, finished_at, new_videos, stage_counts, retry_failed, "
+    "reindex, completed_videos, failed_videos, remaining_videos, counted_from"
+)
+
+
+async def test_migration_21_adds_playlists_and_lets_a_sync_belong_to_one_keeping_every_sync_and_index(
+    config: Config, tmp_path: Path
+) -> None:
+    conn = db.connect(config.database_path)
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_20])
+        db.migrate(conn)
+    conn.executescript(
+        f"""
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO syncs ({SYNC_COLUMNS})
+            VALUES (4, 3, 'failed', 'Interrupted', '2025-01-01T00:00:00+00:00', '2025-01-02T00:00:00+00:00',
+                    '2025-01-03T00:00:00+00:00', 5, '{{"done": 2}}', 1, 1, 3, 1, 2, 1),
+                   (6, 3, 'queued', NULL, '2025-01-04T00:00:00+00:00', NULL, NULL, 0, '{{}}', 0, 0, 0, 0, 0, 0);
+        INSERT INTO videos (id, channel_id, youtube_video_id, title, pipeline_stage, discovered_at, completed_by_sync_id)
+            VALUES (11, 3, 'v-wright', 'Sharpening chisels', 'done', '2025-01-01T00:00:00+00:00', 4);
+        """
+    )
+    before = [tuple(row) for row in conn.execute(f"SELECT {SYNC_COLUMNS} FROM syncs ORDER BY id")]
+    conn.close()
+    # The embedding model never loads, so the queued Sync is listed as it was migrated rather than run.
+    app = create_app(
+        config,
+        FakeTranscriptSource(),
+        FakeEmbedder(before_load=Gate()),
+        FakeReranker(),
+        FakeChatEngine(),
+        static_dir=tmp_path / "no-bundle",
+    )
+
+    async with running(app) as client:
+        listed = (await client.get("/api/syncs")).json()
+
+    assert [(s["id"], s["channel_id"], s["playlist_id"], s["source_name"], s["status"]) for s in listed] == [
+        (6, 3, None, "Wood By Wright", "queued"),
+        (4, 3, None, "Wood By Wright", "failed"),
+    ]
+    conn = db.connect(config.database_path)
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert [tuple(row) for row in conn.execute(f"SELECT {SYNC_COLUMNS} FROM syncs ORDER BY id")] == before
+    assert [tuple(row) for row in conn.execute("SELECT id, completed_by_sync_id FROM videos")] == [(11, 4)]
+    indexes = conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'syncs'")
+    assert {row["name"] for row in indexes} == {
+        "syncs_channel_id",
+        "syncs_playlist_id",
+        "syncs_status",
+        "syncs_one_queued_per_channel",
+        "syncs_one_queued_per_playlist",
+    }
+    conn.executescript(
+        """
+        INSERT INTO playlists (id, youtube_playlist_id, name) VALUES (2, 'PL-sharpening', 'Sharpening');
+        INSERT INTO playlist_videos (playlist_id, video_id, position) VALUES (2, 11, 0);
+        INSERT INTO syncs (id, playlist_id, status, queued_at, stage_counts) VALUES (7, 2, 'queued', '2025-01-05', '{}');
+        """
+    )
+    assert tuple(conn.execute("SELECT indexed, check_every_hours FROM playlists").fetchone()) == (1, 24)
+    refused = [
+        # A Sync belongs to exactly one Channel or one Playlist.
+        "INSERT INTO syncs (channel_id, playlist_id, status, queued_at, stage_counts) VALUES (3, 2, 'done', '', '{}')",
+        "INSERT INTO syncs (status, queued_at, stage_counts) VALUES ('done', '', '{}')",
+        # Each has at most one queued.
+        "INSERT INTO syncs (channel_id, status, queued_at, stage_counts) VALUES (3, 'queued', '', '{}')",
+        "INSERT INTO syncs (playlist_id, status, queued_at, stage_counts) VALUES (2, 'queued', '', '{}')",
+        # A playlist is added once, and no two Playlists share a name, whatever its case.
+        "INSERT INTO playlists (youtube_playlist_id, name) VALUES ('PL-sharpening', 'Again')",
+        "INSERT INTO playlists (youtube_playlist_id, name) VALUES ('PL-other', 'SHARPENING')",
+        "INSERT INTO playlists (youtube_playlist_id, name, check_every_hours) VALUES ('PL-other', 'Other', 5)",
+        "INSERT INTO playlist_videos (playlist_id, video_id, position) VALUES (2, 11, 1)",
+    ]
+    for statement in refused:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(statement)
+    # A Video forgets the Sync that finished it when that Sync goes, and a Sync goes with what it ingested.
+    conn.execute("DELETE FROM syncs WHERE id = 4")
+    assert conn.execute("SELECT completed_by_sync_id FROM videos").fetchone()[0] is None
+    conn.execute("DELETE FROM playlists WHERE id = 2")
+    assert [row["id"] for row in conn.execute("SELECT id FROM syncs")] == [6]
+    assert conn.execute("SELECT count(*) FROM playlist_videos").fetchone()[0] == 0
+    conn.execute("DELETE FROM channels WHERE id = 3")
+    assert conn.execute("SELECT count(*) FROM syncs").fetchone()[0] == 0
+    conn.close()
+
+
 def test_a_fresh_knowledge_base_runs_every_migration(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "seek.db")
 
@@ -315,6 +406,7 @@ def test_a_fresh_knowledge_base_runs_every_migration(tmp_path: Path) -> None:
 
     assert user_version(conn) == len(db.MIGRATIONS)
     assert {"channels", "groups", "group_channels", "conversations", "messages", "videos", "syncs"} <= tables(conn)
+    assert {"playlists", "playlist_videos"} <= tables(conn)
     assert "mentors" not in tables(conn)
     assert foreign_keys_on(conn)
     conn.close()

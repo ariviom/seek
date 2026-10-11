@@ -402,8 +402,9 @@ def _read_database(path: Path) -> _Stored | str:
             stored.failed_syncs = [
                 f"Sync of {row['name']} at {row['finished_at']}: {row['error']}"
                 for row in conn.execute(
-                    "SELECT channels.name, syncs.finished_at, syncs.error FROM syncs "
-                    "JOIN channels ON channels.id = syncs.channel_id WHERE syncs.status = 'failed' "
+                    "SELECT coalesce(channels.name, playlists.name) AS name, syncs.finished_at, syncs.error "
+                    "FROM syncs LEFT JOIN channels ON channels.id = syncs.channel_id "
+                    "LEFT JOIN playlists ON playlists.id = syncs.playlist_id WHERE syncs.status = 'failed' "
                     "ORDER BY syncs.id DESC LIMIT ?",
                     (RECENT,),
                 )

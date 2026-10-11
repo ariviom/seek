@@ -6,16 +6,19 @@ from harness import (
     Gate,
     Json,
     add_channel,
+    add_playlist,
     event_stream,
     fake_channel,
     fake_video,
+    list_playlist_videos,
     running,
+    start_playlist_sync,
     start_sync,
 )
 
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import VideoUnavailable
 
 NO_COUNTS = {
@@ -113,6 +116,39 @@ async def test_failures_and_retry_failed_stream_over_events(
     assert retried[0] == {"type": "videos", "channel_id": channel_id}
     assert syncs_in(retried)[0] == retry.json()
     assert stages_of(retried, "Live Q&A")[-1] == "done"
+
+
+async def test_a_playlists_sync_and_its_retry_of_failed_videos_stream_under_the_playlist(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    live = fake_video("v-live", "Live Q&A", failure=VideoUnavailable("Premieres in 3 days", permanent=False))
+    members = fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only Video", permanent=True))
+    fake_channel(transcripts, "UC-rex").videos += [live, members]
+    transcripts.playlists["PL-rex"] = FakePlaylist("Rex picks", [("UC-rex", "v-live"), ("UC-rex", "v-members")])
+    app = make_app(config, transcripts, tmp_path)
+
+    async with running(app) as client, event_stream(app) as stream:
+        playlist = await add_playlist(client, "PL-rex")
+        playlist_id = playlist["id"]
+        await start_playlist_sync(client, playlist_id)
+        first_sync = await stream.until(sync_status("done"))
+        live.failure = members.failure = None
+        retry = await client.post(f"/api/playlists/{playlist_id}/retry-failed")
+        retried = await stream.until(sync_status("done"))
+        videos = await list_playlist_videos(client, playlist_id)
+
+    assert {"type": "videos", "playlist_id": playlist_id} in first_sync
+    changed = [e for e in first_sync if e["type"] == "video"]
+    assert [e["video"]["stage"] for e in changed] == ["failed", "failed"]
+    assert all(e["playlist_id"] == playlist_id and "channel_id" not in e for e in changed)
+    assert syncs_in(first_sync)[-1]["stage_counts"] == NO_COUNTS | {"failed": 2}
+    # The retry takes the permanent failure too, as a Channel's does.
+    assert retry.status_code == 202
+    assert retried[0] == {"type": "videos", "playlist_id": playlist_id}
+    assert syncs_in(retried)[0] == retry.json()
+    assert (retry.json()["playlist_id"], retry.json()["stage_counts"]) == (playlist_id, NO_COUNTS | {"discovered": 2})
+    assert [v["stage"] for v in videos] == ["done", "done"]
+    assert syncs_in(retried)[-1]["completed_videos"] == 2
 
 
 async def test_the_event_stream_is_proxy_safe(

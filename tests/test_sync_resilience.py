@@ -9,6 +9,7 @@ import pytest
 from harness import (
     Gate,
     add_channel,
+    add_playlist,
     fake_channel,
     fake_video,
     fetched,
@@ -21,7 +22,7 @@ from harness import (
 from seek import db, syncs
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import GpuOutOfMemory, ModelUnavailable, VideoUnavailable
 
 
@@ -229,6 +230,7 @@ async def test_a_refused_caption_fetch_fails_its_video_alone_and_a_run_of_them_s
     # One refusal fails one Video; the Sync goes on until three in a row show YouTube is blocking this machine.
     assert stopped["status"] == "failed"
     assert "3 Videos in a row were refused" in stopped["error"]
+    assert "the Channel's remaining Videos wait" in stopped["error"]
     assert {t: v["stage"] for t, v in after.items()} == {
         "One": "failed",
         "Two": "done",
@@ -368,6 +370,33 @@ async def test_a_sync_resumed_after_a_restart_keeps_its_completed_videos_and_mea
     assert resumed["started_at"] >= interrupted["started_at"]
     assert (finished["status"], finished["completed_videos"], finished["failed_videos"]) == ("done", 4, 0)
     assert [v["stage"] for v in videos.values()] == ["done"] * 4
+
+
+@pytest.mark.parametrize("kind", ["channels", "playlists"])
+async def test_a_sync_interrupted_with_a_newer_one_queued_behind_it_gives_way_to_that_one_after_a_restart(
+    kind: str, config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    held = Gate()
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-one", "One", before_fetch=held))
+    transcripts.playlists["PL-one"] = FakePlaylist("One", [("UC-wright", "v-one")])
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        added = await (add_channel(client, "@woodbywright") if kind == "channels" else add_playlist(client, "PL-one"))
+        interrupted = (await client.post(f"/api/{kind}/{added['id']}/syncs")).json()
+        await held.wait_entered()
+        newer = (await client.post(f"/api/{kind}/{added['id']}/syncs")).json()
+    held.released.set()
+
+    async with running(create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle")) as client:
+        after_restart = await wait_for_syncs(client)
+
+    # Requeuing the interrupted Sync beside the newer one would break the rule of one queued Sync for each
+    # Channel or Playlist, and no Sync could be claimed again.
+    assert newer["id"] != interrupted["id"]
+    assert [(s["id"], s["status"], s["error"]) for s in after_restart] == [
+        (newer["id"], "done", None),
+        (interrupted["id"], "failed", "Interrupted"),
+    ]
 
 
 async def test_a_failed_video_is_completed_work_that_leaves_nothing_to_search_and_retrying_it_counts_only_it(

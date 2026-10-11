@@ -4,8 +4,9 @@ import type { Models, Sync, Video } from "@/lib/api";
 export type ServerEvent =
   | { type: "ready" }
   | { type: "sync"; sync: Sync }
-  | { type: "video"; channel_id: number; video: Video }
-  | { type: "videos"; channel_id: number }
+  // A Video event names the Channel or the Playlist whose Sync or retry caused it, never both.
+  | { type: "video"; channel_id?: number; playlist_id?: number; video: Video }
+  | { type: "videos"; channel_id?: number; playlist_id?: number }
   | { type: "syncs" }
   | { type: "models"; models: Models }
   | { type: "settings" }

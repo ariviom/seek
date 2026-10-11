@@ -2,16 +2,24 @@
 
 import json
 import sqlite3
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Literal
 
-from seek import storyboards
+from seek import channels, storyboards
 from seek.db import now_iso, transaction
 from seek.errors import NotFound
 from seek.channels import ChannelFilters
-from seek.ports import Chapter, Transcript, VideoDetails, VideoListing, VideoUnavailable
+from seek.ports import (
+    ChannelInfo,
+    Chapter,
+    PlaylistEntry,
+    Transcript,
+    VideoDetails,
+    VideoListing,
+    VideoUnavailable,
+)
 
 type PipelineStage = Literal["discovered", "transcript_fetched", "segmented", "embedded", "done"]
 type Stage = PipelineStage | Literal["failed", "excluded"]
@@ -53,6 +61,26 @@ class PendingVideo:
     youtube_video_id: str
     title: str
     pipeline_stage: PipelineStage
+
+
+@dataclass(frozen=True)
+class Source:
+    """What a Sync ingests: a Channel's Videos, or the Videos a Playlist includes."""
+
+    kind: Literal["channel", "playlist"]
+    id: int
+
+    @property
+    def column(self) -> str:
+        """The column that holds this source's id, on a Sync and on an event about it."""
+        return f"{self.kind}_id"
+
+
+def _of(source: Source, parameter: str = "?") -> str:
+    """The condition on videos that picks the source's, with its id as the parameter."""
+    if source.kind == "channel":
+        return f"videos.channel_id = {parameter}"
+    return f"videos.id IN (SELECT video_id FROM playlist_videos WHERE playlist_id = {parameter})"
 
 
 def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
@@ -112,6 +140,37 @@ def list_channel_videos(conn: sqlite3.Connection, channel_id: int) -> list[Video
     return [_video(row) for row in rows]
 
 
+@dataclass(frozen=True)
+class PlaylistVideo(Video):
+    """A Video as a Playlist lists it: under the Channel that made it, which may be outside the Library."""
+
+    channel_id: int
+    channel_name: str
+
+
+def list_playlist_videos(conn: sqlite3.Connection, playlist_id: int) -> list[PlaylistVideo]:
+    """The Playlist's Videos, in the playlist's order on YouTube."""
+    if conn.execute("SELECT 1 FROM playlists WHERE id = ?", (playlist_id,)).fetchone() is None:
+        raise NotFound(f"Playlist {playlist_id} not found")
+    rows = conn.execute(
+        f"""
+        SELECT videos.*, {_STAGE_SQL} AS stage, transcripts.source AS transcript_source,
+               channels.name AS channel_name
+        FROM playlist_videos
+        JOIN videos ON videos.id = playlist_videos.video_id
+        JOIN channels ON channels.id = videos.channel_id
+        LEFT JOIN transcripts ON transcripts.video_id = videos.id
+        WHERE playlist_videos.playlist_id = ?
+        ORDER BY playlist_videos.position
+        """,
+        (playlist_id,),
+    )
+    return [
+        PlaylistVideo(**vars(_video(row)), channel_id=row["channel_id"], channel_name=row["channel_name"])
+        for row in rows
+    ]
+
+
 def get_video(conn: sqlite3.Connection, video_id: int) -> Video | None:
     row = conn.execute(f"{_VIDEO_SQL} WHERE videos.id = ?", (video_id,)).fetchone()
     return None if row is None else _video(row)
@@ -127,7 +186,7 @@ class SyncCounts:
 
 
 def sync_counts(
-    conn: sqlite3.Connection, sync_id: int, channel_id: int, queue: Collection[int] | None = None
+    conn: sqlite3.Connection, sync_id: int, source: Source, queue: Collection[int] | None = None
 ) -> SyncCounts:
     """The Videos this Sync has finished with, of those the ones that failed, and the ones it has yet to reach.
 
@@ -141,7 +200,7 @@ def sync_counts(
     already, excluded, or permanently failed and not retried here -- are on neither side.
     """
     row = conn.execute(
-        """
+        f"""
         SELECT
             count(*) FILTER (WHERE finished) AS completed,
             count(*) FILTER (WHERE finished AND failure_stage IS NOT NULL) AS failed,
@@ -155,10 +214,10 @@ def sync_counts(
             SELECT id, pipeline_stage, failure_stage, failure_permanent,
                    completed_by_sync_id IS ?1 AND (pipeline_stage = 'done' OR failure_stage IS NOT NULL)
                        AS finished
-            FROM videos WHERE channel_id = ?3 AND excluded_reason IS NULL
+            FROM videos WHERE {_of(source, "?3")} AND excluded_reason IS NULL
         )
         """,
-        (sync_id, None if queue is None else json.dumps(list(queue)), channel_id),
+        (sync_id, None if queue is None else json.dumps(list(queue)), source.id),
     )
     counts = row.fetchone()
     return SyncCounts(counts["completed"], counts["failed"], counts["remaining"])
@@ -169,9 +228,9 @@ def mark_completed(conn: sqlite3.Connection, video_id: int, sync_id: int) -> Non
     conn.execute("UPDATE videos SET completed_by_sync_id = ? WHERE id = ?", (sync_id, video_id))
 
 
-def stage_counts(conn: sqlite3.Connection, channel_id: int) -> dict[str, int]:
+def stage_counts(conn: sqlite3.Connection, source: Source) -> dict[str, int]:
     rows = conn.execute(
-        f"SELECT {_STAGE_SQL} AS stage, count(*) AS n FROM videos WHERE channel_id = ? GROUP BY stage", (channel_id,)
+        f"SELECT {_STAGE_SQL} AS stage, count(*) AS n FROM videos WHERE {_of(source)} GROUP BY stage", (source.id,)
     )
     return {stage: 0 for stage in STAGES} | {row["stage"]: row["n"] for row in rows}
 
@@ -190,7 +249,7 @@ def record_discovery(
     Videos are new, or None if the Sync is gone.
     """
     with transaction(conn):
-        if not _sync_exists(conn, sync_id, channel_id):
+        if not _sync_exists(conn, sync_id, Source("channel", channel_id)):
             return None
         count = "SELECT count(*) FROM videos WHERE channel_id = ?"
         (before,) = conn.execute(count, (channel_id,)).fetchone()
@@ -232,15 +291,68 @@ def reapply_exclusions(
 ) -> bool:
     """Re-applies the rules with what the Sync has learned since discovery; False if the Sync is gone."""
     with transaction(conn):
-        if not _sync_exists(conn, sync_id, channel_id):
+        if not _sync_exists(conn, sync_id, Source("channel", channel_id)):
             return False
         _apply_exclusions(conn, channel_id, listings, playlist_video_ids, rules)
         return True
 
 
-def _sync_exists(conn: sqlite3.Connection, sync_id: int, channel_id: int) -> bool:
-    # Checked rather than the Channel, because a deleted Channel's id can be reused by a new Channel.
-    return conn.execute("SELECT 1 FROM syncs WHERE id = ? AND channel_id = ?", (sync_id, channel_id)).fetchone() is not None
+def record_playlist_discovery(
+    conn: sqlite3.Connection,
+    sync_id: int,
+    playlist_id: int,
+    entries: Sequence[PlaylistEntry],
+    avatars: Mapping[str, str | None],
+    rules: ExclusionRules,
+) -> int | None:
+    """Records the playlist's listing: a creator not yet known becomes a Channel outside the Library, a Video not
+    yet known is credited to its creator and judged by the rules, and the Playlist includes each Video at its
+    place in the listing. A Video already known, such as one a Library Channel has ingested, is left as it is.
+
+    `avatars` holds the avatar of each creator that may be new, by YouTube channel id. Returns how many Videos
+    are new to the Playlist, or None if the Sync is gone.
+    """
+    with transaction(conn):
+        if not _sync_exists(conn, sync_id, Source("playlist", playlist_id)):
+            return None
+        count = "SELECT count(*) FROM playlist_videos WHERE playlist_id = ?"
+        (before,) = conn.execute(count, (playlist_id,)).fetchone()
+        discovered_at = now_iso()
+        for position, entry in enumerate(entries):
+            row = conn.execute("SELECT id FROM videos WHERE youtube_video_id = ?", (entry.video_id,)).fetchone()
+            if row is None:
+                creator = ChannelInfo(entry.channel_id, entry.channel_name, avatars.get(entry.channel_id))
+                row = conn.execute(
+                    """
+                    INSERT INTO videos (channel_id, youtube_video_id, title, duration_seconds, excluded_reason,
+                                        discovered_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                    """,
+                    (
+                        channels.credited_channel(conn, creator),
+                        entry.video_id,
+                        entry.title,
+                        entry.duration_seconds,
+                        _exclusion(rules, entry.duration_seconds, None),
+                        discovered_at,
+                    ),
+                ).fetchone()
+            conn.execute(
+                """
+                INSERT INTO playlist_videos (playlist_id, video_id, position) VALUES (?, ?, ?)
+                ON CONFLICT (playlist_id, video_id) DO UPDATE SET position = excluded.position
+                """,
+                (playlist_id, row["id"], position),
+            )
+        (after,) = conn.execute(count, (playlist_id,)).fetchone()
+        return int(after - before)
+
+
+def _sync_exists(conn: sqlite3.Connection, sync_id: int, source: Source) -> bool:
+    # A Sync goes with its Channel or Playlist, so this is how either is found to have been deleted meanwhile.
+    found = conn.execute(f"SELECT 1 FROM syncs WHERE id = ? AND {source.column} = ?", (sync_id, source.id))
+    return found.fetchone() is not None
 
 
 def _apply_exclusions(
@@ -300,16 +412,16 @@ def youtube_ids(conn: sqlite3.Connection, channel_id: int) -> set[str]:
     return {row["youtube_video_id"] for row in rows}
 
 
-def pending_videos(conn: sqlite3.Connection, channel_id: int) -> list[PendingVideo]:
+def pending_videos(conn: sqlite3.Connection, source: Source) -> list[PendingVideo]:
     """Videos a Sync should advance: not done, not excluded, and not permanently failed."""
     rows = conn.execute(
-        """
+        f"""
         SELECT id, youtube_video_id, title, pipeline_stage FROM videos
-        WHERE channel_id = ? AND pipeline_stage != 'done' AND excluded_reason IS NULL
+        WHERE {_of(source)} AND pipeline_stage != 'done' AND excluded_reason IS NULL
           AND (failure_stage IS NULL OR failure_permanent = 0)
         ORDER BY id
         """,
-        (channel_id,),
+        (source.id,),
     )
     return [PendingVideo(row["id"], row["youtube_video_id"], row["title"], row["pipeline_stage"]) for row in rows]
 
@@ -414,16 +526,16 @@ def record_failure(
         return cursor.rowcount == 1
 
 
-def step_back_for_reindex(conn: sqlite3.Connection, channel_id: int) -> None:
-    """Within a transaction: every segmented, embedded, or done Video of the Channel goes back to
+def step_back_for_reindex(conn: sqlite3.Connection, source: Source) -> None:
+    """Within a transaction: every segmented, embedded, or done Video of the source goes back to
     transcript_fetched, so the Sync cuts and embeds it again from its stored Transcript. Its Segments stay until
     they are replaced, but leave search at once, since only a done Video's are searchable."""
     conn.execute(
-        """
+        f"""
         UPDATE videos SET pipeline_stage = 'transcript_fetched'
-        WHERE channel_id = ? AND pipeline_stage IN ('segmented', 'embedded', 'done')
+        WHERE {_of(source)} AND pipeline_stage IN ('segmented', 'embedded', 'done')
         """,
-        (channel_id,),
+        (source.id,),
     )
 
 
@@ -440,12 +552,12 @@ def clear_failure(conn: sqlite3.Connection, video_id: int) -> int:
     return int(row["channel_id"])
 
 
-def clear_failures(conn: sqlite3.Connection, channel_id: int) -> None:
-    """Within a transaction: every failed Video of the Channel resumes from its last completed stage."""
+def clear_failures(conn: sqlite3.Connection, source: Source) -> None:
+    """Within a transaction: every failed Video of the source resumes from its last completed stage."""
     conn.execute(
-        """
+        f"""
         UPDATE videos SET failure_stage = NULL, failure_reason = NULL, failure_permanent = NULL
-        WHERE channel_id = ? AND failure_stage IS NOT NULL
+        WHERE {_of(source)} AND failure_stage IS NOT NULL
         """,
-        (channel_id,),
+        (source.id,),
     )

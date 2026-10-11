@@ -4,7 +4,8 @@ import logging
 import sqlite3
 import time
 import uuid
-from dataclasses import replace
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass, replace
 
 from seek import channels, segments, syncs, videos
 from seek.db import Database
@@ -17,6 +18,7 @@ from seek.ports import (
     PlaylistNotFound,
     SourceUnavailable,
     TranscriptSource,
+    VideoListing,
     VideoUnavailable,
 )
 from seek.syncs import ClaimedSync, Sync
@@ -28,6 +30,16 @@ log = logging.getLogger(__name__)
 LEASE_SECONDS = 20.0
 # Videos in a row the source may refuse before the Sync stops: YouTube is blocking this machine, not one Video.
 THROTTLE_LIMIT = 3
+
+
+@dataclass(frozen=True)
+class _Discovery:
+    """What a Sync's listing found: how many Videos are new to its source, and what a Channel's most-recent filter
+    needs to judge its Videos again."""
+
+    new_videos: int
+    listings: Sequence[VideoListing] = ()
+    playlist_video_ids: Collection[str] | None = None
 
 
 class SyncWorker:
@@ -136,8 +148,8 @@ class SyncWorker:
                 return
 
     async def _run_sync(self, sync: ClaimedSync) -> None:
-        # Returning without finishing is deliberate in two cases: the Channel was deleted (its Sync went with
-        # it), or the lease was lost (the next holder requeues the Sync).
+        # Returning without finishing is deliberate in two cases: the Channel or Playlist was deleted (its Sync went
+        # with it), or the lease was lost (the next holder requeues the Sync).
         rules = ExclusionRules(self._min_duration_seconds, sync.filters)
         self._throttled_videos = 0
         self._queue = None
@@ -149,41 +161,19 @@ class SyncWorker:
                 # Not worth any YouTube calls: no Video could be embedded.
                 raise ModelUnavailable(model.error or f"The embedding model {model.name} failed to load")
             if sync.retry_failed:
-                self._events.videos(sync.channel_id)
-            playlist_video_ids = None
-            if sync.filters.playlist_id is not None:
-                playlist_video_ids = set(
-                    await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id)
-                )
-            # A listing may stop at the Videos already known once a Sync has completed, unless the most-recent
-            # filter needs the whole order or a retry wants everything looked at again.
-            known: set[str] = set()
-            if sync.filters.most_recent is None and not sync.retry_failed:
-                known = await self._database.run(
-                    lambda conn: (
-                        videos.youtube_ids(conn, sync.channel_id)
-                        if syncs.completed_before(conn, sync.channel_id)
-                        else set()
-                    )
-                )
-            listing = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_channel_id, known)
-            listings = listing.videos
-            # The listing's extraction carries the avatar, so a Channel added before avatars were kept fills in here.
-            if (avatar := listing.avatar_url) is not None:
-                await self._database.run(lambda conn: channels.set_avatar(conn, sync.channel_id, avatar))
-            new_videos = await self._database.run(
-                lambda conn: videos.record_discovery(
-                    conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules
-                )
-            )
-            if new_videos is None:
+                self._events.videos(sync.source)
+            if sync.source.kind == "playlist":
+                discovery = await self._discover_playlist(sync, rules)
+            else:
+                discovery = await self._discover_channel(sync, rules)
+            if discovery is None:
                 return
-            self._events.videos(sync.channel_id)
-            if not await self._progress(sync, new_videos):
+            self._events.videos(sync.source)
+            if not await self._progress(sync, discovery.new_videos):
                 return
             attempted: set[int] = set()
             while True:
-                pending = await self._database.run(lambda conn: videos.pending_videos(conn, sync.channel_id))
+                pending = await self._database.run(lambda conn: videos.pending_videos(conn, sync.source))
                 pending = [video for video in pending if video.id not in attempted]
                 if not pending:
                     self._queue = []
@@ -199,17 +189,20 @@ class SyncWorker:
                 # A Video excluded only once its details arrived frees a place among the most recent N.
                 if not await self._database.run(
                     lambda conn: videos.reapply_exclusions(
-                        conn, sync.id, sync.channel_id, listings, playlist_video_ids, rules
+                        conn, sync.id, sync.source.id, discovery.listings, discovery.playlist_video_ids, rules
                     )
                 ):
                     return
-                self._events.videos(sync.channel_id)
+                self._events.videos(sync.source)
         except _Throttled as e:
-            error: str | None = str(e)
+            error: str | None = (
+                f"{e}. {THROTTLE_LIMIT} Videos in a row were refused, so the Sync stopped; the "
+                f"{sync.source.kind.capitalize()}'s remaining Videos wait for the next Sync"
+            )
             wait = self._cooldown_seconds * 2**self._throttled_syncs
             self._throttled_syncs += 1
             self._cooldown_until = time.monotonic() + wait
-            log.warning("Sync %s stopped: %s; no Sync runs for the next %.0f s", sync.id, e, wait)
+            log.warning("Sync %s stopped: %s; no Sync runs for the next %.0f s", sync.id, error, wait)
         except (ChannelNotFound, PlaylistNotFound, SourceUnavailable, ModelUnavailable) as e:
             error = str(e)
         except Exception as e:
@@ -221,6 +214,61 @@ class SyncWorker:
         finished = await self._database.run(lambda conn: syncs.finish(conn, sync.id, error, self._queue))
         if finished is not None:
             self._events.sync(finished)
+
+    async def _discover_channel(self, sync: ClaimedSync, rules: ExclusionRules) -> _Discovery | None:
+        """Records the Channel's listing and judges its Videos by the rules; None if the Sync is gone."""
+        playlist_video_ids = None
+        if sync.filters.playlist_id is not None:
+            playlist = await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id)
+            playlist_video_ids = {entry.video_id for entry in playlist.entries}
+        # A listing may stop at the Videos already known once a Sync has completed, unless the most-recent
+        # filter needs the whole order or a retry wants everything looked at again.
+        known: set[str] = set()
+        if sync.filters.most_recent is None and not sync.retry_failed:
+            known = await self._database.run(
+                lambda conn: (
+                    videos.youtube_ids(conn, sync.source.id)
+                    if syncs.completed_before(conn, sync.source.id)
+                    else set()
+                )
+            )
+        listing = await asyncio.to_thread(self._transcripts.list_videos, sync.youtube_id, known)
+        listings = listing.videos
+        # The listing's extraction carries the avatar, so a Channel added before avatars were kept fills in here.
+        if (avatar := listing.avatar_url) is not None:
+            await self._database.run(lambda conn: channels.set_avatar(conn, sync.source.id, avatar))
+        new_videos = await self._database.run(
+            lambda conn: videos.record_discovery(conn, sync.id, sync.source.id, listings, playlist_video_ids, rules)
+        )
+        return None if new_videos is None else _Discovery(new_videos, listings, playlist_video_ids)
+
+    async def _discover_playlist(self, sync: ClaimedSync, rules: ExclusionRules) -> _Discovery | None:
+        """Records the playlist's listing, crediting each Video to its creator; None if the Sync is gone or the
+        lease was lost."""
+        listing = await asyncio.to_thread(self._transcripts.list_playlist, sync.youtube_id)
+        known = await self._database.run(channels.youtube_channel_ids)
+        avatars: dict[str, str | None] = {}
+        for creator in dict.fromkeys(entry.channel_id for entry in listing.entries):
+            if creator in known:
+                continue
+            if self._lease_lost:
+                return None
+            avatars[creator] = await asyncio.to_thread(self._avatar, creator)
+        new_videos = await self._database.run(
+            lambda conn: videos.record_playlist_discovery(
+                conn, sync.id, sync.source.id, listing.entries, avatars, rules
+            )
+        )
+        return None if new_videos is None else _Discovery(new_videos)
+
+    def _avatar(self, youtube_channel_id: str) -> str | None:
+        """A new creator's avatar, looked up at the Sync's pace so a playlist of many creators doesn't burst
+        requests. A lookup that fails leaves the creator on initials rather than stopping the Sync."""
+        try:
+            return self._transcripts.resolve_channel(youtube_channel_id, paced=True).avatar_url
+        except (ChannelNotFound, SourceUnavailable) as e:
+            log.warning("No avatar for the creator %s: %s", youtube_channel_id, e)
+            return None
 
     async def _progress(
         self,
@@ -243,7 +291,7 @@ class SyncWorker:
 
         updated, changed = await self._database.run(refresh)
         if changed is not None:
-            self._events.video(sync.channel_id, changed)
+            self._events.video(sync.source, changed)
         if updated is None:
             return False
         self._events.sync(replace(updated, fetching=fetching))
@@ -323,10 +371,7 @@ class SyncWorker:
                     outcome = await self._record_failure(rules, video, "transcript_fetched", failure)
                     if outcome == "gone":
                         return outcome
-                    raise _Throttled(
-                        f"{e.reason}. {THROTTLE_LIMIT} Videos in a row were refused, so the Sync stopped; the "
-                        "Channel's remaining Videos wait for the next Sync"
-                    ) from None
+                    raise _Throttled(e.reason) from None
             else:
                 self._throttled_videos = 0
         except SourceUnavailable:
@@ -353,4 +398,4 @@ class SyncWorker:
 
 
 class _Throttled(SourceUnavailable):
-    """The source refused THROTTLE_LIMIT Videos in a row."""
+    """The source refused THROTTLE_LIMIT Videos in a row; the message is the last refusal's reason."""

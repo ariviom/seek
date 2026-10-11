@@ -20,11 +20,15 @@ import yt_dlp
 from yt_dlp.networking.exceptions import HTTPError
 
 from seek.ports import (
+    PLAYLIST_MISSING_OR_PRIVATE,
     Chapter,
     ChannelInfo,
     ChannelListing,
     ChannelNotFound,
     Cue,
+    PlaylistEntry,
+    PlaylistInfo,
+    PlaylistListing,
     PlaylistNotFound,
     SourceUnavailable,
     Storyboard,
@@ -43,7 +47,10 @@ _HANDLE = re.compile(r"@[\w.-]{3,30}")
 # Legacy /c/ and /user/ channel names.
 _LEGACY_NAME = re.compile(r"[\w.-]{1,100}")
 
+_PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
 _NOT_A_CHANNEL = "Enter a YouTube channel URL (youtube.com/@handle or youtube.com/channel/UC…), an @handle, or a channel id"
+_NOT_A_PLAYLIST = "Enter a YouTube playlist URL (youtube.com/playlist?list=…) or a playlist id"
 _PO_TOKEN_FIX = (
     "YouTube wants a PO token; install the bgutil-ytdlp-pot-provider plugin "
     "(https://github.com/Brainicism/bgutil-ytdlp-pot-provider)"
@@ -128,11 +135,11 @@ class YouTubeTranscriptSource:
         self._session = threading.Lock()
         self._next_sync_call = 0.0
 
-    def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
+    def resolve_channel(self, url_or_handle: str, paced: bool = False) -> ChannelInfo:
         url = channel_url(url_or_handle)
         try:
             # process=False reads the channel's own metadata without listing a tab, so a Shorts-only Channel resolves.
-            info = self._call(lambda ydl, _: ydl.extract_info(url, download=False, process=False), sync=False)
+            info = self._call(lambda ydl, _: ydl.extract_info(url, download=False, process=False), sync=paced)
         except _Failed as failed:
             raise _channel_error(failed.error, url_or_handle) from None
         channel_id = info.get("channel_id")
@@ -165,14 +172,24 @@ class YouTubeTranscriptSource:
             merged.setdefault(listing.video_id, listing)
         return ChannelListing(videos=list(merged.values()), avatar_url=avatar)
 
-    def list_playlist(self, playlist_id: str) -> Sequence[str]:
+    def resolve_playlist(self, url_or_id: str) -> PlaylistInfo:
+        listed_id = playlist_id(url_or_id)
+        listing = self._list_playlist(listed_id, sync=False)
+        return PlaylistInfo(playlist_id=listed_id, title=listing.title, video_count=len(listing.entries))
+
+    def list_playlist(self, playlist_id: str) -> PlaylistListing:
+        return self._list_playlist(playlist_id, sync=True)
+
+    def _list_playlist(self, playlist_id: str, sync: bool) -> PlaylistListing:
+        url = f"{_YOUTUBE}/playlist?list={playlist_id}"
         try:
-            entries = self._call(_flat_entries(f"{_YOUTUBE}/playlist?list={playlist_id}"), sync=True)
+            return self._call(
+                lambda ydl, _: playlist_listing(ydl.sanitize_info(ydl.extract_info(url, download=False))), sync=sync
+            )
         except _Failed as failed:
             if _is_missing(failed.error):
-                raise PlaylistNotFound(f"YouTube playlist {playlist_id} can't be listed: {failed.error.message}") from None
+                raise PlaylistNotFound(PLAYLIST_MISSING_OR_PRIVATE) from None
             raise SourceUnavailable(failed.error.message) from None
-        return [entry["id"] for entry in entries if entry.get("id")]
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         url = f"{_YOUTUBE}/watch?v={video_id}"
@@ -277,13 +294,6 @@ class YouTubeTranscriptSource:
             log.warning("%s; retrying in %s s", error.message, wait)
             time.sleep(wait)
             attempt += 1
-
-
-def _flat_entries(url: str) -> Callable[[Any, _Log], list[Mapping[str, Any]]]:
-    def extract(ydl: Any, _: _Log) -> list[Mapping[str, Any]]:
-        return list(ydl.sanitize_info(ydl.extract_info(url, download=False)).get("entries") or [])
-
-    return extract
 
 
 def _tab_entries(
@@ -403,6 +413,40 @@ def listings(entries: Iterable[Mapping[str, Any]]) -> list[VideoListing]:
         for entry in entries
         if entry.get("id")
     ]
+
+
+def playlist_id(text: str) -> str:
+    """The playlist id a playlist, watch, or share URL carries in its list parameter, or the id given alone.
+
+    Only the id reaches yt-dlp, in a URL built here.
+    """
+    text = text.strip()
+    listed = urllib.parse.parse_qs(urllib.parse.urlsplit(text).query).get("list")
+    found = listed[0] if listed else text
+    if not _PLAYLIST_ID.fullmatch(found):
+        raise PlaylistNotFound(_NOT_A_PLAYLIST)
+    return found
+
+
+def playlist_listing(info: Mapping[str, Any]) -> PlaylistListing:
+    """A flat playlist extraction's title and entries, in its order.
+
+    An entry without a creator's channel id is a video YouTube hides (private or deleted), and is left out.
+    """
+    return PlaylistListing(
+        title=info.get("title") or info["id"],
+        entries=[
+            PlaylistEntry(
+                video_id=entry["id"],
+                title=entry.get("title") or entry["id"],
+                duration_seconds=_integer(entry.get("duration")),
+                channel_id=entry["channel_id"],
+                channel_name=entry.get("channel") or entry["channel_id"],
+            )
+            for entry in info.get("entries") or []
+            if entry.get("id") and entry.get("channel_id")
+        ],
+    )
 
 
 _LIVE = {

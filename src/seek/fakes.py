@@ -5,8 +5,10 @@ import math
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
 from dataclasses import dataclass, field
+from urllib.parse import parse_qs, urlsplit
 
 from seek.ports import (
+    PLAYLIST_MISSING_OR_PRIVATE,
     ChannelInfo,
     ChannelListing,
     ChannelNotFound,
@@ -17,6 +19,9 @@ from seek.ports import (
     EngineName,
     ModelStatus,
     ModelUnavailable,
+    PlaylistEntry,
+    PlaylistInfo,
+    PlaylistListing,
     PlaylistNotFound,
     SecretStoreStatus,
     SourceUnavailable,
@@ -74,24 +79,35 @@ class FakeChannel:
 
 
 @dataclass
+class FakePlaylist:
+    title: str
+    # Each entry as (YouTube channel id, video id), in order, naming a Video of one of the source's channels.
+    entries: list[tuple[str, str]]
+
+
+@dataclass
 class FakeTranscriptSource:
     channels: list[FakeChannel] = field(default_factory=list)
-    # Video ids by playlist id.
-    playlists: dict[str, list[str]] = field(default_factory=dict)
+    # By playlist id; any other id stands for a playlist that is missing or private.
+    playlists: dict[str, FakePlaylist] = field(default_factory=dict)
     # When set, every call raises SourceUnavailable with this message.
     unavailable: str | None = None
     # Every call as (method, argument), in order.
     calls: list[tuple[str, str]] = field(default_factory=list)
     # The known ids each list_videos call was given, in order. The fake lists everything regardless.
     listings_known: list[frozenset[str]] = field(default_factory=list)
+    # What each paced resolve_channel call was given, in order.
+    paced_resolves: list[str] = field(default_factory=list)
 
     def _call(self, method: str, argument: str) -> None:
         self.calls.append((method, argument))
         if self.unavailable is not None:
             raise SourceUnavailable(self.unavailable)
 
-    def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
+    def resolve_channel(self, url_or_handle: str, paced: bool = False) -> ChannelInfo:
         self._call("resolve_channel", url_or_handle)
+        if paced:
+            self.paced_resolves.append(url_or_handle)
         for channel in self.channels:
             if url_or_handle in channel.handles or url_or_handle == channel.info.channel_id:
                 return channel.info
@@ -105,11 +121,30 @@ class FakeTranscriptSource:
                 return ChannelListing([v.listing for v in channel.all_videos], channel.info.avatar_url)
         raise ChannelNotFound(f"No YouTube channel found for {channel_id}")
 
-    def list_playlist(self, playlist_id: str) -> Sequence[str]:
+    def resolve_playlist(self, url_or_id: str) -> PlaylistInfo:
+        self._call("resolve_playlist", url_or_id)
+        listed = parse_qs(urlsplit(url_or_id).query).get("list")
+        playlist_id = listed[0] if listed else url_or_id
+        listing = self._playlist_listing(playlist_id)
+        return PlaylistInfo(playlist_id, listing.title, len(listing.entries))
+
+    def list_playlist(self, playlist_id: str) -> PlaylistListing:
         self._call("list_playlist", playlist_id)
+        return self._playlist_listing(playlist_id)
+
+    def _playlist_listing(self, playlist_id: str) -> PlaylistListing:
         if playlist_id not in self.playlists:
-            raise PlaylistNotFound(f"No YouTube playlist found for {playlist_id}")
-        return self.playlists[playlist_id]
+            raise PlaylistNotFound(PLAYLIST_MISSING_OR_PRIVATE)
+        playlist = self.playlists[playlist_id]
+        entries = []
+        for channel_id, video_id in playlist.entries:
+            [channel] = [c for c in self.channels if c.info.channel_id == channel_id]
+            [video] = [v for v in channel.all_videos if v.listing.video_id == video_id]
+            listing = video.listing
+            entries.append(
+                PlaylistEntry(video_id, listing.title, listing.duration_seconds, channel_id, channel.info.name)
+            )
+        return PlaylistListing(playlist.title, entries)
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         for channel in self.channels:

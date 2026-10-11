@@ -111,6 +111,27 @@ def create_channel(conn: sqlite3.Connection, info: ChannelInfo, name: str | None
         return _get_channel(conn, channel_id)
 
 
+def youtube_channel_ids(conn: sqlite3.Connection) -> set[str]:
+    """The YouTube channel id of every Channel, in the Library or not."""
+    return {row["youtube_channel_id"] for row in conn.execute("SELECT youtube_channel_id FROM channels")}
+
+
+def credited_channel(conn: sqlite3.Connection, creator: ChannelInfo) -> int:
+    """Within a transaction: the id of the creator's Channel. One not yet known is created outside the Library,
+    under its name on YouTube, with no filters and no checks of its own."""
+    row = conn.execute("SELECT id FROM channels WHERE youtube_channel_id = ?", (creator.channel_id,)).fetchone()
+    if row is None:
+        row = conn.execute(
+            """
+            INSERT INTO channels (youtube_channel_id, name, avatar_url, in_library, check_every_hours)
+            VALUES (?, ?, ?, 0, NULL)
+            RETURNING id
+            """,
+            (creator.channel_id, creator.name, creator.avatar_url),
+        ).fetchone()
+    return int(row["id"])
+
+
 def set_avatar(conn: sqlite3.Connection, channel_id: int, avatar_url: str) -> None:
     """Keeps the avatar a Sync's listing found; a Channel deleted meanwhile is left gone."""
     with transaction(conn):

@@ -28,6 +28,7 @@ from seek.events import Events
 from seek.events_api import events_router
 from seek.groups_api import groups_router
 from seek.mcp_server import create_mcp_server
+from seek.playlists_api import playlists_router
 from seek.proxy import LOOPBACK_HOSTS, ProxyMiddleware
 from seek.ports import (
     ChannelNotFound,
@@ -36,6 +37,7 @@ from seek.ports import (
     Model,
     ModelStatus,
     ModelUnavailable,
+    PlaylistNotFound,
     Reranker,
     Secrets,
     SecretsUnavailable,
@@ -57,6 +59,7 @@ PACKAGE_STATIC_DIR = Path(__file__).parent / "static"
 ERROR_STATUS: dict[type[Exception], int] = {
     SecretsUnavailable: 503,
     ChannelNotFound: 422,
+    PlaylistNotFound: 422,
     NotFound: 404,
     Conflict: 409,
     SourceUnavailable: 503,
@@ -221,6 +224,7 @@ def create_app(
         }
 
     app.include_router(channels_router(database, transcripts, events), prefix="/api")
+    app.include_router(playlists_router(database, transcripts), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")

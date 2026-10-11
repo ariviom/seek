@@ -59,7 +59,7 @@ async def test_a_sync_discovers_videos_and_fetches_their_transcripts_and_metadat
     assert finished["id"] == queued["id"]
     assert finished["status"] == "done"
     assert finished["error"] is None
-    assert finished["channel_name"] == "Wood By Wright"
+    assert finished["source_name"] == "Wood By Wright"
     assert finished["started_at"] is not None and finished["finished_at"] is not None
     assert finished["new_videos"] == 2
     assert finished["stage_counts"] == NO_COUNTS | {"done": 2}
@@ -342,9 +342,9 @@ async def test_syncing_all_queues_every_indexed_channel_once(
 
     assert response.status_code == 202
     queued = response.json()
-    assert [(s["channel_name"], s["status"]) for s in queued] == [("Wood By Wright", "queued"), ("Rex Krueger", "queued")]
+    assert [(s["source_name"], s["status"]) for s in queued] == [("Wood By Wright", "queued"), ("Rex Krueger", "queued")]
     assert queued[1]["id"] == rex_queued["id"]
-    assert [(s["channel_name"], s["status"]) for s in finished] == [
+    assert [(s["source_name"], s["status"]) for s in finished] == [
         ("Wood By Wright", "done"),
         ("Rex Krueger", "done"),
         ("Wood By Wright", "done"),
@@ -378,7 +378,7 @@ async def test_a_channel_outside_the_library_is_never_synced_and_its_videos_are_
     await wait_for_syncs(client)
 
     assert [r.status_code for r in refused] == [404, 404, 404, 404]
-    assert [s["channel_name"] for s in all_queued.json()] == ["Wood By Wright"]
+    assert [s["source_name"] for s in all_queued.json()] == ["Wood By Wright"]
     assert fetched(transcripts).count("v-rex") == 1
     # Neither retry cleared the failure before being refused.
     [still_failed] = query(config, "SELECT failure_stage FROM videos WHERE id = ?", (failed["id"],))

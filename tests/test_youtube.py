@@ -7,7 +7,20 @@ from typing import Any
 import pytest
 import yt_dlp
 
-from seek.ports import Chapter, ChannelNotFound, Cue, Storyboard, VideoDetails, VideoListing, VideoUnavailable
+from seek.ports import (
+    Chapter,
+    ChannelInfo,
+    ChannelNotFound,
+    Cue,
+    PlaylistEntry,
+    PlaylistInfo,
+    PlaylistListing,
+    PlaylistNotFound,
+    Storyboard,
+    VideoDetails,
+    VideoListing,
+    VideoUnavailable,
+)
 from seek.youtube import (
     avatar_url,
     CaptionTrack,
@@ -17,6 +30,8 @@ from seek.youtube import (
     cookies_from_browser,
     listings,
     parse_json3,
+    playlist_id,
+    playlist_listing,
     YouTubeSettings,
     YouTubeTranscriptSource,
     storyboard,
@@ -426,3 +441,134 @@ def test_fetching_one_storyboard_keeps_the_pace_a_syncs_calls_keep(monkeypatch: 
     assert first is not None and first == second
     # The first call goes at once; the next waits out the delay a Sync waits, jittered by up to 30% either way.
     assert [7 <= wait <= 13 for wait in slept] == [True]
+
+
+class _ChannelYoutubeDL(_StubYoutubeDL):
+    def extract_info(self, url: str, download: bool, process: bool) -> dict[str, Any]:
+        return {"channel_id": "UCj4SLNED1DiNPHComZTCbzw", "channel": "Rex Krueger"}
+
+
+def test_a_syncs_channel_lookups_keep_its_pace_while_add_channel_is_answered_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _ChannelYoutubeDL)
+    source = YouTubeTranscriptSource(YouTubeSettings(delay_seconds=10, retries=0, backoff_seconds=1, cookie_file=None))
+
+    first = source.resolve_channel("UCj4SLNED1DiNPHComZTCbzw", paced=True)
+    waits_before_adding = list(slept)
+    source.resolve_channel("UCj4SLNED1DiNPHComZTCbzw")
+    waits_after_adding = list(slept)
+    source.resolve_channel("UCj4SLNED1DiNPHComZTCbzw", paced=True)
+
+    assert first == ChannelInfo("UCj4SLNED1DiNPHComZTCbzw", "Rex Krueger", avatar_url=None)
+    assert waits_before_adding == waits_after_adding == []
+    assert [7 <= wait <= 13 for wait in slept] == [True]
+
+
+def playlist_extraction() -> dict[str, Any]:
+    """A flat playlist extraction as yt-dlp 2026.8.19 returns it, cut down to what is read; its second entry is a
+    video YouTube hides, which comes without a creator."""
+    return {
+        "id": "PLBCF2DAC6FFB574DE",
+        "title": "Google Search Stories",
+        "channel_id": "UCvceBgMIpKb4zK1ss-Sh90w",
+        "entries": [
+            {
+                "id": "GvgqDSnpRQM",
+                "title": "Andrew Willis, Skatepark Engineer",
+                "duration": 90,
+                "channel_id": "UCvceBgMIpKb4zK1ss-Sh90w",
+                "channel": "Google Search Stories",
+            },
+            {"id": "fIc_VEQ7Vo0", "title": None, "duration": None, "channel_id": None, "channel": None},
+            {
+                "id": "0VH1Lim8gL8",
+                "title": "Deep Learning State of the Art (2020)",
+                "duration": 5261.0,
+                "channel_id": "UCSHZKyawb77ixDdsGog4iWA",
+                "channel": "Lex Fridman",
+            },
+        ],
+    }
+
+
+def test_a_playlist_listing_keeps_its_order_and_each_creator_and_skips_entries_without_one() -> None:
+    assert playlist_listing(playlist_extraction()) == PlaylistListing(
+        title="Google Search Stories",
+        entries=[
+            PlaylistEntry(
+                "GvgqDSnpRQM", "Andrew Willis, Skatepark Engineer", 90, "UCvceBgMIpKb4zK1ss-Sh90w", "Google Search Stories"
+            ),
+            PlaylistEntry(
+                "0VH1Lim8gL8", "Deep Learning State of the Art (2020)", 5261, "UCSHZKyawb77ixDdsGog4iWA", "Lex Fridman"
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        "PLBCF2DAC6FFB574DE",
+        "  https://www.youtube.com/playlist?list=PLBCF2DAC6FFB574DE  ",
+        "https://www.youtube.com/watch?v=GvgqDSnpRQM&list=PLBCF2DAC6FFB574DE&index=2",
+        "https://youtu.be/GvgqDSnpRQM?list=PLBCF2DAC6FFB574DE&si=abc",
+        "https://youtube.com/playlist?list=PLBCF2DAC6FFB574DE&si=abc",
+    ],
+)
+def test_a_playlist_id_comes_from_a_watch_share_or_playlist_url_or_stands_alone(given: str) -> None:
+    assert playlist_id(given) == "PLBCF2DAC6FFB574DE"
+
+
+@pytest.mark.parametrize(
+    "given", ["", "https://www.youtube.com/watch?v=GvgqDSnpRQM", "https://www.youtube.com/@woodbywright", "not a playlist"]
+)
+def test_anything_but_a_playlist_is_refused_before_yt_dlp_sees_it(given: str) -> None:
+    with pytest.raises(PlaylistNotFound, match="playlist URL"):
+        playlist_id(given)
+
+
+class _PlaylistYoutubeDL(_StubYoutubeDL):
+    """Lists the recorded playlist, and answers for any other as YouTube does for one that is missing or private."""
+
+    def extract_info(self, url: str, download: bool, process: bool = True) -> dict[str, Any]:
+        if url == "https://www.youtube.com/playlist?list=PLBCF2DAC6FFB574DE":
+            return playlist_extraction()
+        raise yt_dlp.utils.DownloadError("ERROR: [youtube:tab] PLgone: YouTube said: The playlist does not exist.")
+
+
+def test_resolving_a_playlist_counts_the_videos_it_would_list_without_waiting_on_a_syncs_pace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _PlaylistYoutubeDL)
+    source = YouTubeTranscriptSource(YouTubeSettings(delay_seconds=10, retries=0, backoff_seconds=1, cookie_file=None))
+
+    listed = source.list_playlist("PLBCF2DAC6FFB574DE")
+    resolved = source.resolve_playlist("https://www.youtube.com/watch?v=GvgqDSnpRQM&list=PLBCF2DAC6FFB574DE")
+    again = source.resolve_playlist("PLBCF2DAC6FFB574DE")
+
+    assert [entry.video_id for entry in listed.entries] == ["GvgqDSnpRQM", "0VH1Lim8gL8"]
+    assert resolved == again == PlaylistInfo("PLBCF2DAC6FFB574DE", "Google Search Stories", video_count=2)
+    # Right behind a Sync's listing, which the next Sync call would wait ten seconds after.
+    assert slept == []
+
+
+def test_a_missing_or_private_playlist_gives_one_message_naming_the_cookie_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _PlaylistYoutubeDL)
+    source = YouTubeTranscriptSource(YouTubeSettings(delay_seconds=0, retries=0, backoff_seconds=1, cookie_file=None))
+
+    with pytest.raises(PlaylistNotFound) as resolving:
+        source.resolve_playlist("PLgone")
+    with pytest.raises(PlaylistNotFound) as listing:
+        source.list_playlist("PLgone")
+
+    assert str(resolving.value) == str(listing.value)
+    assert "doesn't exist or is private" in str(resolving.value)
+    assert "youtube_cookie_file" in str(resolving.value) and "youtube_cookies_from_browser" in str(resolving.value)

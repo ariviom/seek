@@ -36,6 +36,31 @@ class ChannelListing:
 
 
 @dataclass(frozen=True)
+class PlaylistEntry:
+    video_id: str
+    title: str
+    duration_seconds: int | None
+    # The creator who made the Video: their YouTube channel id and display name.
+    channel_id: str
+    channel_name: str
+
+
+@dataclass(frozen=True)
+class PlaylistListing:
+    title: str
+    # In the playlist's order.
+    entries: Sequence[PlaylistEntry]
+
+
+@dataclass(frozen=True)
+class PlaylistInfo:
+    playlist_id: str
+    title: str
+    # The entries a listing would return.
+    video_count: int
+
+
+@dataclass(frozen=True)
 class Chapter:
     title: str
     start: float
@@ -93,7 +118,14 @@ class ChannelNotFound(Exception):
 
 
 class PlaylistNotFound(Exception):
-    """The id does not identify a YouTube playlist."""
+    """The URL or id does not identify a YouTube playlist this machine may list."""
+
+
+# YouTube answers the same for a playlist that is missing and one it won't show, so every adapter says both.
+PLAYLIST_MISSING_OR_PRIVATE = (
+    "This playlist doesn't exist or is private. For your own private playlist, configure youtube_cookie_file or "
+    "youtube_cookies_from_browser signed in as you, or set it to unlisted."
+)
 
 
 class SourceUnavailable(Exception):
@@ -159,8 +191,11 @@ class VideoUnavailable(Exception):
 
 
 class TranscriptSource(Protocol):
-    def resolve_channel(self, url_or_handle: str) -> ChannelInfo:
-        """Accepts a channel URL, an @handle, or a bare channel id."""
+    def resolve_channel(self, url_or_handle: str, paced: bool = False) -> ChannelInfo:
+        """Accepts a channel URL, an @handle, or a bare channel id.
+
+        Answers promptly unless `paced`, which a Sync asks for so the call waits its turn among the Sync's others.
+        """
         ...
 
     def list_videos(self, channel_id: str, known_ids: Collection[str] = ()) -> ChannelListing:
@@ -172,10 +207,19 @@ class TranscriptSource(Protocol):
         """
         ...
 
-    def list_playlist(self, playlist_id: str) -> Sequence[str]:
-        """The video ids in a playlist, which may include other channels' videos.
+    def resolve_playlist(self, url_or_id: str) -> PlaylistInfo:
+        """Accepts a playlist URL, a watch or share URL carrying a playlist, or a bare playlist id.
 
-        Raises PlaylistNotFound for an unknown playlist id.
+        Answers promptly, as resolve_channel does, rather than waiting its turn among a Sync's calls. Raises
+        PlaylistNotFound for anything else, and for a playlist that is missing or private.
+        """
+        ...
+
+    def list_playlist(self, playlist_id: str) -> PlaylistListing:
+        """The playlist's title and its videos in order, whoever made them.
+
+        Entries without a creator (private or deleted videos) are left out. Raises PlaylistNotFound for a playlist
+        that is missing or private.
         """
         ...
 

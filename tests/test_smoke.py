@@ -15,18 +15,22 @@ from harness import (
     Gate,
     add_channel,
     add_group,
+    add_playlist,
     fake_channel,
     fake_storyboard,
     fake_video,
+    list_playlist_videos,
     said,
     serving,
+    start_playlist_sync,
     sync,
+    wait_for_syncs,
 )
 from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright, expect
 
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeSecrets, FakeTranscriptSource
 from seek.ports import ChatDone, ChatEngineStatus, TextDelta, VideoUnavailable
 
 WEB = Path(__file__).parents[1] / "web"
@@ -700,5 +704,46 @@ async def test_choosing_how_often_a_channel_is_checked_persists_and_says_when_th
             await page.get_by_role("option", name="Off").click()
             await expect(checks).to_have_text("Off")
             await expect(videos_card).not_to_contain_text("Next check")
+
+    assert errors == []
+
+
+async def test_a_playlists_sync_is_named_in_the_syncs_list_and_retried_from_its_page(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+) -> None:
+    live = fake_video("v-live", "Live Q&A", failure=VideoUnavailable("Premieres in 3 days", permanent=False))
+    fake_channel(transcripts, "UC-rex").videos.append(live)
+    transcripts.playlists["PL-rex"] = FakePlaylist("Rex picks", [("UC-rex", "v-live")])
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle, secrets=FakeSecrets())
+
+    async with serving(app) as base_url:
+        # Seeded through the API: the Library gets its Playlists in a later ticket.
+        async with httpx.AsyncClient(base_url=base_url) as seed:
+            playlist = await add_playlist(seed, "PL-rex", "Sharpening")
+            await start_playlist_sync(seed, playlist["id"])
+            await wait_for_syncs(seed)
+
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Syncs").click()
+            rows = page.get_by_role("complementary", name="Syncs").get_by_role("button").filter(has_text="Sharpening")
+            await expect(rows).to_have_count(1)
+            await rows.click()
+            await expect(main.get_by_role("heading", name="Sharpening")).to_be_visible()
+
+            live.failure = None
+            await main.get_by_role("button", name="Retry failed videos").click()
+            # The retry is a second Sync of the Playlist, which arrives above the first and finishes.
+            await expect(rows).to_have_count(2)
+            await expect(rows.first).to_contain_text("Done", timeout=15_000)
+            async with httpx.AsyncClient(base_url=base_url) as client:
+                [video] = await list_playlist_videos(client, playlist["id"])
+            assert video["stage"] == "done"
 
     assert errors == []
