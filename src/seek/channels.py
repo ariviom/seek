@@ -85,14 +85,16 @@ def read_filters(row: sqlite3.Row) -> ChannelFilters:
 
 
 def _get_channel(conn: sqlite3.Connection, channel_id: int) -> Channel:
-    row = conn.execute(f"{_CHANNEL_SQL} WHERE channels.id = ?", (channel_id,)).fetchone()
+    row = conn.execute(f"{_CHANNEL_SQL} WHERE channels.id = ? AND channels.in_library = 1", (channel_id,)).fetchone()
     if row is None:
         raise NotFound(f"Channel {channel_id} not found")
     return _channel(row)
 
 
 def list_channels(conn: sqlite3.Connection) -> list[Channel]:
-    return [_channel(row) for row in conn.execute(f"{_CHANNEL_SQL} ORDER BY channels.name COLLATE NOCASE, channels.id")]
+    """The Library's Channels."""
+    rows = conn.execute(f"{_CHANNEL_SQL} WHERE channels.in_library = 1 ORDER BY channels.name COLLATE NOCASE, channels.id")
+    return [_channel(row) for row in rows]
 
 
 def create_channel(conn: sqlite3.Connection, info: ChannelInfo, name: str | None = None) -> Channel:
@@ -155,5 +157,5 @@ def update_channel(
 def delete_channel(conn: sqlite3.Connection, channel_id: int) -> None:
     """Removes the Channel, everything ingested from it, and its Group memberships; its Conversations stay readable."""
     with transaction(conn):
-        if conn.execute("DELETE FROM channels WHERE id = ?", (channel_id,)).rowcount == 0:
+        if conn.execute("DELETE FROM channels WHERE id = ? AND in_library = 1", (channel_id,)).rowcount == 0:
             raise NotFound(f"Channel {channel_id} not found")

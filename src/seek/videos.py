@@ -56,7 +56,7 @@ class PendingVideo:
 
 
 def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
-    if conn.execute("SELECT 1 FROM channels WHERE id = ?", (channel_id,)).fetchone() is None:
+    if conn.execute("SELECT 1 FROM channels WHERE id = ? AND in_library = 1", (channel_id,)).fetchone() is None:
         raise NotFound(f"Channel {channel_id} not found")
 
 

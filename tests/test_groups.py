@@ -1,5 +1,7 @@
 import httpx
-from harness import Json, add_channel, add_group
+from harness import Json, add_channel, add_group, take_out_of_library
+
+from seek.config import Config
 
 
 async def set_members(client: httpx.AsyncClient, group: Json, *channels: Json) -> httpx.Response:
@@ -171,6 +173,19 @@ async def test_members_must_be_existing_channels_and_nothing_changes_otherwise(c
     assert "999" in unknown.json()["detail"]
     assert out_of_range.status_code == 404
     assert [r.status_code for r in loose] == [422, 422, 422]
+    assert await memberships(client) == {"Woodworking": ["Rex Krueger"]}
+
+
+async def test_a_channel_outside_the_library_cannot_be_made_a_member(client: httpx.AsyncClient, config: Config) -> None:
+    rex = await add_channel(client, "@rexkrueger")
+    wright = await add_channel(client, "@woodbywright")
+    group = await add_group(client, "Woodworking")
+    await set_members(client, group, rex)
+    take_out_of_library(config, wright)
+
+    refused = await set_members(client, group, rex, wright)
+
+    assert (refused.status_code, refused.json()) == (404, {"detail": f"Channel {wright['id']} not found"})
     assert await memberships(client) == {"Woodworking": ["Rex Krueger"]}
 
 

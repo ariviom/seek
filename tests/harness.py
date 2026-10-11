@@ -310,6 +310,15 @@ def query(config: Config, sql: str, params: Sequence[object] = ()) -> list[sqlit
         conn.close()
 
 
+def take_out_of_library(config: Config, channel: Json) -> None:
+    """Leaves the Channel as one that only credits a Playlist's Videos, written directly until Playlists can."""
+    conn = db.connect(config.database_path)
+    try:
+        conn.execute("UPDATE channels SET in_library = 0 WHERE id = ?", (channel["id"],))
+    finally:
+        conn.close()
+
+
 def row_counts(config: Config) -> dict[str, int]:
     """Rows per table, including the FTS5 index's own row table and the vector table."""
     tables = ("videos", "transcripts", "segments", "segments_fts_docsize", "segment_vectors")

@@ -13,8 +13,10 @@ from harness import (
     fake_video,
     fetched,
     list_videos,
+    query,
     running,
     start_sync,
+    take_out_of_library,
     wait_for_syncs,
 )
 
@@ -349,6 +351,38 @@ async def test_syncing_all_queues_every_indexed_channel_once(
     ]
     assert finished[2]["id"] == running_sync["id"]
     assert "v-vlog" not in fetched(transcripts)
+
+
+async def test_a_channel_outside_the_library_is_never_synced_and_its_videos_are_not_listed(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-wright", "Wright video"))
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-rex", "Rex video", failure=VideoUnavailable("Members-only video", permanent=True))
+    )
+    wright = await add_channel(client, "@woodbywright", "Wood By Wright")
+    rex = await add_channel(client, "@rexkrueger", "Rex Krueger")
+    await start_sync(client, wright["id"])
+    await start_sync(client, rex["id"])
+    await wait_for_syncs(client)
+    failed = (await list_videos(client, rex["id"]))["Rex video"]
+    take_out_of_library(config, rex)
+
+    refused = [
+        await client.post(f"/api/channels/{rex['id']}/syncs"),
+        await client.post(f"/api/channels/{rex['id']}/retry-failed"),
+        await client.post(f"/api/videos/{failed['id']}/retry"),
+        await client.get(f"/api/channels/{rex['id']}/videos"),
+    ]
+    all_queued = await client.post("/api/syncs")
+    await wait_for_syncs(client)
+
+    assert [r.status_code for r in refused] == [404, 404, 404, 404]
+    assert [s["channel_name"] for s in all_queued.json()] == ["Wood By Wright"]
+    assert fetched(transcripts).count("v-rex") == 1
+    # Neither retry cleared the failure before being refused.
+    [still_failed] = query(config, "SELECT failure_stage FROM videos WHERE id = ?", (failed["id"],))
+    assert still_failed["failure_stage"] == "transcript_fetched"
 
 
 async def test_a_channel_deleted_mid_sync_is_skipped_without_leaving_rows(

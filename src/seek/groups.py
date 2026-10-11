@@ -76,14 +76,14 @@ def group_summaries(conn: sqlite3.Connection, group_id: int | None = None) -> li
 
 
 def channel_summaries(conn: sqlite3.Connection, scope: Scope | None = None) -> list[ChannelSummary]:
-    """Every indexed Channel, or the scope's Channels (indexed or not), with how many of its Videos the scope
-    covers."""
+    """Every indexed Channel in the Library, or the scope's Channels (indexed or not), with how many of its Videos
+    the scope covers."""
     rows = conn.execute(
         f"""
         SELECT channels.id, channels.name,
                (SELECT count(*) FROM videos WHERE videos.channel_id = channels.id AND {VIDEO_IN_SCOPE}) AS video_count
         FROM channels
-        WHERE (:scope_kind IS NOT NULL OR channels.indexed = 1) AND {CHANNEL_IN_SCOPE}
+        WHERE (:scope_kind IS NOT NULL OR (channels.indexed = 1 AND channels.in_library = 1)) AND {CHANNEL_IN_SCOPE}
         ORDER BY channels.name COLLATE NOCASE, channels.id
         """,
         scope_params(scope),
@@ -144,7 +144,8 @@ def set_members(conn: sqlite3.Connection, group_id: int, channel_ids: list[int])
         found = {
             row["id"]
             for row in conn.execute(
-                "SELECT id FROM channels WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(unique_ids),)
+                "SELECT id FROM channels WHERE in_library = 1 AND id IN (SELECT value FROM json_each(?))",
+                (json.dumps(unique_ids),),
             )
         }
         if missing := [channel_id for channel_id in unique_ids if channel_id not in found]:

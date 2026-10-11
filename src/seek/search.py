@@ -77,7 +77,8 @@ def _scope_videos(
         existing = {
             row["id"]
             for row in conn.execute(
-                "SELECT id FROM channels WHERE id IN (SELECT value FROM json_each(?))", (chosen_channels,)
+                "SELECT id FROM channels WHERE in_library = 1 AND id IN (SELECT value FROM json_each(?))",
+                (chosen_channels,),
             )
         }
         if missing := [channel_id for channel_id in channel_ids if channel_id not in existing]:

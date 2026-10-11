@@ -301,7 +301,9 @@ def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
         if conn.execute("SELECT 1 FROM group_channels WHERE group_id = ? LIMIT 1", (scope.id,)).fetchone() is None:
             raise Conflict(f"The Group {group['name']!r} has no Channels yet, so nothing can answer")
         return str(group["name"])
-    channel = conn.execute("SELECT name, indexed FROM channels WHERE id = ?", (scope.id,)).fetchone()
+    channel = conn.execute(
+        "SELECT name, indexed FROM channels WHERE id = ? AND in_library = 1", (scope.id,)
+    ).fetchone()
     if channel is None:
         raise NotFound(f"Channel {scope.id} not found")
     if not channel["indexed"]:

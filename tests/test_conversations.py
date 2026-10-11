@@ -13,9 +13,11 @@ from harness import (
     start_channel_conversation,
     start_conversation,
     stream_events,
+    take_out_of_library,
     woodworkers,
 )
 
+from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeTranscriptSource
 from seek.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, PastMessage, TextDelta
 
@@ -122,6 +124,18 @@ async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_w
         {"detail": "The Group 'Empty' has no Channels yet, so nothing can answer"},
     )
     assert unknown.status_code == 404
+
+
+async def test_a_conversation_cannot_start_with_a_channel_outside_the_library(
+    client: httpx.AsyncClient, config: Config
+) -> None:
+    wright = await add_channel(client, "@woodbywright")
+    take_out_of_library(config, wright)
+
+    refused = await client.post(f"/api/channels/{wright['id']}/conversations", json={"model": None})
+
+    assert (refused.status_code, refused.json()) == (404, {"detail": f"Channel {wright['id']} not found"})
+    assert (await client.get("/api/conversations")).json() == []
 
 
 async def test_a_conversation_keeps_its_read_only_project_and_web_context(

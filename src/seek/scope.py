@@ -17,10 +17,11 @@ SCOPE_NOUN: dict[ScopeKind, str] = {"group": "Group", "channel": "Channel"}
 
 
 # Matches a row of the videos table, beside the channels row it belongs to, when the Video is searchable (done, not
-# excluded, on an indexed Channel) and the scope covers it: no scope covers every searchable Video, a Channel its
+# excluded, on an indexed Channel in the Library) and the scope covers it: no scope covers every searchable Video, a Channel its
 # own, a Group its Channels'. Bind :scope_kind and :scope_id from `scope_params`.
 VIDEO_IN_SCOPE = """(
-    videos.pipeline_stage = 'done' AND videos.excluded_reason IS NULL AND channels.indexed = 1
+    videos.pipeline_stage = 'done' AND videos.excluded_reason IS NULL
+    AND channels.indexed = 1 AND channels.in_library = 1
     AND (
         :scope_kind IS NULL
         OR (:scope_kind = 'channel' AND videos.channel_id = :scope_id)

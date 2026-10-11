@@ -94,21 +94,23 @@ def seed_knowledge_base(config: Config) -> None:
     db.migrate(conn)
     conn.executescript(
         f"""
-        INSERT INTO channels (id, youtube_channel_id, name, indexed, check_every_hours) VALUES
-            (1, 'UC-1', 'never synced', 1, 24),
-            (2, 'UC-2', 'recent', 1, 6),
-            (3, 'UC-3', 'overdue', 1, 24),
-            (4, 'UC-4', 'paused', 0, 24),
-            (5, 'UC-5', 'off', 1, NULL),
-            (6, 'UC-6', 'queued', 1, 24),
-            (7, 'UC-7', 'running', 1, 24);
+        INSERT INTO channels (id, youtube_channel_id, name, indexed, check_every_hours, in_library) VALUES
+            (1, 'UC-1', 'never synced', 1, 24, 1),
+            (2, 'UC-2', 'recent', 1, 6, 1),
+            (3, 'UC-3', 'overdue', 1, 24, 1),
+            (4, 'UC-4', 'paused', 0, 24, 1),
+            (5, 'UC-5', 'off', 1, NULL, 1),
+            (6, 'UC-6', 'queued', 1, 24, 1),
+            (7, 'UC-7', 'running', 1, 24, 1),
+            (8, 'UC-8', 'outside the Library', 1, 24, 0);
         INSERT INTO syncs (channel_id, status, queued_at, stage_counts) VALUES
             (2, 'done', '{hours_ago(1)}', '{{}}'),
             (3, 'done', '{hours_ago(25)}', '{{}}'),
             (4, 'done', '{hours_ago(200)}', '{{}}'),
             (5, 'done', '{hours_ago(200)}', '{{}}'),
             (6, 'queued', '{hours_ago(200)}', '{{}}'),
-            (7, 'running', '{hours_ago(200)}', '{{}}');
+            (7, 'running', '{hours_ago(200)}', '{{}}'),
+            (8, 'done', '{hours_ago(200)}', '{{}}');
         """
     )
     conn.close()
@@ -149,11 +151,11 @@ async def test_the_server_queues_one_sync_for_each_due_channel_at_start_and_as_o
     finally:
         gate.released.set()
 
-    new_at_start = [s for s in at_start if s["id"] > 6]
+    new_at_start = [s for s in at_start if s["id"] > 7]
     assert sorted(s["channel_name"] for s in new_at_start) == ["overdue"]
     assert all(s["status"] == "queued" for s in new_at_start)
     assert syncs_per_channel(at_start) == {
-        "recent": 1, "overdue": 2, "paused": 1, "off": 1, "queued": 1, "running": 1
+        "recent": 1, "overdue": 2, "paused": 1, "off": 1, "queued": 1, "running": 1, "outside the Library": 1
     }
     # Six hours on, the 6-hourly Channel is due; the others either wait on the Sync already queued or aren't checked.
     assert syncs_per_channel(later) == syncs_per_channel(at_start) | {"recent": 2}

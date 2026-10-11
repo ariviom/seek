@@ -410,6 +410,11 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     UPDATE channels SET check_every_hours = NULL WHERE indexed = 0;
     """,
     _vectors_by_video,
+    """
+    -- Whether the Channel is in the Library. One outside it exists only to credit a Playlist's Videos to their
+    -- creator: it is never synced, checked, or a scope of its own.
+    ALTER TABLE channels ADD COLUMN in_library INTEGER NOT NULL DEFAULT 1 CHECK (in_library IN (0, 1));
+    """,
 ]
 
 

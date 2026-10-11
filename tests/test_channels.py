@@ -7,9 +7,11 @@ from harness import (
     add_group,
     fake_channel,
     fake_video,
+    query,
     running,
     start_channel_conversation,
     start_sync,
+    take_out_of_library,
     wait_for_syncs,
 )
 
@@ -103,6 +105,27 @@ async def test_deleting_a_channel_frees_its_youtube_channel(client: httpx.AsyncC
     assert listed == []
     # Ids are never reused, so a queued Sync or a Conversation can't attach to the wrong Channel.
     assert readded["id"] != wright["id"]
+
+
+async def test_a_channel_outside_the_library_is_not_listed_and_cannot_be_changed_or_deleted(
+    client: httpx.AsyncClient, config: Config
+) -> None:
+    await add_channel(client, "@woodbywright")
+    rex = await add_channel(client, "@rexkrueger")
+    take_out_of_library(config, rex)
+    url = f"/api/channels/{rex['id']}"
+
+    responses = [
+        await client.patch(url, json={"name": "Rex"}),
+        await client.patch(url, json={"indexed": False}),
+        await client.delete(url),
+    ]
+
+    assert [r.status_code for r in responses] == [404, 404, 404]
+    assert await listed_channels(client) == [("UC-wright", "Wood By Wright", True)]
+    assert [tuple(row) for row in query(config, "SELECT name, indexed FROM channels WHERE id = ?", (rex["id"],))] == [
+        ("Rex Krueger", 1)
+    ]
 
 
 async def test_unknown_channels_are_not_found(client: httpx.AsyncClient) -> None:

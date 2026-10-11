@@ -96,9 +96,10 @@ def enqueue(conn: sqlite3.Connection, channel_id: int, reindex: bool = False) ->
 
 
 def enqueue_all(conn: sqlite3.Connection, reindex: bool = False) -> list[Sync]:
-    """Queues a Sync for every indexed Channel, as enqueue does for one."""
+    """Queues a Sync for every indexed Channel in the Library, as enqueue does for one."""
     with transaction(conn):
-        channel_ids = [row["id"] for row in conn.execute("SELECT id FROM channels WHERE indexed = 1 ORDER BY id")]
+        rows = conn.execute("SELECT id FROM channels WHERE indexed = 1 AND in_library = 1 ORDER BY id")
+        channel_ids = [row["id"] for row in rows]
         return [_enqueue(conn, channel_id, retry_failed=False, reindex=reindex) for channel_id in channel_ids]
 
 
@@ -123,7 +124,7 @@ def retry_video(conn: sqlite3.Connection, video_id: int) -> tuple[int, Sync]:
 
 
 def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
-    if conn.execute("SELECT 1 FROM channels WHERE id = ?", (channel_id,)).fetchone() is None:
+    if conn.execute("SELECT 1 FROM channels WHERE id = ? AND in_library = 1", (channel_id,)).fetchone() is None:
         raise NotFound(f"Channel {channel_id} not found")
 
 
@@ -165,7 +166,7 @@ def is_due(
 
 
 def enqueue_due(conn: sqlite3.Connection, now: datetime) -> list[Sync]:
-    """Queues a Sync, as enqueue does, for every Channel whose automatic check is due."""
+    """Queues a Sync, as enqueue does, for every Channel in the Library whose automatic check is due."""
     with transaction(conn):
         rows = conn.execute(
             """
@@ -174,7 +175,7 @@ def enqueue_due(conn: sqlite3.Connection, now: datetime) -> list[Sync]:
                              AND syncs.status IN ('queued', 'running')) AS open_sync,
                    (SELECT queued_at FROM syncs WHERE syncs.channel_id = channels.id ORDER BY syncs.id DESC LIMIT 1)
                      AS last_queued_at
-            FROM channels ORDER BY channels.id
+            FROM channels WHERE channels.in_library = 1 ORDER BY channels.id
             """
         ).fetchall()
         return [

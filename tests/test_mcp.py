@@ -19,6 +19,7 @@ from harness import (
     running,
     said,
     sync,
+    take_out_of_library,
     wait_for_syncs,
 )
 from mcp.types import CallToolResult, TextContent
@@ -292,6 +293,36 @@ async def test_expand_and_get_video_leave_out_not_indexed_channels(
     [hit] = (await client.post("/api/search", json={"query": "cabin"})).json()
     await client.patch(f"/api/channels/{wright['id']}", json={"indexed": False})
 
+    assert (await client.get(f"/api/segments/{hit['segment_id']}/expand")).status_code == 404
+    assert (await call_tool(app, "expand", {"segment_id": hit["segment_id"]})).is_error
+    assert (await call_tool(app, "get_video", {"video_id": hit["video_id"]})).is_error
+
+
+async def test_a_channel_outside_the_library_is_not_listed_searched_or_read_in_the_api_or_over_mcp(
+    served: Served, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    client, app = served
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-main", "Main", cues=said("Flatten the board")))
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-rex", "Rex", cues=said("Flatten the board with a scrub plane"))
+    )
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    rex = await add_channel(client, "@rexkrueger")
+    await sync(client, wright, rex)
+    [hit] = (await client.post("/api/search", json={"query": "flatten the board", "channels": [rex["id"]]})).json()
+    take_out_of_library(config, rex)
+    chosen: Json = {"query": "flatten the board", "channels": [wright["id"], rex["id"]]}
+
+    refused = await client.post("/api/search", json=chosen)
+    everything = (await client.post("/api/search", json={"query": "flatten the board"})).json()
+
+    assert (refused.status_code, refused.json()) == (404, {"detail": f"Channel {rex['id']} not found"})
+    assert f"Channel {rex['id']} not found" in error_text(await call_tool(app, "search", chosen))
+    assert [r["youtube_video_id"] for r in everything] == ["v-main"]
+    assert await call(app, "search", query="flatten the board") == {"result": everything}
+    assert await call(app, "list_channels") == {
+        "result": [{"id": wright["id"], "name": "Paul Wright", "video_count": 1}]
+    }
     assert (await client.get(f"/api/segments/{hit['segment_id']}/expand")).status_code == 404
     assert (await call_tool(app, "expand", {"segment_id": hit["segment_id"]})).is_error
     assert (await call_tool(app, "get_video", {"video_id": hit["video_id"]})).is_error

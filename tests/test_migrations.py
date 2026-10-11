@@ -18,6 +18,7 @@ SCHEMA_14 = 14
 SCHEMA_16 = 16
 SCHEMA_17 = 17
 SCHEMA_18 = 18
+SCHEMA_19 = 19
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -281,6 +282,29 @@ def test_migration_18_checks_active_channels_daily_and_leaves_paused_ones_off(tm
     ]
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE channels SET check_every_hours = 12 WHERE id = 3")
+    conn.close()
+
+
+def test_migration_20_puts_every_existing_channel_in_the_library(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "seek.db")
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_19])
+        db.migrate(conn)
+    conn.execute(
+        "INSERT INTO channels (id, youtube_channel_id, name, indexed) VALUES (3, 'UC-wright', 'Wood By Wright', 1), "
+        "(5, 'UC-wright-vlog', 'Wright Vlogs', 0)"
+    )
+
+    db.migrate(conn)
+    conn.execute("INSERT INTO channels (id, youtube_channel_id, name) VALUES (6, 'UC-rex', 'Rex Krueger')")
+    conn.execute("INSERT INTO channels (id, youtube_channel_id, name, in_library) VALUES (7, 'UC-anne', 'Anne', 0)")
+
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert [tuple(row) for row in conn.execute("SELECT id, in_library FROM channels ORDER BY id")] == [
+        (3, 1), (5, 1), (6, 1), (7, 0)
+    ]
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE channels SET in_library = 2 WHERE id = 3")
     conn.close()
 
 
