@@ -33,7 +33,8 @@ web UI, or give your coding agents (Claude Code, Codex) the same library over MC
 - [First run](#first-run)
 - [Upgrade](#upgrade)
 - Reference: [Checking for new videos](#check-for-new-videos-automatically-or-from-the-command-line) ·
-  [Status and diagnostics](#check-on-it-from-the-command-line) · [Data](#data) · [Configuration](#configuration) ·
+  [Status and diagnostics](#check-on-it-from-the-command-line) ·
+  [Sharing (`seek export`, `seek import`)](#sharing-a-channel-or-playlist) · [Data](#data) · [Configuration](#configuration) ·
   [Reverse proxy](#publishing-through-a-reverse-proxy) · [Agents (MCP)](#register-seek-with-your-agents) ·
   [Settings](#settings) · [Web chat](#web-chat) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -249,6 +250,73 @@ settings, each model's device and state, both chat engines, yt-dlp and JavaScrip
 row counts, and the latest stored errors. The API key, YouTube extractor argument values and cookie settings are
 redacted everywhere in it. Without a server it reads what it safely can and says what it couldn't; it never loads a
 model, creates or migrates the database, or contacts a provider.
+
+## Sharing a Channel or Playlist
+
+Indexing is the slow part. A **Bundle** is a `.seek` file holding one Channel's or one Playlist's indexed Videos, so
+someone else's Seek can have them without fetching or embedding anything:
+
+```sh
+seek export --channel "Wood By Wright" wright.seek     # one Channel, by its name or YouTube channel id
+seek export --playlist "Sharpening picks" picks.seek   # one Playlist, by its name or YouTube playlist id
+seek import wright.seek                                # add it to the Library, or top up the one already there
+seek import picks.seek --name "Sharpening"             # ...under a name of your choosing
+```
+
+**What a Bundle holds.** The Videos that are searchable in that Channel or Playlist, Paused or not, each with its
+details, Transcript, Segments, and vectors. A Channel's Bundle carries its name, avatar, date range, and most-recent
+count; a Playlist's carries its name, each Video's place in it, and the creators its Videos are credited to. Left
+out: excluded, failed, and unfinished Videos, storyboards, Pause state and check schedule, Groups, Conversations,
+settings, and everything else in your Library. **A Channel's Playlist filter does not travel**, since it names a
+playlist the recipient may not be able to list; export says so, and their Syncs bring in the Channel's other Videos
+unless they set a Playlist filter of their own first.
+
+**Size.** Vectors are about 4 KB per Segment, so a Channel of 900 Videos is on the order of 100 MB. Export prints the
+Videos, Segments, and file size.
+
+**Exporting** runs beside the server, even during a Sync, and loads no model. `.seek` is added to the path if
+missing. It refuses to replace a file that exists and to write a Bundle with no indexed Videos, and never leaves a
+half-written `.seek` file (a killed export can leave a `.tmp` file beside it). The Bundle is readable by you alone
+until you change that.
+
+**Importing** makes the Videos searchable at once, and loads no model. It runs with the server up or down, and can be
+the first thing a new install does. The server isn't told: its pages show the new entry on their next load. Progress
+goes to stderr, and this report to stdout:
+
+```
+Imported Wood By Wright: 212 Videos added, 0 already indexed, 3 left out.
+  Shorter than the 120 second minimum: 3
+It arrived with its filters: published from 2023-01-01, the 250 most recent.
+The Bundle's text came from whoever made the file, and is only as trustworthy as they are.
+Next, start a Sync to pick up the Videos published since: seek sync --channel UC-wright
+```
+
+A Playlist's report has the same counts, no filters line, and ends
+`Next, start a Sync to pick up the Videos added to the playlist since: seek sync --playlist PL-picks`. **That Sync is
+the next step either way**: the imported entry is an ordinary one, shown as never synced, and its automatic checks
+begin after the first Sync you start. That Sync fetches only what is new.
+
+- **Merging.** A Video you have already indexed is never touched. One you have but haven't finished (queued,
+  part-way, or failed) is completed from the Bundle. So importing a newer Bundle of something you already have is a cheap top-up,
+  and an interrupted import is simply run again: it keeps no progress record, and skips what is done.
+- **Your settings win.** A Channel or Playlist already in your Library keeps its name and every setting
+  (`It was already in the Library, and keeps its name and settings.`), so `--name` applies only when the import adds
+  the entry. New Videos under your minimum length are left out, as are a Channel Bundle's new Videos outside the
+  Channel's date range and any of its Videos your own Sync excluded or credits to another Channel; the report counts
+  each reason. A Playlist's Videos are searchable whatever their Channels' filters, as with a Playlist you added, and
+  creators you haven't added stay outside your Library.
+- **Names.** A Playlist whose name another of your Playlists has is refused, pointing at `--name`.
+- **Syncs.** While a Sync is running, import is refused with
+  `A Sync is running; run the import again when it has finished`; that includes up to 20 seconds after a server was
+  killed mid-Sync. A Sync queued during an import waits, and starts within 5 seconds of the import ending.
+- **Same embedding model.** A Bundle imports only into a knowledge base that uses the embedding model it was made
+  with; any other is refused, naming both. A Bundle from a newer Seek is refused with "upgrade Seek".
+
+> [!IMPORTANT]
+> A Bundle redistributes its creators' full Transcripts, so choose who you share one with. And a Bundle is only as
+> trustworthy as whoever made it. Import refuses a file that is damaged or isn't what a Sync would have stored, but a
+> Bundle is unsigned: nothing proves its text is what was said in the Videos it cites. Chat and the MCP tools treat
+> it as untrusted content, as they do every Transcript; weigh its Citations by who gave you the file.
 
 ## Data
 

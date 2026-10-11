@@ -9,7 +9,7 @@ Status: breakdown approved by Drew on 2026-10-11. Spec: `docs/specs/0005-bundles
 | 03 | Import a Channel Bundle into a Library that already has some of it | 01 | done |
 | 04 | Share a Playlist | 03 | done |
 | 05 | Import beside a running server | 01 | done |
-| 06 | Document Bundles | 02, 03, 04, 05 | ready-for-agent |
+| 06 | Document Bundles | 02, 03, 04, 05 | done |
 
 No ticket adds a migration. Tickets 02, 03, and 05 are all unblocked once 01 lands, but each changes the same import, so land them one at a time in number order.
 
