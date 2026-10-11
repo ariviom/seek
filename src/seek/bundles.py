@@ -14,10 +14,12 @@ import re
 import sqlite3
 import struct
 import tempfile
+import threading
 import unicodedata
+import uuid
 from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Sequence
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -25,7 +27,7 @@ from typing import Literal, cast
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
-from seek import channels, db, playlists
+from seek import channels, db, playlists, sync_worker, syncs
 from seek.channels import Channel, ChannelFilters
 from seek.channels_api import FiltersBody
 from seek.config import Config
@@ -450,7 +452,9 @@ def _export_video(conn: sqlite3.Connection, bundle: sqlite3.Connection, video: s
     return len(segments)
 
 
-def import_bundle(config: Config, path: Path, name: str | None = None) -> ImportReport:
+def import_bundle(
+    config: Config, path: Path, name: str | None = None, progress: Callable[[int, int], None] | None = None
+) -> ImportReport:
     """Merges the Bundle's Channel or Playlist into the Library, its Videos searchable at once: nothing is fetched
     from YouTube and nothing embedded. Creates the knowledge base if there is none yet.
 
@@ -465,7 +469,11 @@ def import_bundle(config: Config, path: Path, name: str | None = None) -> Import
     would judge it: a new one is credited to its creator, who stays outside the Library unless already in it, and
     only the minimum length leaves one out.
 
-    Running the import again repeats the merge, which is how an interrupted one resumes.
+    Import runs beside a server, and holds the Sync lease from before its first write until it ends: it is
+    refused while a Sync is running, and a Sync queued meanwhile waits for it. Should another process take the
+    lease, it stops before its next Video. No record of progress is kept: running the import again repeats the
+    merge, which is how an interrupted one resumes. `progress` is called after each of the Bundle's Videos is
+    committed, filled in or not, with how many are behind it and how many the Bundle holds.
 
     A Bundle is untrusted input. It is refused whole, before anything is written, when this build can't read it,
     when it was embedded with another model, or when anything in it is not what a Sync would have stored. Each
@@ -499,7 +507,8 @@ def import_bundle(config: Config, path: Path, name: str | None = None) -> Import
         for youtube_video_id in videos:
             _contents(bundle, youtube_video_id, dimension)
         _open_knowledge_base(config)
-        with closing(db.connect(config.database_path)) as conn:
+        # The lease is taken once the whole Bundle has been checked and before the entry, which is the first write.
+        with closing(db.connect(config.database_path)) as conn, _sync_lease(config, conn) as lease_held:
             entry: Channel | Playlist
             arrived: ChannelFilters | None = None
             if kind == "channel":
@@ -520,6 +529,13 @@ def import_bundle(config: Config, path: Path, name: str | None = None) -> Import
             added_videos = already_indexed = 0
             left_out: Counter[str] = Counter()
             for youtube_video_id, video in videos.items():
+                if not lease_held():
+                    # Whoever has the lease now may be writing these Videos; what is committed stays.
+                    behind = added_videos + already_indexed + left_out.total()
+                    raise SyncCommandError(
+                        f"Another seek process took over running Syncs after {behind} of {len(videos)} Videos; "
+                        "run the import again to carry on where it stopped"
+                    )
                 # Read again rather than kept since the check: a Channel's vectors run to a hundred megabytes.
                 transcript, segments = _contents(bundle, youtube_video_id, dimension)
                 with db.transaction(conn):
@@ -542,6 +558,8 @@ def import_bundle(config: Config, path: Path, name: str | None = None) -> Import
                     else:
                         _import_video(conn, credited, video, transcript, segments)
                         added_videos += 1
+                if progress is not None:
+                    progress(added_videos + already_indexed + left_out.total(), len(videos))
     return ImportReport(
         kind,
         entry.name,
@@ -552,6 +570,49 @@ def import_bundle(config: Config, path: Path, name: str | None = None) -> Import
         already_indexed,
         dict(left_out),
     )
+
+
+@contextmanager
+def _sync_lease(config: Config, conn: sqlite3.Connection) -> Iterator[Callable[[], bool]]:
+    """Holds the Sync lease as the worker does, so that import is the one process writing Videos, and gives it up
+    however the block ends. Refuses while a Sync holds it.
+
+    Yields a check of whether the lease is still held, to make before each Video. A background thread renews the
+    lease at the worker's cadence meanwhile, since one Video, or whoever is told of the progress, may take longer
+    than the lease lasts.
+    """
+    holder = uuid.uuid4().hex
+    if not syncs.acquire_lease(conn, holder, sync_worker.LEASE_SECONDS):
+        raise SyncCommandError("A Sync is running; run the import again when it has finished")
+    lost, ended = threading.Event(), threading.Event()
+
+    def renew() -> None:
+        # On a connection of its own: a SQLite connection stays with the thread that opened it.
+        with closing(db.connect(config.database_path)) as own:
+            while not ended.wait(sync_worker.LEASE_SECONDS / 4):
+                try:
+                    renewed = syncs.renew_lease(own, holder, sync_worker.LEASE_SECONDS)
+                except sqlite3.Error:
+                    renewed = False
+                if not renewed:
+                    lost.set()
+                    return
+
+    def held() -> bool:
+        # Renewed here too, so a lease another process took is found out now, not a quarter of a lease later.
+        return not lost.is_set() and syncs.renew_lease(conn, holder, sync_worker.LEASE_SECONDS)
+
+    renewing = threading.Thread(target=renew, daemon=True)
+    renewing.start()
+    try:
+        yield held
+    finally:
+        ended.set()
+        renewing.join()
+        # Only this holder's lease goes, never one another process took. A release that fails must not replace
+        # whatever ended the import; the lease expires on its own.
+        with suppress(sqlite3.Error):
+            syncs.release_lease(conn, holder)
 
 
 def _create_playlist(conn: sqlite3.Connection, listed: PlaylistInfo, name: str | None) -> Playlist:

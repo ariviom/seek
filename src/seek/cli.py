@@ -179,8 +179,13 @@ def export(channel: str | None, playlist: str | None, file: Path) -> None:
 
 
 def import_(file: Path, name: str | None) -> None:
+    def progress(videos: int, total: int) -> None:
+        # On stderr, leaving stdout to the report, and ending where the line began: the next count, the report,
+        # or a refusal is written over it.
+        print(f"Importing: {videos} of {total} Videos", end="\r", file=sys.stderr, flush=True)
+
     try:
-        print(format_import(import_bundle(_config(), file, name)))
+        print(format_import(import_bundle(_config(), file, name, progress)))
     except (SyncCommandError, Conflict) as e:
         sys.exit(f"seek: {e}")
 

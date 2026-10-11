@@ -205,14 +205,19 @@ async def test_export_and_import_carry_a_channel_between_data_directories_and_re
         await sync(client, await add_channel(client, "@woodbywright"))
     bundle = isolated_home / "wright.seek"
 
+    on_stderr: list[str] = []
+
     def run(data_dir: str, *args: str) -> str:
         monkeypatch.setenv("SEEK_DATA_DIR", str(isolated_home / data_dir))
         command(monkeypatch, "linux", *args)
         cli.main()
-        return capsys.readouterr().out
+        captured = capsys.readouterr()
+        on_stderr.append(captured.err)
+        return captured.out
 
     exported = run("sender", "export", "--channel", "wood by wright", str(isolated_home / "wright"))
     imported = run("friend", "import", "--name", "Paul Wright", str(bundle))
+    progress = on_stderr[-1]
     # The name is for a Channel import creates; this one is in the Library by now.
     again = run("friend", "import", str(bundle), "--name", "Wright")
     with pytest.raises(SystemExit) as unknown:
@@ -222,6 +227,8 @@ async def test_export_and_import_carry_a_channel_between_data_directories_and_re
 
     assert exported.splitlines()[0].startswith(f"Exported Wood By Wright to {bundle}: 1 Videos, 1 Segments, ")
     assert imported.splitlines()[0] == "Imported Paul Wright: 1 Videos added, 0 already indexed, 0 left out."
+    # Progress goes to stderr, each count written over the last, and the report has stdout to itself.
+    assert progress == "Importing: 1 of 1 Videos\r"
     assert again.splitlines()[:2] == [
         "Imported Paul Wright: 0 Videos added, 1 already indexed, 0 left out.",
         "It was already in the Library, and keeps its name and settings.",

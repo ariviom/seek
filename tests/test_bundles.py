@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 import sqlite3
+import time
 from collections.abc import Sequence
 from contextlib import closing
 from dataclasses import replace
@@ -35,6 +36,7 @@ from harness import (
     wait_for_syncs,
 )
 
+from seek import sync_worker
 from seek.app import create_app
 from seek.bundles import export_channel, export_playlist, format_export, format_import, import_bundle
 from seek.config import Config
@@ -61,7 +63,12 @@ def friend(tmp_path: Path) -> Config:
     return bundle_config(tmp_path / "friend")
 
 
-def app_on(config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbedder | None = None) -> FastAPI:
+def app_on(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder | None = None,
+    sync_poll_seconds: float = 5.0,
+) -> FastAPI:
     return create_app(
         config,
         transcripts,
@@ -69,6 +76,7 @@ def app_on(config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbe
         FakeReranker(),
         FakeChatEngine(),
         static_dir=config.data_dir / "no-bundle",
+        sync_poll_seconds=sync_poll_seconds,
     )
 
 
@@ -1703,3 +1711,150 @@ async def test_a_video_the_friend_has_indexed_is_untouched_by_a_playlist_bundle_
     assert found == {"v-chisels": "Grind the chisel on a coarse wheel"}
     # Its own next Sync judges it; the import wrote nothing of it but that the Playlist includes it.
     assert all(set(kept[table]) <= set(now[table]) for table in kept)
+
+
+async def three_video_bundle(sender: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> Path:
+    """A Bundle of three of Wood By Wright's Videos, each of which says "sharpen", in the order import takes them."""
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+        fake_video("v-planes", "Planes", cues=said("Sharpen the plane iron on a fine stone")),
+    ]
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    return export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+
+
+async def searchable(config: Config) -> list[str]:
+    """The YouTube ids of the Videos a search for sharpening finds, once for each Segment found."""
+    async with running(app_on(config, FakeTranscriptSource())) as client:
+        return sorted(result["youtube_video_id"] for result in await search(client, "sharpen"))
+
+
+class Stopped(Exception):
+    """What a test's progress callback raises to stop an import where it is."""
+
+
+async def test_an_import_stopped_partway_keeps_what_it_committed_and_run_again_makes_every_video_searchable_once(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await three_video_bundle(sender, transcripts, tmp_path)
+    progress: list[tuple[int, int]] = []
+
+    def stop_after_the_first(videos: int, total: int) -> None:
+        progress.append((videos, total))
+        raise Stopped
+
+    with pytest.raises(Stopped):
+        import_bundle(friend, bundle, progress=stop_after_the_first)
+    after_the_first = await searchable(friend)
+    again = import_bundle(friend, bundle, progress=lambda videos, total: progress.append((videos, total)))
+
+    assert after_the_first == ["v-chisels"]
+    assert (again.added, again.already_indexed, again.left_out) == (2, 1, {})
+    assert await searchable(friend) == ["v-chisels", "v-planes", "v-saws"]
+    # Once for each Video of the Bundle, whether or not the import filled it in.
+    assert progress == [(1, 3), (1, 3), (2, 3), (3, 3)]
+
+
+async def test_import_refuses_while_a_sync_is_running_writes_nothing_and_goes_through_once_it_has_finished(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await three_video_bundle(sender, transcripts, tmp_path)
+    gate = Gate()
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex video", before_fetch=gate))
+    async with running(app_on(friend, transcripts)) as client:
+        await start_sync(client, (await add_channel(client, "@rexkrueger"))["id"])
+        await gate.wait_entered()
+        kept = stored(friend)
+        with pytest.raises(SyncCommandError) as refused:
+            await asyncio.to_thread(import_bundle, friend, bundle)
+        written = stored(friend)
+        gate.released.set()
+        [finished] = await wait_for_syncs(client)
+        imported = await asyncio.to_thread(import_bundle, friend, bundle)
+
+    assert str(refused.value) == "A Sync is running; run the import again when it has finished"
+    assert written == kept
+    # The Sync the import found running was not disturbed by it.
+    assert finished["status"] == "done"
+    assert imported.added == 3
+
+
+def lease(config: Config, change: str) -> None:
+    """Changes the Sync lease directly, as another seek process taking it or letting it go would."""
+    with closing(sqlite3.connect(config.database_path, autocommit=True)) as conn:
+        conn.execute(f"UPDATE sync_lease SET {change}")
+
+
+async def test_an_import_that_loses_the_lease_stops_before_its_next_video_and_carries_on_when_run_again(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    bundle = await three_video_bundle(sender, transcripts, tmp_path)
+
+    def lose_the_lease(videos: int, total: int) -> None:
+        lease(friend, "holder = 'another process'")
+
+    with pytest.raises(SyncCommandError) as stopped:
+        import_bundle(friend, bundle, progress=lose_the_lease)
+    after_the_first = await searchable(friend)
+    # The lease is the other process's now, and the import that lost it did not give it up for them.
+    with pytest.raises(SyncCommandError) as refused:
+        import_bundle(friend, bundle)
+    lease(friend, "expires_at = 0")
+    again = import_bundle(friend, bundle)
+
+    assert str(stopped.value) == (
+        "Another seek process took over running Syncs after 1 of 3 Videos; run the import again to carry on where "
+        "it stopped"
+    )
+    assert after_the_first == ["v-chisels"]
+    assert str(refused.value) == "A Sync is running; run the import again when it has finished"
+    assert (again.added, again.already_indexed) == (2, 1)
+    assert await searchable(friend) == ["v-chisels", "v-planes", "v-saws"]
+
+
+async def test_import_runs_beside_a_running_server_which_finds_its_segments_at_once_and_holds_a_queued_sync_until_it_ends(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = await three_video_bundle(sender, transcripts, tmp_path)
+    # A lease short enough for the test to outlast, which is how it sees the lease renewed.
+    monkeypatch.setattr(sync_worker, "LEASE_SECONDS", 2.0)
+    held = Gate()
+    behind: list[int] = []
+    behind_at_the_fetch: list[int] = []
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-rex", "Rex video", before_fetch=lambda: behind_at_the_fetch.append(len(behind)))
+    )
+
+    def hold_after_the_first(videos: int, total: int) -> None:
+        behind.append(videos)
+        if videos == 1:
+            held()
+
+    # The worker finds a released lease by polling.
+    async with running(app_on(friend, transcripts, sync_poll_seconds=0.02)) as client:
+        rex = await add_channel(client, "@rexkrueger")
+        importing = asyncio.create_task(asyncio.to_thread(import_bundle, friend, bundle, None, hold_after_the_first))
+        await held.wait_entered()
+        [(taken_until,)] = query(friend, "SELECT expires_at FROM sync_lease")
+        await start_sync(client, rex["id"])
+        # Until the lease as the import held it then has run out: only a renewal keeps the Sync waiting past this.
+        async with asyncio.timeout(5):
+            while time.time() <= taken_until:
+                await asyncio.sleep(0.02)
+        waiting = [s["status"] for s in (await client.get("/api/syncs")).json()]
+        found_meanwhile = [result["youtube_video_id"] for result in await search(client, "sharpen")]
+        held.released.set()
+        imported = await importing
+        [finished] = await wait_for_syncs(client)
+        found = sorted(result["youtube_video_id"] for result in await search(client, "sharpen the saw"))
+
+    assert waiting == ["queued"]
+    # The server was never restarted, nor told of the import.
+    assert found_meanwhile == ["v-chisels"]
+    assert imported.added == 3
+    assert finished["status"] == "done"
+    # The Sync fetched nothing until all three of the Bundle's Videos were behind the import.
+    assert behind_at_the_fetch == [3]
+    assert [found_id for found_id in found if found_id != "v-rex"] == ["v-chisels", "v-planes", "v-saws"]
