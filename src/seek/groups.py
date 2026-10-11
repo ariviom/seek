@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from seek.db import transaction
 from seek.errors import Conflict, NotFound
-from seek.scope import CHANNEL_IN_SCOPE, Scope, scope_params
+from seek.scope import CHANNEL_IN_SCOPE, VIDEO_IN_SCOPE, Scope, scope_params
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ def _select_groups(conn: sqlite3.Connection, group_id: int | None = None) -> lis
 class ChannelSummary:
     id: int
     name: str
-    # Searchable Videos: done, on an indexed Channel.
+    # Its searchable Videos that the scope it is listed in covers.
     video_count: int
 
 
@@ -59,43 +59,29 @@ class GroupSummary:
     channels: list[ChannelSummary]
 
 
-_VIDEO_COUNT = """(SELECT count(*) FROM videos
-                   WHERE videos.channel_id = channels.id AND channels.indexed = 1 AND videos.pipeline_stage = 'done')"""
-
-
 def group_summaries(conn: sqlite3.Connection, group_id: int | None = None) -> list[GroupSummary]:
     """Every Group, or just the given one, with its Channels and how many searchable Videos each has."""
     rows = conn.execute(
-        f"""
-        SELECT groups.id AS group_id, groups.name AS group_name, channels.id AS channel_id,
-               channels.name AS channel_name, {_VIDEO_COUNT} AS video_count
-        FROM groups
-        LEFT JOIN group_channels ON group_channels.group_id = groups.id
-        LEFT JOIN channels ON channels.id = group_channels.channel_id
-        WHERE ?1 IS NULL OR groups.id = ?1
-        ORDER BY groups.name COLLATE NOCASE, groups.id, channels.name COLLATE NOCASE, channels.id
-        """,
-        (group_id,),
-    )
-    members: dict[tuple[int, str], list[ChannelSummary]] = {}
+        "SELECT id, name FROM groups WHERE ?1 IS NULL OR id = ?1 ORDER BY name COLLATE NOCASE, id", (group_id,)
+    ).fetchall()
+    summaries = []
     for row in rows:
-        channels = members.setdefault((row["group_id"], row["group_name"]), [])
-        if row["channel_id"] is not None:
-            channels.append(
-                ChannelSummary(id=row["channel_id"], name=row["channel_name"], video_count=row["video_count"])
+        channels = channel_summaries(conn, Scope("group", row["id"]))
+        summaries.append(
+            GroupSummary(
+                id=row["id"], name=row["name"], video_count=sum(c.video_count for c in channels), channels=channels
             )
-    return [
-        GroupSummary(id=group_id, name=name, video_count=sum(c.video_count for c in channels), channels=channels)
-        for (group_id, name), channels in members.items()
-    ]
+        )
+    return summaries
 
 
 def channel_summaries(conn: sqlite3.Connection, scope: Scope | None = None) -> list[ChannelSummary]:
-    """Every indexed Channel, or the scope's Channels (indexed or not, as group_summaries lists them), with how many
-    searchable Videos each has."""
+    """Every indexed Channel, or the scope's Channels (indexed or not), with how many of its Videos the scope
+    covers."""
     rows = conn.execute(
         f"""
-        SELECT channels.id, channels.name, {_VIDEO_COUNT} AS video_count
+        SELECT channels.id, channels.name,
+               (SELECT count(*) FROM videos WHERE videos.channel_id = channels.id AND {VIDEO_IN_SCOPE}) AS video_count
         FROM channels
         WHERE (:scope_kind IS NOT NULL OR channels.indexed = 1) AND {CHANNEL_IN_SCOPE}
         ORDER BY channels.name COLLATE NOCASE, channels.id

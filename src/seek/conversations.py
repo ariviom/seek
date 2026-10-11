@@ -10,7 +10,7 @@ from seek.db import now_iso, transaction
 from seek.engines import NO_API_CONTEXT, ModelChoice, resolve_model
 from seek.errors import Conflict, NotFound
 from seek.ports import EngineName, PastMessage, TokenUsage
-from seek.scope import CHANNEL_IN_SCOPE, SCOPE_NOUN, Scope, ScopeKind, scope_params
+from seek.scope import CHANNEL_IN_SCOPE, SCOPE_NOUN, VIDEO_IN_SCOPE, Scope, ScopeKind, scope_params
 from seek.sources import watch_url
 
 
@@ -416,7 +416,7 @@ def record_usage(conn: sqlite3.Connection, turn: Turn, usage: TokenUsage, comple
 
 
 def _citations(conn: sqlite3.Connection, scope: Scope, links: Sequence[tuple[str, int]]) -> list[Citation]:
-    """Citations for the (YouTube video id, seconds) links that are to searchable Videos of the scope's Channels.
+    """Citations for the (YouTube video id, seconds) links that are to Videos the scope covers.
 
     Links to any other Video, including made-up ones, are not Citations.
     """
@@ -426,8 +426,7 @@ def _citations(conn: sqlite3.Connection, scope: Scope, links: Sequence[tuple[str
                channels.id AS channel_id, channels.name AS channel_name
         FROM videos
         JOIN channels ON channels.id = videos.channel_id
-        WHERE {CHANNEL_IN_SCOPE} AND channels.indexed = 1 AND videos.pipeline_stage = 'done'
-          AND videos.youtube_video_id IN (SELECT value FROM json_each(:links))
+        WHERE {VIDEO_IN_SCOPE} AND videos.youtube_video_id IN (SELECT value FROM json_each(:links))
         """,
         {**scope_params(scope), "links": json.dumps([video_id for video_id, _ in links])},
     )

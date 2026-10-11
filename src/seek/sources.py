@@ -10,7 +10,7 @@ from datetime import date
 
 from seek.errors import NotFound
 from seek.ports import Chapter, Cue
-from seek.scope import CHANNEL_IN_SCOPE, Scope, scope_params
+from seek.scope import VIDEO_IN_SCOPE, Scope, scope_params
 
 DEFAULT_EXPAND_SECONDS = 60
 MAX_EXPAND_SECONDS = 600
@@ -64,7 +64,7 @@ def expand(
 ) -> Expansion:
     """The Transcript's lines overlapping the Segment widened by before_seconds and after_seconds.
 
-    Given a scope, a Segment of a Channel outside it is not found.
+    A Segment of a Video that is not searchable, or that the scope given does not cover, is not found.
     """
     row = conn.execute(
         f"""
@@ -75,11 +75,10 @@ def expand(
         JOIN videos ON videos.id = segments.video_id
         JOIN transcripts ON transcripts.video_id = videos.id
         JOIN channels ON channels.id = videos.channel_id
-        WHERE segments.id = :segment_id AND channels.indexed = 1 AND {CHANNEL_IN_SCOPE}
+        WHERE segments.id = :segment_id AND {VIDEO_IN_SCOPE}
         """,
         {"segment_id": segment_id, **scope_params(scope)},
     ).fetchone()
-    # A not-indexed Channel is left out everywhere, as in search.
     if row is None:
         raise NotFound(f"Segment {segment_id} not found")
     window_start, window_end = row["start_seconds"] - before_seconds, row["end_seconds"] + after_seconds
@@ -105,13 +104,13 @@ def expand(
 
 
 def get_video(conn: sqlite3.Connection, video_id: int, scope: Scope | None = None) -> VideoInfo:
-    """Given a scope, a Video of a Channel outside it is not found."""
+    """A Video that is not searchable, or that the scope given does not cover, is not found."""
     row = conn.execute(
         f"""
         SELECT videos.*, channels.name AS channel_name
         FROM videos
         JOIN channels ON channels.id = videos.channel_id
-        WHERE videos.id = :video_id AND channels.indexed = 1 AND {CHANNEL_IN_SCOPE}
+        WHERE videos.id = :video_id AND {VIDEO_IN_SCOPE}
         """,
         {"video_id": video_id, **scope_params(scope)},
     ).fetchone()

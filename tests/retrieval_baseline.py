@@ -13,8 +13,8 @@ from seek.ranking import Recency
 from collections.abc import Mapping
 from pathlib import Path
 
-# Search still reads the frozen schema directly. Additive application migrations (such as preferences)
-# do not require changing the corpus; accept only a schema explicitly supported by this runner.
+# The schema the corpus was frozen at. The runner migrates its disposable copy to the current schema, which
+# Search reads; accept only a snapshot at the schema explicitly supported by this runner.
 RETRIEVAL_SCHEMA_VERSION = 11
 
 

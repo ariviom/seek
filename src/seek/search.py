@@ -16,7 +16,7 @@ from seek.db import Database
 from seek.errors import NotFound
 from seek.ports import Embedder, ModelUnavailable, Reranker
 from seek.ranking import Recency, fuse, matched_seconds, recency_score
-from seek.scope import CHANNEL_IN_SCOPE, Scope, scope_params
+from seek.scope import VIDEO_IN_SCOPE, Scope, scope_params
 from seek.segmentation import SegmentCue
 from seek.segments import passage_text
 from seek.sources import watch_url
@@ -57,74 +57,72 @@ class _Candidate:
 
 
 # Blocking: run through Database.run.
-def _scope_channels(
+def _scope_videos(
     conn: sqlite3.Connection, scope: Scope | None, group: int | str | None, channel_ids: Sequence[int] | None
 ) -> list[int]:
-    """The indexed Channels a search covers: a Conversation's scope, a Group's, the given Channels, or every one.
+    """The searchable Videos a search covers: a Conversation's scope, a Group's, the given Channels', or every one.
 
     A Group is given by id (an int) or by name (a str), so a Group named "12" is never confused with Group 12.
     """
-    if scope is not None:
-        rows = conn.execute(f"SELECT id FROM channels WHERE indexed = 1 AND {CHANNEL_IN_SCOPE}", scope_params(scope))
-    elif group is not None:
+    chosen_channels = None
+    if scope is None and group is not None:
         column = "id" if isinstance(group, int) else "name"
         found = conn.execute(f"SELECT id FROM groups WHERE {column} = ?", (group,)).fetchone()
         if found is None:
             raise NotFound(f"Group {group!r} not found")
-        rows = conn.execute(
-            """
-            SELECT channels.id FROM channels
-            JOIN group_channels ON group_channels.channel_id = channels.id
-            WHERE group_channels.group_id = ? AND channels.indexed = 1
-            """,
-            (found["id"],),
-        )
-    elif channel_ids is not None:
+        scope = Scope("group", found["id"])
+    elif scope is None and channel_ids is not None:
         # Bound as one JSON array, as groups.set_members does.
-        ids = json.dumps(list(dict.fromkeys(channel_ids)))
+        chosen_channels = json.dumps(list(dict.fromkeys(channel_ids)))
         existing = {
             row["id"]
-            for row in conn.execute("SELECT id FROM channels WHERE id IN (SELECT value FROM json_each(?))", (ids,))
+            for row in conn.execute(
+                "SELECT id FROM channels WHERE id IN (SELECT value FROM json_each(?))", (chosen_channels,)
+            )
         }
         if missing := [channel_id for channel_id in channel_ids if channel_id not in existing]:
             raise NotFound(f"Channel {missing[0]} not found")
-        rows = conn.execute(
-            "SELECT id FROM channels WHERE indexed = 1 AND id IN (SELECT value FROM json_each(?))", (ids,)
-        )
-    else:
-        rows = conn.execute("SELECT id FROM channels WHERE indexed = 1")
+    rows = conn.execute(
+        f"""
+        SELECT videos.id FROM videos
+        JOIN channels ON channels.id = videos.channel_id
+        WHERE {VIDEO_IN_SCOPE}
+          AND (
+            :chosen_channels IS NULL OR videos.channel_id IN (SELECT value FROM json_each(:chosen_channels))
+          )
+        """,
+        {**scope_params(scope), "chosen_channels": chosen_channels},
+    )
     return [row["id"] for row in rows]
 
 
 # Blocking: run through Database.run.
 def _candidates(
-    conn: sqlite3.Connection, channel_ids: Sequence[int], query: str, query_vector: Sequence[float]
+    conn: sqlite3.Connection, video_ids: Sequence[int], query: str, query_vector: Sequence[float]
 ) -> list[_Candidate]:
-    """The fused top vector and lexical hits within the Channels, best first and not yet scored."""
-    in_channels = ", ".join("?" * len(channel_ids))
-    # Scoped inside the KNN query, so a small Channel still gets its nearest Segments.
+    """The fused top vector and lexical hits within the Videos, best first and not yet scored."""
+    in_videos = json.dumps(list(video_ids))
+    # Scoped inside the KNN query, so a small scope still gets its nearest Segments.
     nearest = conn.execute(
-        f"""
+        """
         SELECT segment_id FROM segment_vectors
-        WHERE embedding MATCH ? AND k = ? AND channel_id IN ({in_channels})
+        WHERE embedding MATCH ? AND k = ? AND video_id IN (SELECT value FROM json_each(?))
         ORDER BY distance
         """,
-        (sqlite_vec.serialize_float32(list(query_vector)), CANDIDATES, *channel_ids),
+        (sqlite_vec.serialize_float32(list(query_vector)), CANDIDATES, in_videos),
     )
     rankings = [[row["segment_id"] for row in nearest]]
     # Any query word may match; quoting each word keeps FTS5 syntax in the query from being interpreted.
-    # Segments are indexed once a Video is segmented, but only a done Video's are searchable.
     if words := re.findall(r"\w+", query):
         lexical = conn.execute(
-            f"""
+            """
             SELECT segments.id FROM segments_fts
             JOIN segments ON segments.id = segments_fts.rowid
-            JOIN videos ON videos.id = segments.video_id
-            WHERE segments_fts MATCH ? AND videos.channel_id IN ({in_channels}) AND videos.pipeline_stage = 'done'
+            WHERE segments_fts MATCH ? AND segments.video_id IN (SELECT value FROM json_each(?))
             ORDER BY bm25(segments_fts)
             LIMIT ?
             """,
-            (" OR ".join(f'"{word}"' for word in words), *channel_ids, CANDIDATES),
+            (" OR ".join(f'"{word}"' for word in words), in_videos, CANDIDATES),
         )
         rankings.append([row["id"] for row in lexical])
     fused = fuse(rankings, limit=CANDIDATES)
@@ -141,7 +139,7 @@ def _candidates(
         (json.dumps(fused),),
     )
     by_id = {row["id"]: _unscored(query, row) for row in rows}
-    # A Segment replaced since the index lookups, or of a Video not yet done, is left out.
+    # A Segment replaced since the index lookups, or of a Video no longer done, is left out.
     return [by_id[segment_id] for segment_id in fused if segment_id in by_id]
 
 
@@ -195,10 +193,11 @@ class Search:
         given) everything."""
         # Composed, so accented words typed in decomposed form still match the transcript's words.
         query = unicodedata.normalize("NFC", query)
-        covered = await self._database.run(lambda conn: _scope_channels(conn, scope, group, channel_ids))
+        covered = await self._database.run(lambda conn: _scope_videos(conn, scope, group, channel_ids))
+        # Embedded even when the scope covers nothing, so a model that isn't ready is reported, not read as no results.
+        query_vector = await asyncio.to_thread(self._embedder.embed_query, query)
         if not covered:
             return []
-        query_vector = await asyncio.to_thread(self._embedder.embed_query, query)
         candidates = await self._database.run(lambda conn: _candidates(conn, covered, query, query_vector))
         if not candidates:
             return []

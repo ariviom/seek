@@ -116,6 +116,39 @@ def _thumbnails_preference(conn: sqlite3.Connection) -> None:
     )
 
 
+def _vectors_by_video(conn: sqlite3.Connection) -> None:
+    """Schema 19: a Segment's vector is filed under its Video, not its Channel, so a scope can be any set of Videos.
+
+    A vec0 table can't be altered, so it is rebuilt around a copy of its embeddings: nothing is re-embedded. It is
+    created under its final name, never renamed into place: SQLite refuses the rename while the trigger names the
+    table, and vec0 leaves its shadow tables under the old name, which breaks the table once it is reopened.
+    A knowledge base that has never started with an embedding model has no table yet (see ensure_embedding_model).
+    """
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'segment_vectors'").fetchone() is None:
+        return
+    (dimension,) = conn.execute("SELECT dimension FROM embedding_model").fetchone()
+    conn.executescript(
+        f"""
+        CREATE TEMP TABLE segment_vectors_copy AS
+            SELECT segment_vectors.segment_id, segments.video_id, segment_vectors.embedding
+            FROM segment_vectors JOIN segments ON segments.id = segment_vectors.segment_id;
+        DROP TRIGGER segment_vectors_delete;
+        DROP TABLE segment_vectors;
+        CREATE VIRTUAL TABLE segment_vectors USING vec0(
+            segment_id INTEGER PRIMARY KEY,
+            video_id INTEGER,
+            embedding float[{dimension}] distance_metric=cosine
+        );
+        INSERT INTO segment_vectors (segment_id, video_id, embedding)
+            SELECT segment_id, video_id, embedding FROM segment_vectors_copy;
+        CREATE TRIGGER segment_vectors_delete AFTER DELETE ON segments BEGIN
+            DELETE FROM segment_vectors WHERE segment_id = old.id;
+        END;
+        DROP TABLE segment_vectors_copy;
+        """
+    )
+
+
 # Applied in order; PRAGMA user_version records how many have run. Never edit a shipped entry.
 # A string entry runs with foreign keys ON inside a transaction, where they cannot be switched off: keep those
 # additive, because DROP TABLE on a parent would cascade-delete its children. A callable entry is a rebuild that
@@ -376,6 +409,7 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     ALTER TABLE channels ADD COLUMN check_every_hours INTEGER DEFAULT 24 CHECK (check_every_hours IN (6, 24, 168));
     UPDATE channels SET check_every_hours = NULL WHERE indexed = 0;
     """,
+    _vectors_by_video,
 ]
 
 
@@ -474,12 +508,12 @@ def ensure_embedding_model(conn: sqlite3.Connection, model_name: str, dimension:
         conn.execute(
             "INSERT OR REPLACE INTO embedding_model (id, name, dimension) VALUES (1, ?, ?)", (model_name, dimension)
         )
-        # channel_id is a metadata column so KNN can be scoped to Channels before taking the top k.
+        # video_id is a metadata column so KNN can be scoped to Videos before taking the top k.
         conn.executescript(
             f"""
             CREATE VIRTUAL TABLE segment_vectors USING vec0(
                 segment_id INTEGER PRIMARY KEY,
-                channel_id INTEGER,
+                video_id INTEGER,
                 embedding float[{dimension}] distance_metric=cosine
             );
             CREATE TRIGGER IF NOT EXISTS segment_vectors_delete AFTER DELETE ON segments BEGIN

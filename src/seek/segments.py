@@ -73,8 +73,7 @@ def record_embeddings(
     False if the Video is gone. Raises if the vectors aren't for exactly the Video's current Segments.
     """
     with transaction(conn):
-        row = conn.execute("SELECT channel_id FROM videos WHERE id = ?", (video_id,)).fetchone()
-        if row is None:
+        if conn.execute("SELECT 1 FROM videos WHERE id = ?", (video_id,)).fetchone() is None:
             return False
         segment_ids = [r["id"] for r in conn.execute("SELECT id FROM segments WHERE video_id = ?", (video_id,))]
         if sorted(segment_id for segment_id, _ in vectors) != sorted(segment_ids):
@@ -82,10 +81,7 @@ def record_embeddings(
         # One delete per id: vec0 looks rows up by primary key, but would scan every vector for a subquery.
         conn.executemany("DELETE FROM segment_vectors WHERE segment_id = ?", [(i,) for i in segment_ids])
         conn.executemany(
-            "INSERT INTO segment_vectors (segment_id, channel_id, embedding) VALUES (?, ?, ?)",
-            [
-                (segment_id, row["channel_id"], sqlite_vec.serialize_float32(list(vector)))
-                for segment_id, vector in vectors
-            ],
+            "INSERT INTO segment_vectors (segment_id, video_id, embedding) VALUES (?, ?, ?)",
+            [(segment_id, video_id, sqlite_vec.serialize_float32(list(vector))) for segment_id, vector in vectors],
         )
         return videos.complete_stage(conn, video_id, "embedded")

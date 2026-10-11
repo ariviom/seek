@@ -19,6 +19,7 @@ from harness import (
     running,
     said,
     sync,
+    wait_for_syncs,
 )
 from mcp.types import CallToolResult, TextContent
 
@@ -294,6 +295,25 @@ async def test_expand_and_get_video_leave_out_not_indexed_channels(
     assert (await client.get(f"/api/segments/{hit['segment_id']}/expand")).status_code == 404
     assert (await call_tool(app, "expand", {"segment_id": hit["segment_id"]})).is_error
     assert (await call_tool(app, "get_video", {"video_id": hit["video_id"]})).is_error
+
+
+async def test_expand_and_get_video_leave_out_a_video_that_is_not_searchable_yet(
+    served: Served, transcripts: FakeTranscriptSource, embedder: FakeEmbedder, config: Config
+) -> None:
+    client, app = served
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-vlog", "Vlog", cues=said("at the cabin")))
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    # Segmented, but the Sync stops before its Segments are embedded.
+    embedder.unavailable = "CUDA out of memory"
+    await client.post(f"/api/channels/{wright['id']}/syncs")
+    await wait_for_syncs(client)
+    embedder.unavailable = None
+    [segment] = query(config, "SELECT id, video_id FROM segments")
+
+    assert (await client.post("/api/search", json={"query": "cabin"})).json() == []
+    assert (await client.get(f"/api/segments/{segment['id']}/expand")).status_code == 404
+    assert (await call_tool(app, "expand", {"segment_id": segment["id"]})).is_error
+    assert (await call_tool(app, "get_video", {"video_id": segment["video_id"]})).is_error
 
 
 async def test_sql_answers_read_only_questions_across_the_knowledge_base_including_its_indexes(

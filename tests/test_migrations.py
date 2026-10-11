@@ -3,6 +3,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+import sqlite_vec
 from harness import running
 
 from seek import db
@@ -16,6 +17,7 @@ SCHEMA_13 = 13
 SCHEMA_14 = 14
 SCHEMA_16 = 16
 SCHEMA_17 = 17
+SCHEMA_18 = 18
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -52,6 +54,7 @@ def schema_8_knowledge_base(path: Path, monkeypatch: pytest.MonkeyPatch) -> sqli
     with pytest.MonkeyPatch.context() as pinned:
         pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_8])
         db.migrate(conn)
+    # The vector table as it is created now; its rebuild from the shape it had is tested from schema 18.
     db.ensure_embedding_model(conn, "fake-embedder", 4)
     conn.executescript(
         """
@@ -67,7 +70,7 @@ def schema_8_knowledge_base(path: Path, monkeypatch: pytest.MonkeyPatch) -> sqli
             VALUES (11, 'youtube_manual', 'en', '[]', '2025-01-01T00:00:00+00:00');
         INSERT INTO segments (id, video_id, start_seconds, end_seconds, text, cues, context)
             VALUES (21, 11, 0, 5, 'Sharpen the chisel', '[]', 'Sharpening chisels');
-        INSERT INTO segment_vectors (segment_id, channel_id, embedding) VALUES (21, 3, '[0.1, 0.2, 0.3, 0.4]');
+        INSERT INTO segment_vectors (segment_id, video_id, embedding) VALUES (21, 11, '[0.1, 0.2, 0.3, 0.4]');
         INSERT INTO syncs (id, channel_id, status, queued_at, stage_counts) VALUES (4, 3, 'done', '2025-01-01', '{}');
         INSERT INTO conversations (id, group_id, group_name, model, claude_session_id, created_at, title)
             VALUES (9, 2, 'Woodworking', 'opus', 'session-1', '2025-02-01T00:00:00+00:00', 'Stones'),
@@ -113,7 +116,7 @@ def test_migration_9_keeps_channels_groups_and_conversations_and_drops_mentors(
     ]
     assert [tuple(row) for row in conn.execute("SELECT id, channel_id FROM videos")] == [(11, 3)]
     assert [tuple(row) for row in conn.execute("SELECT id, channel_id FROM syncs")] == [(4, 3)]
-    assert [tuple(row) for row in conn.execute("SELECT segment_id, channel_id FROM segment_vectors")] == [(21, 3)]
+    assert [tuple(row) for row in conn.execute("SELECT segment_id, video_id FROM segment_vectors")] == [(21, 11)]
     roles = conn.execute("SELECT role FROM messages WHERE conversation_id = 9 ORDER BY id")
     assert [row["role"] for row in roles] == ["user", "assistant"]
     conn.close()
@@ -309,6 +312,80 @@ def test_a_rebuild_that_leaves_orphans_is_rolled_back(tmp_path: Path, monkeypatc
     assert user_version(conn) == len(db.MIGRATIONS) - 1
     assert conn.execute("SELECT count(*) FROM groups").fetchone()[0] == 0
     assert foreign_keys_on(conn)
+    conn.close()
+
+
+def schema_18_knowledge_base(path: Path) -> dict[int, bytes]:
+    """A knowledge base as Seek left it before a scope resolved to Videos: two Channels' Videos, done, with each
+    Segment's vector filed under its Channel. Returns each Segment's embedding as stored."""
+    dimension = FakeEmbedder.dimension
+    conn = db.connect(path)
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_18])
+        db.migrate(conn)
+    conn.executescript(
+        f"""
+        INSERT INTO embedding_model (id, name, dimension) VALUES (1, '{FakeEmbedder.model_name}', {dimension});
+        CREATE VIRTUAL TABLE segment_vectors USING vec0(
+            segment_id INTEGER PRIMARY KEY,
+            channel_id INTEGER,
+            embedding float[{dimension}] distance_metric=cosine
+        );
+        CREATE TRIGGER segment_vectors_delete AFTER DELETE ON segments BEGIN
+            DELETE FROM segment_vectors WHERE segment_id = old.id;
+        END;
+        INSERT INTO channels (id, youtube_channel_id, name)
+            VALUES (3, 'UC-wright', 'Wood By Wright'), (5, 'UC-rex', 'Rex Krueger');
+        INSERT INTO videos (id, channel_id, youtube_video_id, title, published_on, pipeline_stage, discovered_at)
+            VALUES (11, 3, 'v-chisels', 'Sharpening chisels', '2025-03-01', 'done', '2025-03-02T00:00:00+00:00'),
+                   (12, 3, 'v-planes', 'Tuning planes', '2025-03-01', 'done', '2025-03-02T00:00:00+00:00'),
+                   (13, 5, 'v-sheath', 'Leather sheath', '2025-03-01', 'done', '2025-03-02T00:00:00+00:00');
+        INSERT INTO transcripts (video_id, source, language, cues, fetched_at)
+            SELECT id, 'youtube_manual', 'en', '[]', '2025-03-02T00:00:00+00:00' FROM videos;
+        INSERT INTO segments (id, video_id, start_seconds, end_seconds, text, cues, context)
+            VALUES (21, 11, 0, 5, 'Sharpen the chisel', '[{{"start": 0.0, "offset": 0}}]', 'Sharpening chisels'),
+                   (22, 12, 0, 5, 'Flatten the sole', '[{{"start": 0.0, "offset": 0}}]', 'Tuning planes'),
+                   (23, 13, 0, 5, 'Stitch the sheath', '[{{"start": 0.0, "offset": 0}}]', 'Leather sheath');
+        """
+    )
+    # A different axis each, so a vector copied to the wrong Segment would show.
+    embeddings = {
+        segment_id: sqlite_vec.serialize_float32([float(axis == n) for axis in range(dimension)])
+        for n, segment_id in enumerate((21, 22, 23))
+    }
+    conn.executemany(
+        "INSERT INTO segment_vectors (segment_id, channel_id, embedding) VALUES (?, ?, ?)",
+        [(21, 3, embeddings[21]), (22, 3, embeddings[22]), (23, 5, embeddings[23])],
+    )
+    conn.close()
+    return embeddings
+
+
+async def test_migration_19_files_each_segments_vector_under_its_video_and_search_still_finds_it(
+    config: Config, tmp_path: Path
+) -> None:
+    embeddings = schema_18_knowledge_base(config.database_path)
+    app = create_app(
+        config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle"
+    )
+
+    async with running(app) as client:
+        # No word of the query is in any Segment, so only the vectors can find them.
+        everything = await client.post("/api/search", json={"query": "dovetails"})
+        one_channel = await client.post("/api/search", json={"query": "dovetails", "channels": [5]})
+
+    assert (everything.status_code, one_channel.status_code) == (200, 200), (everything.text, one_channel.text)
+    assert {(r["segment_id"], r["video_id"]) for r in everything.json()} == {(21, 11), (22, 12), (23, 13)}
+    assert [(r["segment_id"], r["video_id"]) for r in one_channel.json()] == [(23, 13)]
+    conn = db.connect(config.database_path)
+    assert user_version(conn) == len(db.MIGRATIONS)
+    vectors = conn.execute("SELECT segment_id, video_id, embedding FROM segment_vectors ORDER BY segment_id")
+    assert [tuple(row) for row in vectors] == [
+        (21, 11, embeddings[21]), (22, 12, embeddings[22]), (23, 13, embeddings[23])
+    ]
+    # The rebuilt table still loses a Segment's vector with the Segment.
+    conn.execute("DELETE FROM videos WHERE id = 11")
+    assert [row["segment_id"] for row in conn.execute("SELECT segment_id FROM segment_vectors")] == [22, 23]
     conn.close()
 
 

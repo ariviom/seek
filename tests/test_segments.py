@@ -36,7 +36,7 @@ async def sync_all(client: httpx.AsyncClient, *channel_ids: int) -> list[Json]:
     return await wait_for_syncs(client)
 
 
-async def test_a_sync_segments_and_embeds_videos_into_indexes_that_knn_can_scope_by_channel(
+async def test_a_sync_segments_and_embeds_videos_into_indexes_that_knn_can_scope_by_video(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder, config: Config
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(
@@ -81,10 +81,13 @@ async def test_a_sync_segments_and_embeds_videos_into_indexes_that_knn_can_scope
     assert lexical["rowid"] == segments[4]["id"]
     # The query is nearest Rex's Segment, so only filtering before taking the top k finds Wright's.
     nearest_rex = sqlite_vec.serialize_float32(embedder.embed_query("Welcome to Leather sheath"))
-    knn = "SELECT segment_id FROM segment_vectors WHERE embedding MATCH ? AND k = 2 AND channel_id = ?"
-    wright_hits = [r["segment_id"] for r in query(config, knn, (nearest_rex, wright["id"]))]
+    knn = """
+        SELECT segment_id FROM segment_vectors
+        WHERE embedding MATCH ? AND k = 2 AND video_id IN (SELECT value FROM json_each(?))
+    """
+    wright_hits = [r["segment_id"] for r in query(config, knn, (nearest_rex, json.dumps([segments[0]["video_id"]])))]
     assert len(wright_hits) == 2 and set(wright_hits) <= {s["id"] for s in segments[:4]}
-    assert [r["segment_id"] for r in query(config, knn, (nearest_rex, rex["id"]))] == [
+    assert [r["segment_id"] for r in query(config, knn, (nearest_rex, json.dumps([segments[4]["video_id"]])))] == [
         segments[4]["id"]
     ]
 

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from retrieval_baseline import Manifest, Questions, checksum, configured_snapshot, prepare_snapshot
 
+from seek import db
 from seek.db import Database
 from seek.models import CrossEncoderReranker, GpuRunner, SentenceTransformerEmbedder
 from seek.search import Search
@@ -32,6 +33,12 @@ async def test_frozen_retrieval_baseline(tmp_path: Path, monkeypatch: pytest.Mon
     manifest = Manifest.model_validate_json(manifest_path.read_text())
     fixture = Questions.model_validate_json(questions_path.read_text())
     working = prepare_snapshot(source, tmp_path / "run.db", manifest)
+    # Search reads the current schema, so the disposable copy is migrated as the app would; the snapshot never is.
+    conn = db.connect(working)
+    try:
+        db.migrate(conn)
+    finally:
+        conn.close()
     output = Path(os.environ.get("SEEK_RETRIEVAL_RESULTS", str(tmp_path / "retrieval-results.json"))).expanduser()
     if output.resolve() in {source.resolve(), manifest_path.resolve(), questions_path.resolve()}:
         raise ValueError("SEEK_RETRIEVAL_RESULTS must not overwrite the snapshot or frozen inputs")

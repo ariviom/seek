@@ -70,9 +70,10 @@ Ensure no scheduled Sync or foreground Seek can start concurrently. At initial c
 `systemctl --user is-active seek.service` and `/api/health` model readiness.
 
 The runner validates checksum/schema/model identity before copying to a disposable writable
-database. The supported retrieval schema remains 11: additive application migrations such
-as the settings table do not change this corpus or cause it to be migrated. The manifest
-and actual snapshot must both match that explicitly supported schema.
+database. The frozen snapshot stays at schema 11, and the manifest and actual snapshot must
+both match that explicitly supported schema. The disposable copy is then migrated to the
+current schema, as the app would on startup, because Search filters the vector index by
+Video (schema 19); the migration copies the stored embeddings and re-embeds nothing.
 It calls production `Search` and the existing CUDA model wrappers directly; it
 never starts application lifespan or a Sync worker. Time is frozen only at the search clock
 boundary. CUDA precision and ranking implementation remain unchanged. A missing
