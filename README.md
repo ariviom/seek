@@ -19,11 +19,13 @@
 
 Seek turns YouTube channels into a knowledge base you can question. Add the channels you learn from (woodworking,
 positioning, TypeScript, whatever you watch to get better at something), let Seek read every video's transcript, and
-then ask in plain language. Search goes by what was actually *said*, not by titles, tags or descriptions. Every answer
-links back to the exact timestamp, with frames of what was on screen, so you can check the advice against the source.
+then ask in plain language.
 
-Everything runs on your machine: the transcripts, the search index, and the models that read them. You can ask in the
-web UI, or give your coding agents (Claude Code, Codex) the same library over MCP.
+Search goes by what was actually *said*, not by titles, tags or descriptions. Every answer links back to the exact
+timestamp, with frames of what was on screen, so you can check the advice against the source.
+
+Everything runs on your machine: the transcripts, the search index, and the models that read them. Ask in the web UI,
+or give your coding agents (Claude Code, Codex) the same library over MCP.
 
 ## Contents
 
@@ -32,8 +34,8 @@ web UI, or give your coding agents (Claude Code, Codex) the same library over MC
 - [Install](#install)
 - [First run](#first-run)
 - [Upgrade](#upgrade)
-- Reference: [Checking for new videos](#check-for-new-videos-automatically-or-from-the-command-line) ·
-  [Status and diagnostics](#check-on-it-from-the-command-line) · [Data](#data) · [Configuration](#configuration) ·
+- Reference: [Keeping up with new videos](#keeping-up-with-new-videos) ·
+  [Status and diagnostics](#status-and-diagnostics) · [Data](#data) · [Configuration](#configuration) ·
   [Reverse proxy](#publishing-through-a-reverse-proxy) · [Agents (MCP)](#register-seek-with-your-agents) ·
   [Settings](#settings) · [Web chat](#web-chat) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -65,12 +67,15 @@ flowchart LR
     D --> G[MCP tools<br/>for your agents]
 ```
 
-A **Sync** lists a channel's or a playlist's videos, fetches their captions, and cuts each transcript into timestamped Segments. A local
-embedding model ([Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)) turns each Segment into a
-vector. Search combines full-text and vector matches, then a local reranker
-([mxbai-rerank-base-v2](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v2)) puts the best first. Everything
-lives in one SQLite file. The models run on an NVIDIA GPU when there is one, on Apple Silicon's GPU on a Mac, and on
-the CPU otherwise.
+- **Sync** lists a channel's or playlist's videos, fetches their captions, and cuts each transcript into timestamped
+  Segments.
+- **Embedding:** a local model ([Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)) turns each
+  Segment into a vector.
+- **Search** combines full-text and vector matches, then a local reranker
+  ([mxbai-rerank-base-v2](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v2)) puts the best first.
+- **Storage:** everything lives in one SQLite file.
+- **Hardware:** the models run on an NVIDIA GPU when there is one, on Apple Silicon's GPU on a Mac, and on the CPU
+  otherwise.
 
 ## Install
 
@@ -90,8 +95,9 @@ Seek installs from this repository with [uv](https://docs.astral.sh/uv/) and run
 | [Deno](https://deno.com) | yt-dlp needs it to solve YouTube's JavaScript challenges | `deno --version` | `curl -fsSL https://deno.land/install.sh \| sh` (macOS: or `brew install deno`) |
 | git | Fetches this repository | `git --version` | Usually present. On macOS, `xcode-select --install` |
 
-Each one takes a minute or two to install. Optionally, for the web chat, install
-[Claude Code](https://claude.com/claude-code) and log in, or have an
+Each one takes a minute or two to install.
+
+**Optional, for the web chat:** install [Claude Code](https://claude.com/claude-code) and log in, or have an
 [Anthropic API key](https://console.anthropic.com/settings/keys) ready. Seek works without either.
 
 ### 2. Install Seek
@@ -109,51 +115,69 @@ The install builds the web UI, so the first one takes a few minutes. Check it wi
 seek serve
 ```
 
-Seek prints its address (normally <http://127.0.0.1:7337/>). Wait for Uvicorn's line saying it's listening, then open
-the address in your browser. **Closing the terminal stops Seek**; so does Ctrl+C. On first start it creates its config
-and data directories, and keeps any that already exist.
-
-The first start also downloads the two models into the Hugging Face cache (`~/.cache/huggingface`, or `HF_HOME`),
-about 2.2 GB. The dot at the foot of the left rail shows their progress: hover it for the reason, click it for the
-details. After that, Seek starts and searches offline. Syncing and the web chat still need a connection.
+- Seek prints its address (normally <http://127.0.0.1:7337/>). Wait for Uvicorn's line saying it's listening, then
+  open the address in your browser.
+- **Closing the terminal stops Seek**; so does Ctrl+C.
+- On first start it creates its config and data directories, and keeps any that already exist.
+- The first start also downloads the two models (about 2.2 GB) into the Hugging Face cache (`~/.cache/huggingface`,
+  or `HF_HOME`). The dot at the foot of the left rail shows their progress: hover it for the reason, click it for the
+  details.
+- After that, Seek starts and searches offline. Syncing and the web chat still need a connection.
 
 ### Optional: run it as a Linux service
 
-On Linux, Seek can run in the background and start at login instead. Run `seek install-service` from an ordinary
-terminal (not an editor or agent session, whose PATH the service would copy).
+On Linux, Seek can run in the background and start at login. Run this from an ordinary terminal, not an editor or
+agent session (the service copies the PATH of the shell you run it from):
 
-`seek install-service` writes `~/.config/systemd/user/seek.service`, enables it, starts it, and waits until the server
-answers on <http://127.0.0.1:7337/>. From then on it starts whenever you log in. To start it at boot without logging in, run
-`loginctl enable-linger`. To run it in the foreground instead, use `seek serve`. Off Linux, `install-service` refuses
-and points to `seek serve`, and Sync is manual, from the web UI or `seek sync`.
+```sh
+seek install-service
+```
 
-The unit records the `seek` you ran and the PATH of the shell you ran it from, so the service finds `deno` the same
-way you do. Unless `claude_cli_path` is configured, it also records the first `claude` on that PATH as it appears
-there (for a standard install, the `~/.local/bin/claude` link, which survives Claude Code updates). It also copies any
-`SEEK_*` variables that are set, plus `HF_HOME`, `HF_HUB_CACHE`, `CUDA_VISIBLE_DEVICES`, `CLAUDE_CONFIG_DIR`,
-`XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, and `XDG_DATA_HOME`. It records nothing else, and it removes any
-`ANTHROPIC_API_KEY` from the service's environment, because the chat would bill that key instead of your subscription.
-It warns if `claude` or `deno` can't be found.
+It writes `~/.config/systemd/user/seek.service`, enables it, starts it, and waits until the server answers on
+<http://127.0.0.1:7337/>. From then on it starts whenever you log in.
 
-Recorded variables override the config file, like any `SEEK_*` variable. That includes the recorded
+| To | Run |
+| --- | --- |
+| Start at boot without logging in | `loginctl enable-linger` |
+| Check its status | `systemctl --user status seek` |
+| Read its logs | `journalctl --user -u seek` |
+| Apply config file changes | `systemctl --user restart seek` |
+| Change the recorded environment (see below) | `seek install-service` again |
+| Run in the foreground instead | `seek serve` |
+
+Off Linux, `install-service` refuses and points to `seek serve`, and Sync is manual, from the web UI or `seek sync`.
+
+<details>
+<summary><strong>What the service records</strong></summary>
+
+- The `seek` you ran, and the PATH of the shell you ran it from, so the service finds `deno` the same way you do.
+- Unless `claude_cli_path` is configured, the first `claude` on that PATH as it appears there (for a standard install,
+  the `~/.local/bin/claude` link, which survives Claude Code updates).
+- Any `SEEK_*` variables that are set, plus `HF_HOME`, `HF_HUB_CACHE`, `CUDA_VISIBLE_DEVICES`, `CLAUDE_CONFIG_DIR`,
+  `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, and `XDG_DATA_HOME`. Nothing else.
+- It **removes** any `ANTHROPIC_API_KEY` from the service's environment, because the chat would bill that key instead
+  of your subscription.
+- It warns if `claude` or `deno` can't be found.
+
+Recorded variables override the config file, like any `SEEK_*` variable, including the recorded
 `SEEK_CLAUDE_CLI_PATH`. Rerun `seek install-service` whenever they should change, including after you set
-`claude_cli_path`. Other config file changes only need a restart: `systemctl --user restart seek`.
+`claude_cli_path`. Other config file changes only need a restart.
 
-Status: `systemctl --user status seek`. Logs: `journalctl --user -u seek`.
+</details>
 
 ## First run
 
-1. **Add a channel.** Open **Library**, choose **Add channel**, and paste a channel's URL or `@handle`. Start with a
-   small one, a few dozen videos: Seek fetches and indexes every video it finds, and YouTube limits how fast it can
-   (roughly 300 videos an hour without a signed-in cookie file). A playlist is added the same way, from the
-   Library's **Playlists** tab with **Add playlist** and its URL.
+1. **Add a channel.** Open **Library**, choose **Add channel**, and paste a channel's URL or `@handle`.
+   - Start with a small one, a few dozen videos: Seek fetches and indexes every video it finds, and YouTube limits how
+     fast it can (roughly 300 videos an hour without a signed-in cookie file).
+   - A playlist is added the same way, from the Library's **Playlists** tab with **Add playlist** and its URL.
 2. **Watch it Sync.** **Syncs** shows each video as it becomes searchable, with the rate, an estimated finish, and any
    failures. You can close the tab: syncing carries on while Seek runs, and an interrupted Sync resumes where it
    stopped.
 3. **Search.** Use **Search** as soon as the first videos are ready. Results link to the moment in the video.
 4. **Set up chat (optional).** Open **Settings** (the gear) and either paste an Anthropic API key or check that Claude
-   Code shows as ready. Then start a chat on a channel, Group or Playlist from the Library, and ask away. Answers cite the moments
-   they draw on, and the chat shows the tokens each Conversation used.
+   Code shows as ready. Then start a chat on a channel, Group or Playlist from the Library, and ask away. Answers cite
+   the moments they draw on, and the chat shows the tokens each Conversation used.
 5. **Connect your agents (optional).** Run `seek mcp-config` for the exact command, or see
    [Register Seek with your agents](#register-seek-with-your-agents). For Claude Code:
 
@@ -161,19 +185,22 @@ Status: `systemctl --user status seek`. Logs: `journalctl --user -u seek`.
    claude mcp add --transport http --scope user seek http://127.0.0.1:7337/mcp
    ```
 
-A Playlist's videos can come from channels you haven't added. Those creators are named on the Playlist's page and in
-every result and citation, but they aren't Channels in your Library until you add them, which keeps the videos already
-indexed. A video a Playlist includes is searchable even where its Channel's Filters would leave it out (the minimum
-length still applies), and Search can cover one Playlist or everything, which includes every active Playlist. Pausing
-a Playlist takes it out of searches of everything and stops its checks; a video an active Channel of yours also has
-stays searchable.
-
-**Remove playlist** on the Playlist's page deletes the Playlist and its Syncs, and each of its videos unless a Channel
-in your Library or another Playlist still has it. Its chats stay readable but can't be continued. Removing a Channel
-works the other way round: videos a Playlist includes stay, still credited to that creator, who is then no longer in
-your Library.
-
 If something looks wrong, `seek doctor` prints one block, with secrets redacted, to paste to whoever is helping.
+
+### How Playlists relate to Channels
+
+- **Creators you haven't added.** A Playlist's videos can come from channels you haven't added. Those creators are
+  named on the Playlist's page and in every result and citation, but they aren't Channels in your Library until you
+  add them, which keeps the videos already indexed.
+- **Filters.** A video a Playlist includes is searchable even where its Channel's Filters would leave it out (the
+  minimum length still applies).
+- **Search scope.** Search can cover one Playlist or everything, which includes every active Playlist.
+- **Pausing a Playlist** takes it out of searches of everything and stops its checks; a video an active Channel of
+  yours also has stays searchable.
+- **Remove playlist** on the Playlist's page deletes the Playlist and its Syncs, and each of its videos unless a
+  Channel in your Library or another Playlist still has it. Its chats stay readable but can't be continued.
+- **Removing a Channel** works the other way round: videos a Playlist includes stay, still credited to that creator,
+  who is then no longer in your Library.
 
 ## Upgrade
 
@@ -184,26 +211,30 @@ uv tool install --reinstall git+https://github.com/ariviom/seek
 seek serve
 ```
 
-`--reinstall` fetches the latest revision. Your config, knowledge base, preferences and stored key all stay where they
-are. On macOS, the new install can trigger a keychain prompt to allow access to the stored key: choose **Always Allow**.
-For a Linux service installation, run `seek install-service` instead of `seek serve`, which refreshes the recorded
-environment and restarts the service.
+- `--reinstall` fetches the latest revision. Your config, knowledge base, preferences and stored key all stay where
+  they are.
+- **macOS:** the new install can trigger a keychain prompt to allow access to the stored key; choose **Always Allow**.
+- **Linux service:** run `seek install-service` instead of `seek serve`; it refreshes the recorded environment and
+  restarts the service.
 
-## Check for new videos automatically or from the command line
+## Keeping up with new videos
 
-While Seek runs, it checks each active Channel for new videos on its own: every 6 hours, daily or weekly, or not at
-all, chosen under **Check for new videos** on the Channel's page. New Channels check daily, but only after their first
-Sync, which you start: it ingests the whole catalogue, so set any Filters before it. A check is a
-normal Sync, queued once the Channel's latest Sync was queued longer ago than its interval, and never while one is
-already queued or running; like any later Sync it stops listing at videos Seek already knows (see below) and ingests
-the new ones. Checks happen only while Seek is running, on macOS and Linux alike; any that came due while it was
-stopped run as it starts. Pausing a Channel stops its checks without changing the setting, so resuming it restores
-them.
+### Automatic checks
 
-A Playlist is checked the same way, under **Check for changes** on its page: daily unless you choose otherwise, and
-only after the first Sync you start. Every Sync of a Playlist lists the whole playlist, ingests the videos new to it,
-and drops the ones no longer there. If YouTube lists nothing at all for a Playlist that has videos, the Sync fails and
-removes nothing.
+While Seek runs, it checks each active Channel and Playlist on its own.
+
+- **Channels:** set under **Check for new videos** on the Channel's page: every 6 hours, daily, weekly, or not at all.
+  New Channels check daily.
+- **Playlists:** set under **Check for changes** on the Playlist's page; daily unless you choose otherwise.
+- **The first Sync is yours to start.** Checks begin only after it. For a Channel it ingests the whole catalogue, so
+  set any Filters before it.
+- **A check is a normal Sync**, queued once the latest Sync was queued longer ago than the interval, and never while
+  one is already queued or running.
+- **Checks only happen while Seek is running**, on macOS and Linux alike. Any that came due while it was stopped run
+  as it starts.
+- **Pausing a Channel** stops its checks without changing the setting, so resuming it restores them.
+
+### Sync from the command line
 
 To Sync without waiting for a check:
 
@@ -213,42 +244,52 @@ seek sync --channel "Wood By Wright"      # one Channel, by its YouTube name or 
 seek sync --playlist "Sharpening picks"   # one Playlist, by its name or YouTube playlist id
 ```
 
-Channels and Playlists are added in the web UI; the command line only Syncs what the Library already has.
+- Channels and Playlists are added in the web UI; the command line only Syncs what the Library already has.
+- **Server running:** `seek sync` queues the Syncs there and returns; their progress and any failures show in the web
+  UI. If the service is running but not answering yet, it waits up to 30 seconds for the server first.
+- **Server not running:** `seek sync` loads the embedding model and runs the Syncs itself, returning when they finish
+  (it exits 1 if any failed).
+- **One Sync process at a time:** a server started meanwhile waits for it, and a `seek sync` started while another
+  process runs Syncs waits for that process to run its Syncs too.
 
-When the server is running, `seek sync` queues the Syncs there and returns; their progress and any failures show in
-the web UI. When it isn't, `seek sync` loads the embedding model and runs the Syncs itself, returning when they finish
-(it exits 1 if any failed). If the service is running but not answering yet, it waits up to 30 seconds for the server
-first. Only one process runs Syncs at a time: a server started meanwhile waits for it, and a `seek sync` started
-while another process runs Syncs waits for that process to run its Syncs too.
+### What a Sync fetches
 
-A Sync lists a Channel's videos and streams tabs (past livestreams included). Once a Channel has completed a Sync, later
-Syncs stop listing at the first page of Videos already known, unless the Channel has a most-recent filter or the Sync
-retries failures. A Video published in the last week without captions is retried by later Syncs, since YouTube may
-still be generating them. When YouTube refuses the captions of three Videos in a row, the Sync stops and the failed
-Videos wait for the next one; no Sync runs for `youtube_backoff_seconds`, doubling for each Sync in a row that stops so.
+- **Channels:** a Sync lists the videos and streams tabs (past livestreams included). Once a Channel has completed a
+  Sync, later Syncs stop listing at the first page of Videos already known, unless the Channel has a most-recent
+  filter or the Sync retries failures.
+- **Playlists:** every Sync lists the whole playlist, ingests the videos new to it, and drops the ones no longer
+  there. If YouTube lists nothing at all for a Playlist that has videos, the Sync fails and removes nothing.
+- **Missing captions:** a Video published in the last week without captions is retried by later Syncs, since YouTube
+  may still be generating them.
+- **Refusals:** when YouTube refuses the captions of three Videos in a row, the Sync stops and the failed Videos wait
+  for the next one. No Sync runs for `youtube_backoff_seconds`, doubling for each Sync in a row that stops so.
 
-`seek reindex --all` (or `--channel`, or `--playlist`) Syncs the same way but first re-cuts and re-embeds every Video already indexed
-from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a Seek that indexes
-passages differently; until each Video is done again it is out of search.
+### Reindex and storyboards
 
-`seek backfill-storyboards` takes the same three targets and stores the frames of searchable Videos that have none
-yet. It always runs in its own process, beside the server if one is running, and can be stopped and run again.
+Both take the same targets as `seek sync` (`--all`, `--channel`, or `--playlist`).
 
-## Check on it from the command line
+| Command | What it does |
+| --- | --- |
+| `seek reindex` | Syncs like `seek sync`, but first re-cuts and re-embeds every Video already indexed from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a Seek that indexes passages differently; until each Video is done again it is out of search. |
+| `seek backfill-storyboards` | Stores the frames of searchable Videos that have none yet. It always runs in its own process, beside the server if one is running, and can be stopped and run again. |
 
-```sh
-seek status   # the server, its models, both chat engines, and running and queued Syncs
-seek list     # Channels, active or paused, with ready, failed, and excluded Videos and when each last synced; then Groups with their Channels; then Playlists, with the same counts and their creators
-```
+## Status and diagnostics
 
-Both ask the running server. When none answers, they read the knowledge base instead: `seek status` then says the
-server isn't running (only the server loads the models) and checks both chat engines itself.
+| Command | Shows |
+| --- | --- |
+| `seek status` | The server, its models, both chat engines, and running and queued Syncs |
+| `seek list` | Channels (active or paused) with ready, failed and excluded Videos and when each last synced; then Groups with their Channels; then Playlists, with the same counts and their creators |
+| `seek doctor` | One block to paste to whoever is helping (below) |
 
-When something is wrong, `seek doctor` prints one block to paste to whoever is helping: versions, platform, paths,
-settings, each model's device and state, both chat engines, yt-dlp and JavaScript runtimes, the database's schema and
-row counts, and the latest stored errors. The API key, YouTube extractor argument values and cookie settings are
-redacted everywhere in it. Without a server it reads what it safely can and says what it couldn't; it never loads a
-model, creates or migrates the database, or contacts a provider.
+`status` and `list` ask the running server. When none answers, they read the knowledge base instead: `seek status`
+then says the server isn't running (only the server loads the models) and checks both chat engines itself.
+
+**`seek doctor`** reports versions, platform, paths, settings, each model's device and state, both chat engines,
+yt-dlp and JavaScript runtimes, the database's schema and row counts, and the latest stored errors.
+
+- The API key, YouTube extractor argument values and cookie settings are redacted everywhere in it.
+- Without a server it reads what it safely can and says what it couldn't. It never loads a model, creates or migrates
+  the database, or contacts a provider.
 
 ## Data
 
@@ -260,18 +301,21 @@ Default directories depend on the platform:
 | macOS | `~/Library/Application Support/seek` | `~/Library/Application Support/seek` |
 | Windows (preparatory) | `%APPDATA%\seek` | `%LOCALAPPDATA%\seek` |
 
-On Windows, missing application-data variables fall back to `~/AppData/Roaming/seek` for
-config and `~/AppData/Local/seek` for data. An explicit `XDG_CONFIG_HOME` or `XDG_DATA_HOME`
-takes precedence on **every** platform, with `seek` appended. The `data_dir` setting or
-`SEEK_DATA_DIR` overrides the data location independently of the config directory.
-All commands use the same resolution rules. `status` and `list` do not create an empty
-knowledge base just to report that none exists.
+- **Overrides:** an explicit `XDG_CONFIG_HOME` or `XDG_DATA_HOME` takes precedence on **every** platform, with `seek`
+  appended. The `data_dir` setting or `SEEK_DATA_DIR` overrides the data location independently of the config
+  directory.
+- **Windows fallback:** missing application-data variables fall back to `~/AppData/Roaming/seek` for config and
+  `~/AppData/Local/seek` for data.
+- All commands use the same resolution rules. `status` and `list` do not create an empty knowledge base just to report
+  that none exists.
 
 The data directory contains:
 
-- `seek.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Playlists, Transcripts, Segments,
-  vectors, and Conversations.
-- `chat/` is the empty working directory the web chat runs the Claude CLI in when no project directory is attached.
+- `seek.db`: the whole knowledge base in one SQLite file (Channels, Groups, Playlists, Transcripts, Segments, vectors,
+  and Conversations).
+- `chat/`: the empty working directory the web chat runs the Claude CLI in when no project directory is attached.
+
+### Backup
 
 Backup is a copy of `seek.db`. The database uses WAL mode, so recent changes can sit in `seek.db-wal` beside it.
 Either stop the service and copy both files, or take a consistent single-file copy while it runs:
@@ -283,37 +327,20 @@ sqlite3 ~/.local/share/seek/seek.db ".backup $HOME/seek-backup.db"
 
 ## Configuration
 
-The config file holds operational settings, the database `settings` table holds user preferences,
-and the OS keychain holds secrets (with a private fallback file where necessary). The Settings screen
-in the app (the gear in the rail) manages the preferences and the key; these never belong in `config.toml`,
-and nothing in `config.toml` is editable from the app.
+Seek keeps three kinds of state apart:
 
-`GET /api/settings` reads preferences; `PATCH /api/settings` updates supplied fields only:
-`engine` accepts `api`, `cli`, or `null` (automatic); `provider` is `anthropic`; `model` is
-`fast` (default) or `deep`. These preferences persist across restarts, and a change reaches your next
-question rather than one already being answered. See [Web chat](#web-chat) for what each engine does
-with them.
+| What | Where | Managed from |
+| --- | --- | --- |
+| Operational settings | `config.toml` in the configuration directory | The file only; nothing in it is editable from the app |
+| Preferences (engine, model) | The database's `settings` table | The [Settings](#settings) screen, or `/api/settings` |
+| Secrets (the Anthropic API key) | The OS keychain, with a private fallback file where necessary | The Settings screen, or `/api/credentials/anthropic` |
 
-`PUT /api/credentials/anthropic` accepts a JSON `key` field, stores it, and makes one authenticated
-[model-list request](https://platform.claude.com/docs/en/api/models/list) with no retries or generated tokens.
-GET reads presence, last-known validity, and whether the key is in the keychain or the private fallback
-file, with the reason; DELETE removes the credential without a restart.
-Responses never contain the key. Validity is `valid`, `invalid` after authentication rejection,
-or `unverified` when validation cannot complete (for example, offline or rate limited).
-Health never contacts Anthropic. `ANTHROPIC_API_KEY` is never a credential fallback.
-Successful writes publish `settings` or `credentials` events so clients can reload safe state.
+Preferences and the key never belong in `config.toml`.
 
-Credentials normally live in the OS keychain via `keyring`. If the keychain is unavailable, locked,
-or refuses access, Seek uses owner-only `secrets.json` in the data directory. That file also
-records which credential copy is current so an old copy cannot return after replacement or deletion.
-Keep it with the data directory. If a keychain read fails after a restart and no fallback copy exists,
-Seek reports the credential unavailable until the keychain is unlocked or the key is replaced.
-On macOS, replacing the interpreter during an upgrade can trigger a keychain allow/always-allow prompt.
-Real Mac verification remains deferred until hardware is available.
+### `config.toml`
 
-Operational settings are read from `config.toml` in the configuration directory above. The file is optional;
-startup creates the directory, not a replacement config file. An environment variable `SEEK_<KEY>`
-overrides any key; for example, `SEEK_PORT=7400` overrides `port`. Unknown keys are an error.
+The file is optional; startup creates the directory, not a replacement config file. An environment variable
+`SEEK_<KEY>` overrides any key; for example, `SEEK_PORT=7400` overrides `port`. Unknown keys are an error.
 
 ```toml
 port = 7400
@@ -346,17 +373,19 @@ allowed_hosts = ["seek.example.com"]
 | `cf_access_aud` | none | The Access application's Audience (AUD) tag |
 | `listen_all_interfaces` | `false` | Listen on every network interface, not only 127.0.0.1; needs the two Access keys (see [Publishing](#publishing-through-a-reverse-proxy)) |
 
-Notes:
+#### Notes on specific keys
 
 - **Embedding model.** A knowledge base keeps the embedding model it was built with. Once it holds vectors, the server
   refuses to start with a different one, so give a new model a new `data_dir`.
 - **Rate limits.** Without a cookie file, YouTube tolerates roughly 300 Videos an hour; a signed-in cookie file allows
-  about three times that. yt-dlp writes refreshed cookies back to the file, so it must be writable.
-  `youtube_cookies_from_browser` reads the browser's own cookie store instead (the browser must be closed for Chrome and
-  Chromium); the service then needs access to that profile. Sync waits between YouTube calls are jittered by ±30%.
+  about three times that.
+  - yt-dlp writes refreshed cookies back to the file, so it must be writable.
+  - `youtube_cookies_from_browser` reads the browser's own cookie store instead (the browser must be closed for Chrome
+    and Chromium); the service then needs access to that profile.
+  - Sync waits between YouTube calls are jittered by ±30%.
 - **Private playlists.** A public or unlisted playlist needs no cookies. A private playlist of your own can be added
   and synced only while `youtube_cookie_file` or `youtube_cookies_from_browser` is signed in as you, whether the Sync
-  runs in the server or in `seek sync`; without that, YouTube answers as if the playlist didn't exist.
+  runs in the server or in `seek sync`. Without that, YouTube answers as if the playlist didn't exist.
 - **Extractor arguments.** `youtube_extractor_args` is a TOML table whose values are strings or lists of strings:
 
   ```toml
@@ -369,39 +398,87 @@ Notes:
   documentation of `--extractor-args youtube:` for what it accepts; a wrong value fails the next Sync with yt-dlp's
   message.
 - **Allowed hosts.** `allowed_hosts` takes a TOML list, or a comma-separated string in `SEEK_ALLOWED_HOSTS`.
-  `host:*` allows any port. Loopback is always allowed. Every request's `Host`, `X-Forwarded-Host`, and `Origin` must
-  name an allowed host, which stops a web page on another site from reaching Seek by pointing its hostname at this
-  machine. Pages served from localhost on any port are allowed, so only run local web apps you trust.
-  (This key was `mcp_allowed_hosts` before it covered the whole server.)
+  - `host:*` allows any port. Loopback is always allowed.
+  - Every request's `Host`, `X-Forwarded-Host`, and `Origin` must name an allowed host, which stops a web page on
+    another site from reaching Seek by pointing its hostname at this machine.
+  - Pages served from localhost on any port are allowed, so only run local web apps you trust.
+  - This key was `mcp_allowed_hosts` before it covered the whole server.
+
+### Preferences and the API key over HTTP
+
+**`/api/settings`**: `GET` reads preferences; `PATCH` updates supplied fields only.
+
+| Field | Values |
+| --- | --- |
+| `engine` | `api`, `cli`, or `null` (automatic) |
+| `provider` | `anthropic` |
+| `model` | `fast` (default) or `deep` |
+
+Preferences persist across restarts, and a change reaches your next question rather than one already being answered.
+See [Web chat](#web-chat) for what each engine does with them.
+
+**`/api/credentials/anthropic`**:
+
+- `PUT` accepts a JSON `key` field, stores it, and makes one authenticated
+  [model-list request](https://platform.claude.com/docs/en/api/models/list) with no retries or generated tokens.
+- `GET` reads presence, last-known validity, and whether the key is in the keychain or the private fallback file,
+  with the reason. Validity is `valid`, `invalid` after authentication rejection, or `unverified` when validation
+  cannot complete (for example, offline or rate limited).
+- `DELETE` removes the credential without a restart.
+
+Responses never contain the key. Health never contacts Anthropic. `ANTHROPIC_API_KEY` is never a credential fallback.
+Successful writes publish `settings` or `credentials` events so clients can reload safe state.
+
+### Where the key is stored
+
+- Credentials normally live in the OS keychain via `keyring`.
+- If the keychain is unavailable, locked, or refuses access, Seek uses owner-only `secrets.json` in the data
+  directory. That file also records which credential copy is current, so an old copy cannot return after replacement
+  or deletion. Keep it with the data directory.
+- If a keychain read fails after a restart and no fallback copy exists, Seek reports the credential unavailable until
+  the keychain is unlocked or the key is replaced.
+- On macOS, replacing the interpreter during an upgrade can trigger a keychain allow/always-allow prompt. Real Mac
+  verification remains deferred until hardware is available.
 
 ## Publishing through a reverse proxy
 
-Seek listens on 127.0.0.1, so to reach it from elsewhere, publish it through a reverse proxy on this machine,
-with an identity gate such as Cloudflare Access in front, or [let Cloudflare reach it directly](#without-a-proxy). Seek has no login of its own: anyone who reaches a
-published URL gets the whole API, the web chat (on your Claude subscription), and the `sql` tool.
+Seek listens on 127.0.0.1, so to reach it from elsewhere, publish it through a reverse proxy on this machine, with an
+identity gate such as Cloudflare Access in front, or [let Cloudflare reach it directly](#without-a-proxy).
 
-1. Add the public hostname to `allowed_hosts`.
-2. Have the proxy send `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host`. Traefik and Caddy do by
-   default; nginx needs a `proxy_set_header` for each. A proxy that passes the public hostname as `Host` can skip
-   `X-Forwarded-Host`; otherwise the `Host` it sends must be loopback (such as `127.0.0.1:7337`) or allowed. Seek uses
-   these headers for the URLs it builds, and they tell it the request was relayed: **a proxy that sends none of them
-   looks like a local request, so the Cloudflare Access check below lets it through.**
-3. To publish under a path such as `https://seek.example.com/seek/`, have the proxy send
-   `X-Forwarded-Prefix: /seek`, as Traefik's StripPrefix does. It may strip the prefix or pass it through. The web UI,
-   API, event stream, and `/mcp` all work under it, and Seek still answers at the root locally. Seek tells the two
-   apart by whether the path starts with the prefix, so don't use one of its own top-level paths (`/api`, `/mcp`,
-   `/assets`, `/docs`) as the prefix.
-4. Don't let the proxy buffer responses: the event stream sends `X-Accel-Buffering: no` and a keepalive every 15
+> [!WARNING]
+> Seek has no login of its own. Anyone who reaches a published URL gets the whole API, the web chat (on your Claude
+> subscription), and the `sql` tool.
+
+1. **Add the public hostname** to `allowed_hosts`.
+2. **Forward the headers.** Have the proxy send `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host`.
+   - Traefik and Caddy do by default; nginx needs a `proxy_set_header` for each.
+   - A proxy that passes the public hostname as `Host` can skip `X-Forwarded-Host`; otherwise the `Host` it sends must
+     be loopback (such as `127.0.0.1:7337`) or allowed.
+   - Seek uses these headers for the URLs it builds, and they tell it the request was relayed. **A proxy that sends
+     none of them looks like a local request, so the Cloudflare Access check below lets it through.**
+3. **To publish under a path** such as `https://seek.example.com/seek/`, have the proxy send
+   `X-Forwarded-Prefix: /seek`, as Traefik's StripPrefix does.
+   - It may strip the prefix or pass it through. The web UI, API, event stream, and `/mcp` all work under it, and Seek
+     still answers at the root locally.
+   - Seek tells the two apart by whether the path starts with the prefix, so don't use one of its own top-level paths
+     (`/api`, `/mcp`, `/assets`, `/docs`) as the prefix.
+4. **Don't let the proxy buffer responses.** The event stream sends `X-Accel-Buffering: no` and a keepalive every 15
    seconds, and the web chat streams its answers the same way.
 
-**Cloudflare Access verification** (optional, off by default) guards against a request that reaches the proxy
-without going through Access, for example on the machine's own IP address. Set `cf_access_team_domain` to your team
-domain (`myteam.cloudflareaccess.com`) and `cf_access_aud` to the application's Audience tag (in Zero Trust, under the
-Access application's overview). Then every request needs a valid `Cf-Access-Jwt-Assertion` header, checked against your
-team's signing keys, which Seek fetches and caches. The exception is a request made directly on this machine: from
-loopback, with no `X-Forwarded-*`, `Forwarded`, `X-Real-IP`, or `Cf-*` headers, such as local agents, `seek sync`,
-and a browser on this machine. Refused requests get 403, and 503 while Seek can't fetch the keys at all. If your session expires while the web UI is open, it says
-that live updates stopped; reload the page to sign in again.
+### Cloudflare Access verification
+
+Optional and off by default. It guards against a request that reaches the proxy without going through Access, for
+example on the machine's own IP address.
+
+- **To turn it on**, set `cf_access_team_domain` to your team domain (`myteam.cloudflareaccess.com`) and
+  `cf_access_aud` to the application's Audience tag (in Zero Trust, under the Access application's overview).
+- **Then every request needs** a valid `Cf-Access-Jwt-Assertion` header, checked against your team's signing keys,
+  which Seek fetches and caches.
+- **Except a request made directly on this machine:** from loopback, with no `X-Forwarded-*`, `Forwarded`,
+  `X-Real-IP`, or `Cf-*` headers, such as local agents, `seek sync`, and a browser on this machine.
+- **Refused requests** get 403, and 503 while Seek can't fetch the keys at all.
+- **If your session expires** while the web UI is open, it says that live updates stopped; reload the page to sign in
+  again.
 
 ### Without a proxy
 
@@ -422,6 +499,7 @@ Access, and requests made on this machine, get through. Restart the service afte
 ## Register Seek with your agents
 
 The MCP endpoint is `http://127.0.0.1:7337/mcp`, exactly: `/mcp/` with a trailing slash answers 405.
+
 `seek mcp-config` prints the client configuration for the configured port as JSON on stdout, with registration
 instructions on stderr, so `seek mcp-config > .mcp.json` saves a project configuration Claude Code reads.
 
@@ -441,9 +519,13 @@ codex mcp add seek --url http://127.0.0.1:7337/mcp
 localhost. [Publish the server](#publishing-through-a-reverse-proxy), behind an identity gate. Then, in Settings →
 Connectors → Add custom connector, enter `https://seek.example.com/mcp`.
 
-The tools are `list_groups`, `list_playlists`, `list_channels`, `search` (scoped to a `group`, a list of `channels`,
-or a `playlist`), `expand`, `get_video`, and `sql`. A `search` with no scope covers every active Channel and
-Playlist, and each result carries its Channel and the ids of the active Playlists that include its video.
+### Tools
+
+`list_groups`, `list_playlists`, `list_channels`, `search` (scoped to a `group`, a list of `channels`, or a
+`playlist`), `expand`, `get_video`, and `sql`.
+
+A `search` with no scope covers every active Channel and Playlist, and each result carries its Channel and the ids of
+the active Playlists that include its video.
 
 ## Settings
 
@@ -451,32 +533,39 @@ The gear in the rail opens Settings, which is everything that is yours: which en
 and the default model. It also shows, read-only, what each engine needs before it can answer and which device and
 precision the embedding and reranking models are running at.
 
-Pasting a key validates it there and says whether Anthropic accepted it, rejected it, or didn't answer. The key
-is never shown again, never returned by the server, and never kept in the browser. If the keychain refused it,
-or cannot be read, the screen says so and still lets you replace or delete the key. Accepting a key brings the
-chat box to life in every open tab without a reload, unless you have chosen the Claude CLI as your engine; and
-whenever the engine that would answer can't, the chat box is disabled and points here instead of failing a
-question you have already typed.
-
-Changing the default model reaches your next question. A chat that pinned its own model keeps it and says
-`Pinned: …`; one following the setting says `Default: …`.
+- **Pasting a key** validates it there and says whether Anthropic accepted it, rejected it, or didn't answer.
+- **The key is never shown again**, never returned by the server, and never kept in the browser.
+- **If the keychain refused it**, or cannot be read, the screen says so and still lets you replace or delete the key.
+- **Accepting a key** brings the chat box to life in every open tab without a reload, unless you have chosen the
+  Claude CLI as your engine.
+- **Whenever the engine that would answer can't**, the chat box is disabled and points here instead of failing a
+  question you have already typed.
+- **Changing the default model** reaches your next question. A chat that pinned its own model keeps it and says
+  `Pinned: …`; one following the setting says `Default: …`.
 
 ## Web chat
 
-A chat in a Group, a Channel or a Playlist answers through one of two engines: the **Anthropic API**, using a key you store in
-Settings (or `PUT /api/credentials/anthropic`), or your own **Claude CLI**, using the Claude Code login you already
-have. Both get
-the same scoped Seek tools, the same grounded-advisor prompt, and the same streamed answers with Citations.
+A chat in a Group, a Channel or a Playlist answers through one of two engines:
 
-Chat is the only thing an engine gates. Search, the Library, Syncs and the MCP tools work without either.
+- the **Anthropic API**, using a key you store in Settings (or `PUT /api/credentials/anthropic`), or
+- your own **Claude CLI**, using the Claude Code login you already have.
 
-With no stored preference, Seek uses the API engine when a key is present and the Claude CLI otherwise. Set
-`engine` in `PATCH /api/settings` to `"api"` or `"cli"` to choose deliberately, or to `null` to go back to automatic.
-A preference whose requirement is missing is an error that says what to add, not a quiet switch to the other engine.
+Both get the same scoped Seek tools, the same grounded-advisor prompt, and the same streamed answers with Citations.
+Chat is the only thing an engine gates: Search, the Library, Syncs and the MCP tools work without either.
+
+### Choosing an engine
+
+- With no stored preference, Seek uses the API engine when a key is present and the Claude CLI otherwise.
+- Set `engine` in `PATCH /api/settings` to `"api"` or `"cli"` to choose deliberately, or to `null` to go back to
+  automatic.
+- A preference whose requirement is missing is an error that says what to add, not a quiet switch to the other
+  engine.
+
+### Engine health
 
 Both engines' availability shows in the rail's health dot (hover it for the reason, click it for the details) and in
-the `chat` part of `/api/health`, which reports `active` — the engine the next turn would use, or `null` when neither
-can answer — and a state per engine with a message saying what to do:
+the `chat` part of `/api/health`. That reports `active` (the engine the next turn would use, or `null` when neither
+can answer) and a state per engine with a message saying what to do:
 
 | Engine | State | What to do |
 |---|---|---|
@@ -491,32 +580,51 @@ can answer — and a state per engine with a message saying what to do:
 Health never calls the provider: it reports the last known state of the key, so an offline machine says what it knew
 rather than flapping. A key is checked once when you store it, and again only by a turn that it fails.
 
-`model` in `PATCH /api/settings` picks `"fast"` or `"deep"`, which each engine maps to its own identifier — the API
-engine to `claude-sonnet-5` and `claude-opus-5`, the Claude CLI to its `sonnet` and `opus` aliases. A model set on a
-Conversation is a pin and wins for that Conversation; the rest follow the setting from their next question, including
-mid-thread. A pin travels between engines — a Conversation pinned to `opus` on the Claude CLI asks the API engine for
-`claude-opus-5`, and back again — and a pin the API engine cannot express is refused before the question is saved rather than
-quietly changed (the Claude CLI accepts names Seek doesn't know, so it does its own rejecting). Note
-that an unpinned Conversation on the Claude CLI now asks for `sonnet` explicitly; letting Claude Code pick its own
-default is no longer an option, because the setting has to mean something on both engines. Each message records the engine and model that produced it, and each question records what its turn
-reported using, so a Conversation can total its tokens. A turn that failed or was stopped keeps what it had already
-reported and says the total is incomplete rather than claiming to be a bill. The chat shows those totals under the
-chat box — input, output and cache reads — and says the real total is higher when a turn didn't report what it
-used. Older Conversations say their usage wasn't recorded rather than showing a zero.
+### Models and pins
+
+- `model` in `PATCH /api/settings` picks `"fast"` or `"deep"`, which each engine maps to its own identifier:
+
+  | Setting | API engine | Claude CLI |
+  | --- | --- | --- |
+  | `fast` | `claude-sonnet-5` | `sonnet` |
+  | `deep` | `claude-opus-5` | `opus` |
+
+- **A model set on a Conversation is a pin** and wins for that Conversation. The rest follow the setting from their
+  next question, including mid-thread.
+- **A pin travels between engines.** A Conversation pinned to `opus` on the Claude CLI asks the API engine for
+  `claude-opus-5`, and back again. A pin the API engine cannot express is refused before the question is saved rather
+  than quietly changed (the Claude CLI accepts names Seek doesn't know, so it does its own rejecting).
+- **An unpinned Conversation on the Claude CLI asks for `sonnet` explicitly.** Letting Claude Code pick its own
+  default is no longer an option, because the setting has to mean something on both engines.
+
+### Token usage
+
+- Each message records the engine and model that produced it, and each question records what its turn reported
+  using, so a Conversation can total its tokens.
+- The chat shows those totals under the chat box: input, output and cache reads.
+- A turn that failed or was stopped keeps what it had already reported and says the total is incomplete rather than
+  claiming to be a bill. The chat says the real total is higher when a turn didn't report what it used.
+- Older Conversations say their usage wasn't recorded rather than showing a zero.
+
+### Add context (Claude CLI only)
 
 The **Add context** control beside the chat box can give a new Conversation read-only access to one local project
-directory, the public web, or both. Those tools are Claude Code built-ins, so they are a Claude CLI capability only:
-the control is hidden while the API engine is active, and the API engine refuses such a Conversation before making any
-request rather than answering without them. A Conversation that already has context keeps showing what it holds even
-on the API engine, with a line saying to switch this chat to the Claude CLI or start a new one; nothing is removed. Context is fixed after the first question so a resumed Claude session keeps
-the same working directory and capabilities. Project access exposes only file reading, listing, and search within the
-selected directory; web access exposes Claude Code's web search and fetch tools. User settings, plugins, skills, other
-MCP servers, file editing, and shell commands stay disabled. Channel-derived advice still needs Seek's timestamped
-citations, while observations from a project or web page are identified separately.
+directory, the public web, or both.
+
+- **Claude CLI only.** These tools are Claude Code built-ins, so the control is hidden while the API engine is active,
+  and the API engine refuses such a Conversation before making any request rather than answering without them.
+- **Switching engines.** A Conversation that already has context keeps showing what it holds even on the API engine,
+  with a line saying to switch this chat to the Claude CLI or start a new one; nothing is removed.
+- **Fixed after the first question**, so a resumed Claude session keeps the same working directory and capabilities.
+- **What's exposed.** Project access exposes only file reading, listing, and search within the selected directory;
+  web access exposes Claude Code's web search and fetch tools. User settings, plugins, skills, other MCP servers, file
+  editing, and shell commands stay disabled.
+- **Citations.** Channel-derived advice still needs Seek's timestamped citations, while observations from a project
+  or web page are identified separately.
 
 ## Troubleshooting
 
-**An agent says Seek is unreachable.**
+### An agent says Seek is unreachable
 
 1. Check that the server is up: `curl http://127.0.0.1:7337/api/health` should answer with `"status": "ok"`.
 2. If it doesn't, check `systemctl --user status seek` and `journalctl --user -u seek -e`. Common causes:
@@ -531,24 +639,33 @@ citations, while observations from a project or web page are identified separate
 4. After changing settings, restart the service, then restart the agent session (or `/mcp` in Claude Code to
    reconnect).
 
-**Models fail to load.** The rail's health dot turns red; hover it for the reason, click it for the details.
-`seek status` and Server health show each model's device, precision and fallback reason. CUDA uses bfloat16 where
-supported and float32 otherwise; MPS and CPU use float32. If MPS reranking fails during warm-up or a search, only
-the reranker retries on CPU. If that also fails, search still returns fused results without reranking; their order
-may be less accurate. The embedding model must be ready for search and Syncs.
+### Models fail to load
 
-If CUDA runs out of memory, free GPU memory and restart Seek. A Video that runs out of CUDA memory during
-embedding can be retried without losing its transcript. Allocation failures on MPS or CPU are reported as model
-failures. A missing model cache needs an online restart to download it; download progress remains visible in
-the terminal and web UI. With both models fully cached, `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 seek serve`
-starts and searches locally without network access. YouTube Sync and provider chat still need connectivity.
+The rail's health dot turns red; hover it for the reason, click it for the details. `seek status` and Server health
+show each model's device, precision and fallback reason.
 
-**Syncs fail with "Sign in to confirm you're not a bot" or rate limits.** Wait before syncing again, raise
-`youtube_delay_seconds`, or add a `youtube_cookie_file`. If Videos fail on JavaScript challenges, check that `deno` is
-on the PATH the service recorded, and rerun `seek install-service` if it isn't.
+- **Precision:** CUDA uses bfloat16 where supported and float32 otherwise; MPS and CPU use float32.
+- **Reranker fallback:** if MPS reranking fails during warm-up or a search, only the reranker retries on CPU. If that
+  also fails, search still returns fused results without reranking; their order may be less accurate.
+- **The embedding model must be ready** for search and Syncs.
+- **Out of memory:** if CUDA runs out of memory, free GPU memory and restart Seek. A Video that runs out of CUDA
+  memory during embedding can be retried without losing its transcript. Allocation failures on MPS or CPU are
+  reported as model failures.
+- **Missing model cache:** needs an online restart to download it; download progress remains visible in the terminal
+  and web UI.
+- **Offline:** with both models fully cached, `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 seek serve` starts and
+  searches locally without network access. YouTube Sync and provider chat still need connectivity.
 
-**A Sync stopped mid-way.** Stopping the service can't interrupt a Sync waiting out YouTube's backoff, so it is killed
-after 20 seconds. It resumes when the server starts again.
+### Syncs fail with "Sign in to confirm you're not a bot" or rate limits
+
+Wait before syncing again, raise `youtube_delay_seconds`, or add a `youtube_cookie_file`. If Videos fail on
+JavaScript challenges, check that `deno` is on the PATH the service recorded, and rerun `seek install-service` if it
+isn't.
+
+### A Sync stopped mid-way
+
+Stopping the service can't interrupt a Sync waiting out YouTube's backoff, so it is killed after 20 seconds. It
+resumes when the server starts again.
 
 ## Development
 
