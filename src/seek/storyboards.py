@@ -146,8 +146,8 @@ def read_frames(conn: sqlite3.Connection, moments: Sequence[Moment]) -> list[Vid
     return found
 
 
-def missing(conn: sqlite3.Connection, channel_id: int | None) -> list[tuple[int, str]]:
-    """The searchable Videos of the Channel, or every searchable Video, with no storyboard stored yet, as discovered.
+def missing(conn: sqlite3.Connection, scope: Scope | None) -> list[tuple[int, str]]:
+    """The searchable Videos the scope covers, or every searchable Video, with no storyboard stored yet, as discovered.
 
     Only a searchable Video can be cited, and read_frames serves only those, so no YouTube call is spent on any
     other; a Video still being ingested gets its geometry from its own extraction.
@@ -160,7 +160,7 @@ def missing(conn: sqlite3.Connection, channel_id: int | None) -> list[tuple[int,
         WHERE storyboards.video_id IS NULL AND {VIDEO_IN_SCOPE}
         ORDER BY videos.id
         """,
-        scope_params(None if channel_id is None else Scope("channel", channel_id)),
+        scope_params(scope),
     )
     return [(row["id"], row["youtube_video_id"]) for row in rows]
 

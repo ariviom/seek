@@ -7,11 +7,12 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from seek import channels, db, groups, syncs
+from seek import channels, db, groups, playlists, syncs
 from seek.channels import Channel
 from seek.config import HOST, Config
 from seek.engines import active_engine
 from seek.groups import Group
+from seek.playlists import Playlist
 from seek.ports import ChatEngine, ChatEngineStatus, EngineName, ModelStatus
 from seek.settings import Settings, read_settings
 from seek.sync_command import SyncCommandError, answers, request
@@ -48,6 +49,7 @@ class ListReport:
     server_url: str | None
     channels: list[Channel]
     groups: list[Group]
+    playlists: list[Playlist]
 
 
 def _server_url(config: Config) -> str | None:
@@ -87,15 +89,18 @@ async def list_all(config: Config) -> ListReport:
     if url is not None:
         listed_channels = await asyncio.to_thread(request, f"{url}api/channels")
         listed_groups = await asyncio.to_thread(request, f"{url}api/groups")
+        listed_playlists = await asyncio.to_thread(request, f"{url}api/playlists")
         return ListReport(
             url,
             _parse(url, TypeAdapter(list[Channel]), listed_channels),
             _parse(url, TypeAdapter(list[Group]), listed_groups),
+            _parse(url, TypeAdapter(list[Playlist]), listed_playlists),
         )
     return ListReport(
         None,
         await _read_store(config, channels.list_channels, []),
         await _read_store(config, groups.list_groups, []),
+        await _read_store(config, playlists.list_playlists, []),
     )
 
 
@@ -152,7 +157,7 @@ def _model_state(model: ModelStatus) -> str:
 
 
 def format_list(report: ListReport) -> str:
-    if not report.channels and not report.groups:
+    if not report.channels and not report.groups and not report.playlists:
         return "No Channels yet."
     lines = ["Channels:" if report.channels else "Channels: none"]
     for c in report.channels:
@@ -167,4 +172,14 @@ def format_list(report: ListReport) -> str:
         for group in report.groups:
             members = ", ".join(c.name for c in group.channels) or "no Channels"
             lines.append(f"  {group.name}: {members}")
+    if report.playlists:
+        lines.append("Playlists:")
+        for p in report.playlists:
+            paused = "" if p.indexed else ", paused"
+            creators = f"from {', '.join(c.name for c in p.creators)}" if p.creators else "no Videos yet"
+            synced = f"last synced {p.last_synced_at}" if p.last_synced_at else "never synced"
+            lines.append(
+                f"  {p.name} ({p.youtube_playlist_id}{paused}): {p.indexed_videos} ready, {p.failed_videos} failed, "
+                f"{p.excluded_videos} excluded; {creators}; {synced}"
+            )
     return "\n".join(lines)

@@ -11,10 +11,11 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from seek import channels, db, storyboards, syncs
+from seek import channels, db, playlists, storyboards, syncs
 from seek.config import Config
 from seek.ports import SourceUnavailable, TranscriptSource, VideoUnavailable
-from seek.sync_command import SyncCommandError, find_channel
+from seek.scope import Scope
+from seek.sync_command import SyncCommandError, find_channel, find_playlist
 
 SYNC_RUNNING = (
     "warning: a Sync is queued or running. Both reach YouTube from this address, so a refusal brought on by the "
@@ -40,8 +41,10 @@ def backfill_storyboards(
     channel: str | None,
     transcripts: TranscriptSource,
     progress: Callable[[str], None] = lambda line: None,
+    playlist: str | None = None,
 ) -> BackfillReport:
-    """Stores the storyboard geometry of each searchable Video of the Channel, or of every Channel, that has none.
+    """Stores the storyboard geometry of each searchable Video of the Channel, of the Playlist, or of the whole
+    Library when both are None, that has none.
 
     Resumable: each Video's geometry is committed as it arrives and already-stored Videos are never fetched again,
     so a run that is interrupted or stopped by the source loses nothing and the next one carries on.
@@ -54,10 +57,14 @@ def backfill_storyboards(
         except RuntimeError as e:
             # The knowledge base was made by a newer seek.
             raise SyncCommandError(str(e)) from e
-        channel_id = None if channel is None else find_channel(channels.list_channels(conn), channel).id
+        scope = None
+        if channel is not None:
+            scope = Scope("channel", find_channel(channels.list_channels(conn), channel).id)
+        elif playlist is not None:
+            scope = Scope("playlist", find_playlist(playlists.list_playlists(conn), playlist).id)
         if syncs.has_work(conn):
             progress(SYNC_RUNNING)
-        pending = storyboards.missing(conn, channel_id)
+        pending = storyboards.missing(conn, scope)
         return _work_through(conn, transcripts, pending, progress)
     finally:
         conn.close()

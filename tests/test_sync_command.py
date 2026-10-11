@@ -9,10 +9,12 @@ import pytest
 from harness import (
     Gate,
     add_channel,
+    add_playlist,
     fake_channel,
     fake_video,
     fetched,
     free_port,
+    pause_playlist,
     running,
     serving,
     start_sync,
@@ -22,7 +24,7 @@ from harness import (
 from seek import db, syncs
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.sync_command import SyncCommandError, sync_channels
 from seek.videos import Source
 
@@ -242,3 +244,100 @@ async def test_seek_sync_asks_for_a_youtube_channel_id_when_two_channels_share_t
 
     with pytest.raises(SyncCommandError, match="More than one Channel is named 'wright'.*UC-wright, UC-wright-vlog"):
         await sync_channels(replace(config, port=free_port()), "wright", fresh_source(transcripts), FakeEmbedder())
+
+
+def with_playlists(transcripts: FakeTranscriptSource) -> FakeTranscriptSource:
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-rex", "v-rex")])
+    transcripts.playlists["PL-wright"] = FakePlaylist("Wright's own", [("UC-wright", "v-wright")])
+    return transcripts
+
+
+@pytest.mark.parametrize("ref", ["PL-picks", "sharpening picks"])
+async def test_seek_sync_hands_one_playlist_to_the_running_server_by_its_name_or_youtube_playlist_id(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path, ref: str
+) -> None:
+    with_playlists(with_videos(transcripts))
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    cli_source = FakeTranscriptSource()
+
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_playlist(client, "PL-picks", "Sharpening picks")
+        await add_playlist(client, "PL-wright")
+        port = urlsplit(url).port
+        assert port is not None
+        report = await sync_channels(replace(config, port=port), None, cli_source, FakeEmbedder(), playlist=ref)
+        finished = await wait_for_syncs(client)
+
+    assert report.server_url == url
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Sharpening picks", "queued")]
+    assert [(s["source_name"], s["status"]) for s in finished] == [("Sharpening picks", "done")]
+    assert fetched(transcripts) == ["v-rex"]
+    assert cli_source.calls == []
+
+
+async def seed_playlists(config: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> None:
+    """Adds Wright, and the Playlists "Sharpening picks" and "Wright's own", through a server that then stops."""
+    with_playlists(with_videos(transcripts))
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    async with running(app) as client:
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_playlist(client, "PL-picks", "Sharpening picks")
+        await add_playlist(client, "PL-wright")
+
+
+@pytest.mark.parametrize("ref", ["PL-picks", "Sharpening Picks"])
+async def test_seek_sync_runs_a_playlist_itself_when_no_server_answers(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path, ref: str
+) -> None:
+    await seed_playlists(config, transcripts, tmp_path)
+    cli_source = with_playlists(fresh_source(transcripts))
+
+    report = await sync_channels(replace(config, port=free_port()), None, cli_source, FakeEmbedder(), playlist=ref)
+
+    assert report.server_url is None
+    assert [(s.source_name, s.status, s.new_videos) for s in report.syncs] == [("Sharpening picks", "done", 1)]
+    assert fetched(cli_source) == ["v-rex"]
+
+
+async def test_an_unknown_playlist_is_reported_rather_than_synced(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    await seed_playlists(config, transcripts, tmp_path)
+
+    # A Channel's name is not a Playlist's.
+    with pytest.raises(SyncCommandError, match="No Playlist named 'Wood By Wright'"):
+        await sync_channels(
+            replace(config, port=free_port()), None, transcripts, FakeEmbedder(), playlist="Wood By Wright"
+        )
+
+
+async def test_seek_sync_asks_for_a_youtube_playlist_id_when_a_name_is_also_another_playlists_id(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    with_playlists(with_videos(transcripts))
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    async with running(app) as client:
+        await add_playlist(client, "PL-picks", "PL-wright")
+        await add_playlist(client, "PL-wright")
+
+    with pytest.raises(SyncCommandError, match="More than one Playlist matches 'PL-wright'.*PL-picks, PL-wright"):
+        await sync_channels(
+            replace(config, port=free_port()), None, fresh_source(transcripts), FakeEmbedder(), playlist="PL-wright"
+        )
+
+
+async def test_seek_sync_of_everything_covers_active_playlists_and_leaves_a_paused_one(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    with_playlists(with_videos(transcripts))
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    async with running(app) as client:
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_playlist(client, "PL-picks", "Sharpening picks")
+        await pause_playlist(client, await add_playlist(client, "PL-wright"))
+    cli_source = with_playlists(fresh_source(transcripts))
+
+    report = await sync_channels(replace(config, port=free_port()), None, cli_source, FakeEmbedder())
+
+    assert [(s.source_name, s.status) for s in report.syncs] == [("Wood By Wright", "done"), ("Sharpening picks", "done")]

@@ -187,9 +187,12 @@ them.
 To Sync without waiting for a check:
 
 ```sh
-seek sync --all                        # every active Channel
-seek sync --channel "Wood By Wright"   # one Channel, by its YouTube name or channel id
+seek sync --all                           # every active Channel and Playlist
+seek sync --channel "Wood By Wright"      # one Channel, by its YouTube name or channel id
+seek sync --playlist "Sharpening picks"   # one Playlist, by its name or YouTube playlist id
 ```
+
+Channels and Playlists are added in the web UI; the command line only Syncs what the Library already has.
 
 When the server is running, `seek sync` queues the Syncs there and returns; their progress and any failures show in
 the web UI. When it isn't, `seek sync` loads the embedding model and runs the Syncs itself, returning when they finish
@@ -203,15 +206,18 @@ retries failures. A Video published in the last week without captions is retried
 still be generating them. When YouTube refuses the captions of three Videos in a row, the Sync stops and the failed
 Videos wait for the next one; no Sync runs for `youtube_backoff_seconds`, doubling for each Sync in a row that stops so.
 
-`seek reindex --all` (or `--channel`) Syncs the same way but first re-cuts and re-embeds every Video already indexed
+`seek reindex --all` (or `--channel`, or `--playlist`) Syncs the same way but first re-cuts and re-embeds every Video already indexed
 from its stored Transcript, without fetching from YouTube again. Run it after upgrading to a Seek that indexes
 passages differently; until each Video is done again it is out of search.
+
+`seek backfill-storyboards` takes the same three targets and stores the frames of searchable Videos that have none
+yet. It always runs in its own process, beside the server if one is running, and can be stopped and run again.
 
 ## Check on it from the command line
 
 ```sh
 seek status   # the server, its models, both chat engines, and running and queued Syncs
-seek list     # Channels, active or paused, with ready, failed, and excluded Videos and when each last synced, then Groups with their Channels
+seek list     # Channels, active or paused, with ready, failed, and excluded Videos and when each last synced; then Groups with their Channels; then Playlists, with the same counts and their creators
 ```
 
 Both ask the running server. When none answers, they read the knowledge base instead: `seek status` then says the
@@ -327,6 +333,9 @@ Notes:
   about three times that. yt-dlp writes refreshed cookies back to the file, so it must be writable.
   `youtube_cookies_from_browser` reads the browser's own cookie store instead (the browser must be closed for Chrome and
   Chromium); the service then needs access to that profile. Sync waits between YouTube calls are jittered by ±30%.
+- **Private playlists.** A public or unlisted playlist needs no cookies. A private playlist of your own can be added
+  and synced only while `youtube_cookie_file` or `youtube_cookies_from_browser` is signed in as you, whether the Sync
+  runs in the server or in `seek sync`; without that, YouTube answers as if the playlist didn't exist.
 - **Extractor arguments.** `youtube_extractor_args` is a TOML table whose values are strings or lists of strings:
 
   ```toml

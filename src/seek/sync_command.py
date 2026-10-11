@@ -10,10 +10,11 @@ from dataclasses import dataclass
 
 from pydantic import TypeAdapter, ValidationError
 
-from seek import channels, db, syncs
+from seek import channels, db, playlists, syncs
 from seek.channels import Channel
 from seek.config import HOST, Config
 from seek.events import Events
+from seek.playlists import Playlist
 from seek.ports import Embedder, TranscriptSource
 from seek.sync_worker import SyncWorker
 from seek.syncs import Sync
@@ -43,8 +44,10 @@ async def sync_channels(
     server_wait_seconds: float = 0,
     poll_seconds: float = 5.0,
     reindex: bool = False,
+    playlist: str | None = None,
 ) -> SyncReport:
-    """Syncs the Channel with this name or YouTube channel id, or every indexed Channel when None.
+    """Syncs the Channel with this name or YouTube channel id, or the Playlist with this name or YouTube playlist
+    id, or every indexed Channel and Playlist when both are None.
 
     A server that answers within server_wait_seconds gets the Syncs. Otherwise they run here once the embedding
     model loads, and this returns when they have finished. With reindex, the Syncs re-segment and re-embed the
@@ -53,8 +56,8 @@ async def sync_channels(
     url = f"http://{HOST}:{config.port}/"
     # Not Health: its Claude CLI check can take seconds.
     if await asyncio.to_thread(answers, f"{url}api/syncs", server_wait_seconds):
-        return SyncReport(url, await asyncio.to_thread(_hand_off, url, channel, reindex))
-    return SyncReport(None, await _run_here(config, channel, transcripts, embedder, poll_seconds, reindex))
+        return SyncReport(url, await asyncio.to_thread(_hand_off, url, channel, playlist, reindex))
+    return SyncReport(None, await _run_here(config, channel, playlist, transcripts, embedder, poll_seconds, reindex))
 
 
 def answers(url: str, seconds: float) -> bool:
@@ -80,6 +83,16 @@ def find_channel(listed: list[Channel], ref: str) -> Channel:
     return matching[0]
 
 
+def find_playlist(listed: list[Playlist], ref: str) -> Playlist:
+    matching = [p for p in listed if p.youtube_playlist_id == ref or p.name.casefold() == ref.casefold()]
+    if not matching:
+        raise SyncCommandError(f"No Playlist named {ref!r}; give a Playlist's name or its YouTube playlist id")
+    if len(matching) > 1:
+        ids = ", ".join(p.youtube_playlist_id for p in matching)
+        raise SyncCommandError(f"More than one Playlist matches {ref!r}; give one of their YouTube playlist ids: {ids}")
+    return matching[0]
+
+
 def request(url: str, method: str = "GET", payload: dict[str, object] | None = None) -> bytes:
     data = None if payload is None else json.dumps(payload).encode()
     headers = {} if payload is None else {"Content-Type": "application/json"}
@@ -97,15 +110,18 @@ def request(url: str, method: str = "GET", payload: dict[str, object] | None = N
         raise SyncCommandError(f"The server stopped answering at {url}: {e}") from e
 
 
-def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
+def _hand_off(url: str, channel: str | None, playlist: str | None, reindex: bool) -> list[Sync]:
     options: dict[str, object] = {"reindex": reindex}
     try:
-        if channel is None:
+        if channel is not None:
+            listed = TypeAdapter(list[Channel]).validate_json(request(f"{url}api/channels"))
+            source = f"channels/{find_channel(listed, channel).id}"
+        elif playlist is not None:
+            added = TypeAdapter(list[Playlist]).validate_json(request(f"{url}api/playlists"))
+            source = f"playlists/{find_playlist(added, playlist).id}"
+        else:
             return TypeAdapter(list[Sync]).validate_json(request(f"{url}api/syncs", "POST", options))
-        found = find_channel(TypeAdapter(list[Channel]).validate_json(request(f"{url}api/channels")), channel)
-        return [
-            TypeAdapter(Sync).validate_json(request(f"{url}api/channels/{found.id}/syncs", "POST", options))
-        ]
+        return [TypeAdapter(Sync).validate_json(request(f"{url}api/{source}/syncs", "POST", options))]
     except ValidationError as e:
         # e.g. this upgraded seek ran against the server from before the upgrade.
         raise SyncCommandError(
@@ -116,6 +132,7 @@ def _hand_off(url: str, channel: str | None, reindex: bool) -> list[Sync]:
 async def _run_here(
     config: Config,
     channel: str | None,
+    playlist: str | None,
     transcripts: TranscriptSource,
     embedder: Embedder,
     poll_seconds: float,
@@ -129,10 +146,13 @@ async def _run_here(
     database = db.Database(config.database_path)
 
     def enqueue(conn: sqlite3.Connection) -> list[Sync]:
-        if channel is None:
+        if channel is not None:
+            source = Source("channel", find_channel(channels.list_channels(conn), channel).id)
+        elif playlist is not None:
+            source = Source("playlist", find_playlist(playlists.list_playlists(conn), playlist).id)
+        else:
             return syncs.enqueue_all(conn, reindex)
-        found = find_channel(channels.list_channels(conn), channel)
-        return [syncs.enqueue(conn, Source("channel", found.id), reindex)]
+        return [syncs.enqueue(conn, source, reindex)]
 
     queued = await database.run(enqueue)
     if not queued:

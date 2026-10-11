@@ -96,7 +96,7 @@ def _service_active() -> bool:
         return False
 
 
-def sync(channel: str | None, reindex: bool = False) -> None:
+def sync(channel: str | None, playlist: str | None, reindex: bool = False) -> None:
     config = _config()
     embedder = SentenceTransformerEmbedder(
         config.embedding_model, config.embedding_dimension, GpuRunner(), select_device(probe_device())
@@ -106,12 +106,14 @@ def sync(channel: str | None, reindex: bool = False) -> None:
     server_wait_seconds = 30 if _service_active() else 0
     try:
         report = asyncio.run(
-            sync_channels(config, channel, _youtube(config), embedder, server_wait_seconds, reindex=reindex)
+            sync_channels(
+                config, channel, _youtube(config), embedder, server_wait_seconds, reindex=reindex, playlist=playlist
+            )
         )
     except (SyncCommandError, NotFound) as e:
         sys.exit(f"seek: {e}")
     if not report.syncs:
-        print("No active Channels to Sync.")
+        print("No active Channels or Playlists to Sync.")
         return
     if report.server_url is not None:
         print(f"Queued on the server at {report.server_url}, where their progress shows:")
@@ -146,11 +148,13 @@ def _own_cookies(config: Config) -> Iterator[Config]:
         yield replace(config, youtube_cookie_file=jar)
 
 
-def backfill(channel: str | None) -> None:
+def backfill(channel: str | None, playlist: str | None) -> None:
     config = _config()
     try:
         with _own_cookies(config) as own:
-            report = backfill_storyboards(config, channel, _youtube(own), lambda line: print(line, flush=True))
+            report = backfill_storyboards(
+                config, channel, _youtube(own), lambda line: print(line, flush=True), playlist
+            )
     except (SyncCommandError, NotFound) as e:
         sys.exit(f"seek: {e}")
     print(f"Stored {report.stored} storyboards; {report.absent} Videos offered none; {report.failed} could not be read.")
@@ -238,26 +242,33 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("serve", help="run the Seek server")
     sync_parser = commands.add_parser(
-        "sync", help="Sync Channels through the running server, or in this process when none is running"
+        "sync", help="Sync Channels and Playlists through the running server, or in this process when none is running"
     )
     target = sync_parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--all", action="store_true", help="every active Channel")
+    target.add_argument("--all", action="store_true", help="every active Channel and Playlist")
     target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    target.add_argument("--playlist", metavar="NAME_OR_ID", help="the Playlist with this name or YouTube playlist id")
     reindex_parser = commands.add_parser(
-        "reindex", help="Sync Channels as `sync` does, re-segmenting and re-embedding the Videos already indexed"
+        "reindex", help="Sync as `sync` does, re-segmenting and re-embedding the Videos already indexed"
     )
     reindex_target = reindex_parser.add_mutually_exclusive_group(required=True)
-    reindex_target.add_argument("--all", action="store_true", help="every active Channel")
+    reindex_target.add_argument("--all", action="store_true", help="every active Channel and Playlist")
     reindex_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    reindex_target.add_argument(
+        "--playlist", metavar="NAME_OR_ID", help="the Playlist with this name or YouTube playlist id"
+    )
     backfill_parser = commands.add_parser(
         "backfill-storyboards",
         help="store the frames of already-ingested Videos, paced as a Sync is; safe to stop and run again",
     )
     backfill_target = backfill_parser.add_mutually_exclusive_group(required=True)
-    backfill_target.add_argument("--all", action="store_true", help="every Channel")
+    backfill_target.add_argument("--all", action="store_true", help="every Channel and Playlist")
     backfill_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    backfill_target.add_argument(
+        "--playlist", metavar="NAME_OR_ID", help="the Playlist with this name or YouTube playlist id"
+    )
     commands.add_parser("status", help="the server, models, chat engines, and running and queued Syncs")
-    commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups")
+    commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups and Playlists")
     commands.add_parser("doctor", help="one pasteable block for support, with every secret redacted")
     commands.add_parser(
         "mcp-config", help="the configuration that registers Seek's tools with Claude Code and similar agents"
@@ -267,11 +278,11 @@ def main() -> None:
     if args.command == "serve":
         serve()
     elif args.command == "sync":
-        sync(args.channel)
+        sync(args.channel, args.playlist)
     elif args.command == "reindex":
-        sync(args.channel, reindex=True)
+        sync(args.channel, args.playlist, reindex=True)
     elif args.command == "backfill-storyboards":
-        backfill(args.channel)
+        backfill(args.channel, args.playlist)
     elif args.command == "status":
         show_status()
     elif args.command == "list":

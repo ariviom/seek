@@ -10,12 +10,12 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 import uvicorn
-from harness import add_channel, serving, wait_for_syncs
+from harness import add_channel, add_playlist, fake_channel, fake_video, serving, wait_for_syncs
 
 from seek import cli
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 
 
 @pytest.fixture
@@ -133,6 +133,50 @@ async def test_sync_commands_off_linux_queue_work_on_the_foreground_server_witho
 
     assert "Queued on the server at" in capsys.readouterr().out
     assert [(s["source_name"], s["status"]) for s in finished] == [("Wood By Wright", "done")]
+
+
+@pytest.mark.parametrize("subcommand", ["sync", "reindex"])
+async def test_sync_commands_queue_one_playlist_on_the_running_server(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    transcripts: FakeTranscriptSource, subcommand: str,
+) -> None:
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-rex", "Rex video"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-rex", "v-rex")])
+    app = create_app(
+        Config(data_dir=isolated_home / "server"), transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(),
+        static_dir=isolated_home / "none",
+    )
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        await add_channel(client, "@woodbywright", "Wood By Wright")
+        await add_playlist(client, "PL-picks", "Sharpening picks")
+        monkeypatch.setenv("SEEK_PORT", str(urlsplit(url).port))
+        command(monkeypatch, "darwin", subcommand, "--playlist", "sharpening picks")
+        await asyncio.to_thread(cli.main)
+        finished = await wait_for_syncs(client)
+
+    assert capsys.readouterr().out.splitlines() == [
+        f"Queued on the server at {url}, where their progress shows:",
+        "  Sharpening picks",
+    ]
+    assert [(s["source_name"], s["status"]) for s in finished] == [("Sharpening picks", "done")]
+
+
+@pytest.mark.parametrize("subcommand", ["sync", "reindex", "backfill-storyboards"])
+@pytest.mark.parametrize("other", [["--all"], ["--channel", "Wood By Wright"]])
+def test_a_playlist_cannot_be_named_alongside_everything_or_a_channel(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], subcommand: str, other: list[str]
+) -> None:
+    command(monkeypatch, "linux", subcommand, "--playlist", "Sharpening picks", *other)
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "not allowed with argument --playlist" in capsys.readouterr().err
 
 
 def test_startup_preserves_existing_config_and_database(

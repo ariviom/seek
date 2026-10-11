@@ -32,6 +32,7 @@ from seek.backfill_command import SYNC_RUNNING, BackfillReport, backfill_storybo
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import Storyboard, VideoUnavailable
+from seek.scope import Scope
 from seek.storyboards import Frame, Moment, frames_at
 from seek.storyboards_api import MAX_MOMENTS
 from seek.sync_command import SyncCommandError
@@ -470,11 +471,11 @@ def test_the_backfill_offers_only_videos_something_could_cite(config: Config) ->
         )
         # Only a done Video is searchable, so only a done Video's frames could ever be shown.
         assert storyboards.missing(conn, None) == [(1, "v-done"), (4, "v-rex")]
-        assert storyboards.missing(conn, 2) == [(4, "v-rex")]
+        assert storyboards.missing(conn, Scope("channel", 2)) == [(4, "v-rex")]
         # A Channel that is not indexed is left out of search, expand and frames alike: no call is spent on it.
         conn.execute("UPDATE channels SET indexed = 0 WHERE id = 2")
         assert storyboards.missing(conn, None) == [(1, "v-done")]
-        assert storyboards.missing(conn, 2) == []
+        assert storyboards.missing(conn, Scope("channel", 2)) == []
     finally:
         conn.close()
 
@@ -484,6 +485,39 @@ async def test_the_backfill_names_an_unknown_channel_rather_than_fetching_every_
 ) -> None:
     with pytest.raises(SyncCommandError, match="No Channel named"):
         backfill_storyboards(config, "Nobody", transcripts)
+
+    assert [method for method, _ in transcripts.calls if method == "fetch_storyboard"] == []
+
+
+@pytest.mark.parametrize("ref", ["PL-picks", "sharpening picks"])
+async def test_the_backfill_of_one_playlist_stores_its_videos_frames_whatever_their_creators(
+    served: Served, transcripts: FakeTranscriptSource, config: Config, ref: str
+) -> None:
+    client, _ = served
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-bench", "Flattening a bench"),
+        fake_video("v-vlog", "A week in the shop"),
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-saw", "Saw files"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-wright", "v-bench"), ("UC-rex", "v-saw")])
+    transcripts.playlists["PL-vlogs"] = FakePlaylist("Vlogs", [("UC-wright", "v-vlog")])
+    # Wright is in the Library with a Video outside the Playlist; Rex is known only through it.
+    await sync(client, await add_channel(client, "@woodbywright", "Paul Wright"))
+    await sync_playlist(client, await add_playlist(client, "PL-picks", "Sharpening picks"))
+    await sync_playlist(client, await add_playlist(client, "PL-vlogs"))
+    _now_offers_storyboards(transcripts)
+
+    report = backfill_storyboards(config, None, transcripts, playlist=ref)
+
+    assert report == BackfillReport(stored=2, absent=0, failed=0, remaining=0)
+    assert [argument for method, argument in transcripts.calls if method == "fetch_storyboard"] == ["v-bench", "v-saw"]
+
+
+async def test_the_backfill_names_an_unknown_playlist_rather_than_fetching_every_one(
+    served: Served, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    with pytest.raises(SyncCommandError, match="No Playlist named"):
+        backfill_storyboards(config, None, transcripts, playlist="Nobody")
 
     assert [method for method, _ in transcripts.calls if method == "fetch_storyboard"] == []
 

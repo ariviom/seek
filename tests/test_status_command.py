@@ -7,11 +7,14 @@ from harness import (
     Gate,
     add_channel,
     add_group,
+    add_playlist,
     fake_channel,
     fake_video,
     free_port,
+    pause_playlist,
     running,
     serving,
+    start_playlist_sync,
     start_sync,
     wait_for_syncs,
 )
@@ -203,6 +206,59 @@ async def test_seek_list_shows_channels_with_their_counts_and_groups_from_the_se
         "Groups:",
         "  Empty: no Channels",
         "  Woodworking: Paul Wright",
+    ]
+
+
+async def test_seek_list_shows_playlists_after_groups_with_their_counts_creators_and_last_sync(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    seed_videos(transcripts)
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-saw", "Saw files"))
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Picks", [("UC-rex", "v-saw"), ("UC-wright", "v-ok"), ("UC-wright", "v-members"), ("UC-wright", "v-tip")]
+    )
+    transcripts.playlists["PL-later"] = FakePlaylist("Watch later", [("UC-rex", "v-saw")])
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+
+    async with serving(app) as url, httpx.AsyncClient(base_url=url) as client:
+        wright = await add_channel(client, "@woodbywright", "Paul Wright")
+        await add_group(client, "Woodworking", wright)
+        picks = await add_playlist(client, "PL-picks", "Sharpening picks")
+        await start_playlist_sync(client, picks["id"])
+        [finished] = await wait_for_syncs(client)
+        await pause_playlist(client, await add_playlist(client, "PL-later"))
+        served = await list_all(server_config(config, url))
+    stored = await list_all(replace(config, port=free_port()))
+
+    assert served.playlists == stored.playlists
+    # Rex Krueger is a creator outside the Library, so he is named under the Playlist and not among the Channels.
+    assert format_list(stored).splitlines() == [
+        "Channels:",
+        "  Paul Wright (UC-wright): 1 ready, 1 failed, 1 excluded; never synced",
+        "Groups:",
+        "  Woodworking: Paul Wright",
+        "Playlists:",
+        "  Sharpening picks (PL-picks): 2 ready, 1 failed, 1 excluded; from Paul Wright, Rex Krueger; "
+        f"last synced {finished['finished_at']}",
+        "  Watch later (PL-later, paused): 0 ready, 0 failed, 0 excluded; no Videos yet; never synced",
+    ]
+
+
+async def test_seek_list_shows_playlists_when_they_are_all_that_was_added(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-saw", "Saw files"))
+    transcripts.playlists["PL-later"] = FakePlaylist("Watch later", [("UC-rex", "v-saw")])
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    async with running(app) as client:
+        await add_playlist(client, "PL-later")
+
+    report = await list_all(replace(config, port=free_port()))
+
+    assert format_list(report).splitlines() == [
+        "Channels: none",
+        "Playlists:",
+        "  Watch later (PL-later): 0 ready, 0 failed, 0 excluded; no Videos yet; never synced",
     ]
 
 
