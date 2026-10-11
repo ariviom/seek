@@ -197,7 +197,8 @@ def _new_bundle(destination: Path) -> tuple[Path, sqlite3.Connection]:
 
     The file is created here, exclusively and under a name nobody can guess, and is readable by its owner alone:
     in a directory others can write to, a link planted where the Bundle was about to go would otherwise have the
-    Transcripts written through it.
+    Transcripts written through it. SQLite opens it again by name, so a directory where another user can rename
+    files (one that is writable by them and not sticky) is still no place to export to.
     """
     try:
         handle, name = tempfile.mkstemp(dir=destination.parent, prefix=f"{destination.name}.", suffix=".tmp")
@@ -208,8 +209,10 @@ def _new_bundle(destination: Path) -> tuple[Path, sqlite3.Connection]:
     try:
         bundle = sqlite3.connect(temporary, autocommit=True)
         bundle.execute(f"PRAGMA application_id = {APPLICATION_ID}")
-        # A rollback journal, never WAL: once committed, a Bundle is exactly one file.
-        bundle.execute("PRAGMA journal_mode = DELETE")
+        # No journal while writing: a failed export deletes the file anyway, and a journal would be a second file
+        # at a name derived from this one. The mode is not stored, so the Bundle opens with a rollback journal,
+        # never WAL, and is always exactly one file.
+        bundle.execute("PRAGMA journal_mode = OFF")
         bundle.execute("BEGIN")
         bundle.executescript(_SCHEMA)
     except sqlite3.Error as e:

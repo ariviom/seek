@@ -19,7 +19,7 @@ All fourteen checkboxes met after the fixes.
 
 ## Commit security review
 
-Fixed: export's temporary file had a guessable name (`NAME.seek.<pid>.tmp`) and was opened without exclusive creation, so in a directory others can write to a planted link would have had the Bundle written through it. It is made with `mkstemp` now.
+Fixed: export's temporary file had a guessable name (`NAME.seek.<pid>.tmp`) and was opened without exclusive creation, so in a directory others can write to a planted link would have had the Bundle written through it. It is made with `mkstemp` now, and written with no journal file beside it. SQLite still reopens it by name, so exporting into a directory where another user can rename files stays unsafe; that is accepted for a tool with one user.
 
 Open until ticket 02, and recorded in its comments: import trusts the file's ids, names, dates, cues, vectors, and avatar URL, stops partway on a row the knowledge base rejects, and prints the Bundle's name and id. Import is not safe on a Bundle from someone else until 02 lands.
 
