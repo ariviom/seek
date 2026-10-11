@@ -18,7 +18,7 @@ import uvicorn
 from seek.api_chat import ApiEngine
 from seek.app import create_app
 from seek.backfill_command import backfill_storyboards
-from seek.bundles import export_channel, format_export, format_import, import_bundle
+from seek.bundles import export_channel, export_playlist, format_export, format_import, import_bundle
 from seek.claude_chat import ClaudeChatEngine
 from seek.config import HOST, Config, ConfigError, config_dir, data_dir, ensure_directories, load_config
 from seek.credentials import Credentials
@@ -165,9 +165,15 @@ def backfill(channel: str | None, playlist: str | None) -> None:
         sys.exit(1)
 
 
-def export(channel: str, file: Path) -> None:
+def export(channel: str | None, playlist: str | None, file: Path) -> None:
+    config = _config()
     try:
-        print(format_export(export_channel(_config(), channel, file)))
+        if playlist is not None:
+            report = export_playlist(config, playlist, file)
+        else:
+            assert channel is not None
+            report = export_channel(config, channel, file)
+        print(format_export(report))
     except SyncCommandError as e:
         sys.exit(f"seek: {e}")
 
@@ -283,20 +289,25 @@ def main() -> None:
         "--playlist", metavar="NAME_OR_ID", help="the Playlist with this name or YouTube playlist id"
     )
     export_parser = commands.add_parser(
-        "export", help="write a Channel's indexed Videos to a Bundle, a .seek file another Seek can import"
+        "export",
+        help="write a Channel's or a Playlist's indexed Videos to a Bundle, a .seek file another Seek can import",
     )
-    export_parser.add_argument(
-        "--channel", metavar="NAME_OR_ID", required=True, help="the Channel with this name or YouTube channel id"
+    export_target = export_parser.add_mutually_exclusive_group(required=True)
+    export_target.add_argument("--channel", metavar="NAME_OR_ID", help="the Channel with this name or YouTube channel id")
+    export_target.add_argument(
+        "--playlist", metavar="NAME_OR_ID", help="the Playlist with this name or YouTube playlist id"
     )
     export_parser.add_argument("file", metavar="FILE", type=Path, help="where to write it; .seek is added if missing")
     import_parser = commands.add_parser(
         "import",
-        help="add a Bundle's Channel to the Library, or its Videos to the Channel already there; searchable at once "
-        "with nothing fetched or embedded",
+        help="add a Bundle's Channel or Playlist to the Library, or its Videos to the one already there; searchable "
+        "at once with nothing fetched or embedded",
     )
     import_parser.add_argument("file", metavar="FILE", type=Path, help="the .seek file to import")
     import_parser.add_argument(
-        "--name", metavar="NAME", help="the name to add the Channel under; one already in the Library keeps its own"
+        "--name",
+        metavar="NAME",
+        help="the name to add the Channel or Playlist under; one already in the Library keeps its own",
     )
     commands.add_parser("status", help="the server, models, chat engines, and running and queued Syncs")
     commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups and Playlists")
@@ -315,7 +326,7 @@ def main() -> None:
     elif args.command == "backfill-storyboards":
         backfill(args.channel, args.playlist)
     elif args.command == "export":
-        export(args.channel, args.file)
+        export(args.channel, args.playlist, args.file)
     elif args.command == "import":
         import_(args.file, args.name)
     elif args.command == "status":

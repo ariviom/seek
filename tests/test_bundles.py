@@ -21,10 +21,13 @@ from harness import (
     free_port,
     list_playlist_videos,
     list_videos,
+    pause_playlist,
     query,
     running,
     said,
     search,
+    sharpening_picks,
+    start_playlist_sync,
     start_sync,
     sync,
     sync_playlist,
@@ -33,7 +36,7 @@ from harness import (
 )
 
 from seek.app import create_app
-from seek.bundles import export_channel, format_export, format_import, import_bundle
+from seek.bundles import export_channel, export_playlist, format_export, format_import, import_bundle
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import Chapter, Cue, GpuOutOfMemory, VideoUnavailable
@@ -1261,3 +1264,442 @@ async def test_an_avatar_that_youtube_does_not_serve_is_dropped_and_the_bundle_s
 
     # Dropped, not refused: the Channel shows initials until a Sync's listing supplies an avatar.
     assert avatars == {**dict.fromkeys(elsewhere), "ggpht": "https://yt3.ggpht.com/ytc/wright=s176"}
+
+
+REX_AVATAR = "https://yt3.ggpht.com/rex-avatar=s176"
+
+
+async def test_an_exported_playlist_arrives_with_its_videos_in_order_each_credited_to_a_creator_outside_the_library(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    rex = fake_channel(transcripts, "UC-rex")
+    rex.info = replace(rex.info, avatar_url=REX_AVATAR)
+    async with running(app_on(sender, transcripts)) as client:
+        _, picks = await sharpening_picks(client, transcripts)
+        # Pause state does not travel, and does not stop an export.
+        await pause_playlist(client, picks)
+
+    exported = export_playlist(sender, "sharpening picks", tmp_path / "picks")
+    imported = import_bundle(friend, exported.path)
+
+    youtube, embedder = FakeTranscriptSource(), FakeEmbedder()
+    listed = format_list(await list_all(replace(friend, port=free_port())))
+    async with running(app_on(friend, youtube, embedder)) as client:
+        [playlist] = (await client.get("/api/playlists")).json()
+        videos = await list_playlist_videos(client, playlist["id"])
+        found = await search(client, "sharpen on a fine stone", playlist=playlist["id"])
+        channels = (await client.get("/api/channels")).json()
+    assert playlist == {
+        "id": playlist["id"],
+        "youtube_playlist_id": "PL-picks",
+        "name": "Sharpening picks",
+        "indexed": True,
+        "check_every_hours": 24,
+        "indexed_videos": 2,
+        "failed_videos": 0,
+        "excluded_videos": 0,
+        "last_synced_at": None,
+        "next_check_at": None,
+        "creators": [
+            {"id": playlist["creators"][0]["id"], "name": "Rex Krueger", "avatar_url": REX_AVATAR},
+            {"id": playlist["creators"][1]["id"], "name": "Wood By Wright", "avatar_url": WRIGHT_AVATAR},
+        ],
+    }
+    assert [(v["youtube_video_id"], v["channel_name"], v["stage"]) for v in videos] == [
+        ("v-knives", "Rex Krueger", "done"),
+        ("v-chisels", "Wood By Wright", "done"),
+    ]
+    assert {result["youtube_video_id"]: result["text"] for result in found} == {
+        "v-knives": "Sharpen the knife on a fine stone",
+        "v-chisels": "Sharpen the chisel on a fine stone",
+    }
+    # Neither creator is in the Library, so neither is offered as a scope.
+    assert channels == []
+    assert listed.splitlines() == [
+        "Channels: none",
+        "Playlists:",
+        "  Sharpening picks (PL-picks): 2 ready, 0 failed, 0 excluded; from Rex Krueger, Wood By Wright; never synced",
+    ]
+    assert format_export(replace(exported, size_bytes=41_000)).splitlines() == [
+        f"Exported Sharpening picks to {tmp_path / 'picks.seek'}: 2 Videos, 2 Segments, 41 KB.",
+        "The file contains the creators' full Transcripts, so choose who you share it with.",
+    ]
+    assert format_import(imported).splitlines() == [
+        "Imported Sharpening picks: 2 Videos added, 0 already indexed, 0 left out.",
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
+        "Next, start a Sync to pick up the Videos added to the playlist since: seek sync --playlist PL-picks",
+    ]
+    # Nothing was fetched from YouTube and nothing embedded but the query.
+    assert youtube.calls == []
+    assert embedder.passages == []
+
+
+async def test_the_sync_after_a_playlist_import_fetches_only_what_the_bundle_did_not_carry_and_removes_nothing_when_it_cannot_list_the_playlist(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    async with running(app_on(sender, transcripts)) as client:
+        await sharpening_picks(client, transcripts)
+    import_bundle(friend, export_playlist(sender, "PL-picks", tmp_path / "picks.seek").path)
+
+    # The friend's own view of YouTube, where the playlist is private.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=list(c.videos)) for c in transcripts.channels])
+    async with running(app_on(friend, youtube)) as client:
+        [playlist] = (await client.get("/api/playlists")).json()
+        before = await list_playlist_videos(client, playlist["id"])
+        await start_playlist_sync(client, playlist["id"])
+        private, *_ = await wait_for_syncs(client)
+        kept = await list_playlist_videos(client, playlist["id"])
+        # Its owner shares it, with a Video added since the Bundle was made.
+        youtube.playlists["PL-picks"] = FakePlaylist(
+            "Sharpening picks", [("UC-wright", "v-saws"), ("UC-rex", "v-knives"), ("UC-wright", "v-chisels")]
+        )
+        await start_playlist_sync(client, playlist["id"])
+        shared, *_ = await wait_for_syncs(client)
+        after = await list_playlist_videos(client, playlist["id"])
+
+    assert private["status"] == "failed"
+    assert "doesn't exist or is private" in private["error"]
+    assert [(video["youtube_video_id"], video["stage"]) for video in before] == [("v-knives", "done"), ("v-chisels", "done")]
+    assert kept == before
+    assert (shared["status"], shared["new_videos"]) == ("done", 1)
+    assert fetched(youtube) == ["v-saws"]
+    assert [(video["youtube_video_id"], video["stage"]) for video in after] == [
+        ("v-saws", "done"),
+        ("v-knives", "done"),
+        ("v-chisels", "done"),
+    ]
+
+
+async def test_a_playlist_bundles_video_is_searchable_whatever_its_channels_filters_and_only_the_minimum_length_leaves_one_out(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video(
+            "v-old",
+            "Old build",
+            listed_duration=1200,
+            duration=1200,
+            published_on=date(2020, 1, 1),
+            cues=said("Flatten the bench with a jack plane"),
+        ),
+        fake_video(
+            "v-chisels", "Chisels", listed_duration=1200, duration=1200, cues=said("Sharpen the chisel on a fine stone")
+        ),
+    ]
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-short", "Short", cues=said("Wax the vise")))
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-tip", "Quick tip", cues=said("Wax the sole")))
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Picks", [("UC-wright", "v-old"), ("UC-rex", "v-tip"), ("UC-wright", "v-chisels"), ("UC-wright", "v-short")]
+    )
+    async with running(app_on(sender, transcripts)) as client:
+        await sync_playlist(client, await add_playlist(client, "PL-picks"))
+    # A Bundle whose maker gave the friend's own Channel another name and avatar.
+    bundle = altered(
+        export_playlist(sender, "Picks", tmp_path / "picks.seek").path,
+        "renamed.seek",
+        "UPDATE creators SET name = 'Somebody Else', avatar_url = 'https://yt3.ggpht.com/another' "
+        "WHERE youtube_channel_id = 'UC-wright'",
+    )
+    # The friend ingests nothing under a quarter of an hour, and of Wood By Wright nothing from before 2024. They
+    # indexed the chisels themselves, from captions that say something else, and their Sync found one too short.
+    friend = replace(friend, min_duration_seconds=900)
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright").videos += [
+        fake_video("v-short", "Short"),
+        fake_video("v-old", "Old build", listed_duration=1200, duration=1200, published_on=date(2020, 1, 1)),
+        fake_video(
+            "v-chisels", "My chisels", listed_duration=1200, duration=1200, cues=said("Grind the chisel on a coarse wheel")
+        ),
+    ]
+    filters = {"published_after": "2024-01-01", "published_before": None, "playlist_id": None, "most_recent": None}
+    async with running(app_on(friend, youtube)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+        await sync(client, wright)
+        [before] = (await client.get("/api/channels")).json()
+        excluded = (await list_videos(client, wright["id"]))["Old build"]["reason"]
+    kept = stored(friend)
+
+    imported = import_bundle(friend, bundle)
+    now = stored(friend)
+
+    async with running(app_on(friend, youtube)) as client:
+        channels = (await client.get("/api/channels")).json()
+        [playlist] = (await client.get("/api/playlists")).json()
+        videos = await list_playlist_videos(client, playlist["id"])
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "jack plane chisel wax")}
+        # The Channel's own next Sync leaves the Video the Playlist includes as it is.
+        await sync(client, wright)
+        still = (await list_videos(client, wright["id"]))["Old build"]
+    assert excluded == "Published before 2024-01-01, outside the Channel's filters"
+    assert [(v["youtube_video_id"], v["channel_name"], v["stage"], v["reason"]) for v in videos] == [
+        ("v-old", "Wood By Wright", "done", None),
+        ("v-tip", "Rex Krueger", "excluded", "Shorter than the 900 second minimum"),
+        ("v-chisels", "Wood By Wright", "done", None),
+        # Only an exclusion by the Channel's filters is lifted.
+        ("v-short", "Wood By Wright", "excluded", "Shorter than the 900 second minimum"),
+    ]
+    assert found == {"v-old": "Flatten the bench with a jack plane", "v-chisels": "Grind the chisel on a coarse wheel"}
+    assert (still["stage"], still["reason"]) == ("done", None)
+    assert fetched(youtube) == ["v-chisels"]
+    assert format_import(imported).splitlines() == [
+        "Imported Picks: 1 Videos added, 1 already indexed, 2 left out.",
+        "  Shorter than the 900 second minimum: 2",
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
+        "Next, start a Sync to pick up the Videos added to the playlist since: seek sync --playlist PL-picks",
+    ]
+    # Rex Krueger stays outside the Library, and nothing of the Bundle's reached the Channel already in it or the
+    # Video it had indexed.
+    assert channels == [before | {"indexed_videos": 2, "excluded_videos": 1}]
+    assert set(kept["channels"]) <= set(now["channels"])
+    assert [row for row in now["videos"] if "v-old" not in row and "v-tip" not in row] == [
+        row for row in kept["videos"] if "v-old" not in row
+    ]
+    assert all(set(kept[table]) <= set(now[table]) for table in ("transcripts", "segments", "segment_vectors"))
+
+
+async def test_a_playlist_already_added_keeps_its_name_settings_and_order_and_gains_the_videos_it_lacked(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone"))
+    )
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Sharpen the knife on a fine stone"))
+    )
+    # Two videos gone private take the playlist's first two places.
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Sharpening picks", [(None, "v-gone"), (None, "v-hidden"), ("UC-wright", "v-chisels"), ("UC-rex", "v-knives")]
+    )
+    async with running(app_on(sender, transcripts)) as client:
+        await sync_playlist(client, await add_playlist(client, "PL-picks"))
+    bundle = export_playlist(sender, "PL-picks", tmp_path / "picks.seek").path
+    # The friend added the playlist themselves, when it listed the knives first, under another channel, and they
+    # were members-only.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright-vlog").videos.append(
+        fake_video("v-knives", "Knives, reposted", failure=VideoUnavailable("Members-only video", permanent=True))
+    )
+    fake_channel(youtube, "UC-wright").videos.append(
+        fake_video("v-planes", "Planes", cues=said("Set the cap iron close to the edge"))
+    )
+    youtube.playlists["PL-picks"] = FakePlaylist(
+        "Sharpening picks", [("UC-wright-vlog", "v-knives"), ("UC-wright", "v-planes")]
+    )
+    settings = {"name": "My picks", "indexed": False, "check_every_hours": 168}
+    async with running(app_on(friend, youtube)) as client:
+        picks = await add_playlist(client, "PL-picks")
+        await start_playlist_sync(client, picks["id"])
+        await wait_for_syncs(client)
+        failed = [(v["youtube_video_id"], v["stage"]) for v in await list_playlist_videos(client, picks["id"])]
+        assert (await client.patch(f"/api/playlists/{picks['id']}", json=settings)).status_code == 200
+
+    imported = import_bundle(friend, bundle, name="Their picks")
+
+    async with running(app_on(friend, youtube)) as client:
+        [playlist] = (await client.get("/api/playlists")).json()
+        videos = await list_playlist_videos(client, picks["id"])
+        assert (await client.patch(f"/api/playlists/{picks['id']}", json={"indexed": True})).status_code == 200
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "sharpen the knife")}
+    assert failed == [("v-knives", "failed"), ("v-planes", "done")]
+    assert playlist | settings == playlist
+    # A Video the Playlist already included keeps its place and the Channel it is credited to; Rex Krueger, who
+    # the Bundle credits it to, is not even recorded.
+    assert [(v["youtube_video_id"], v["channel_name"], v["stage"]) for v in videos] == [
+        ("v-knives", "Wright Vlogs", "done"),
+        ("v-planes", "Wood By Wright", "done"),
+        ("v-chisels", "Wood By Wright", "done"),
+    ]
+    assert [creator["name"] for creator in playlist["creators"]] == ["Wood By Wright", "Wright Vlogs"]
+    assert found["v-knives"] == "Sharpen the knife on a fine stone"
+    assert format_import(imported).splitlines()[:2] == [
+        "Imported My picks: 2 Videos added, 0 already indexed, 0 left out.",
+        "It was already in the Library, and keeps its name and settings.",
+    ]
+
+
+async def test_import_refuses_a_playlist_under_a_name_another_playlist_has_and_takes_it_under_one_of_its_own(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    async with running(app_on(sender, transcripts)) as client:
+        await sharpening_picks(client, transcripts)
+    bundle = export_playlist(sender, "PL-picks", tmp_path / "picks.seek").path
+    youtube = FakeTranscriptSource(playlists={"PL-other": FakePlaylist("Other", [])})
+    async with running(app_on(friend, youtube)) as client:
+        await add_playlist(client, "PL-other", "sharpening PICKS")
+    kept = stored(friend) | {"playlists": query(friend, "SELECT * FROM playlists")}
+
+    refused = refusal(friend, bundle)
+    unchanged = stored(friend) | {"playlists": query(friend, "SELECT * FROM playlists")}
+    import_bundle(friend, bundle, name="Rex and Wright")
+
+    async with running(app_on(friend, youtube)) as client:
+        listed = [(p["name"], p["youtube_playlist_id"], p["indexed_videos"]) for p in (await client.get("/api/playlists")).json()]
+    assert refused == "A Playlist named 'sharpening PICKS' already exists; import this one under another name with --name"
+    assert [[tuple(row) for row in rows] for rows in unchanged.values()] == [
+        [tuple(row) for row in rows] for rows in kept.values()
+    ]
+    assert listed == [("Rex and Wright", "PL-picks", 2), ("sharpening PICKS", "PL-other", 0)]
+
+
+async def test_import_refuses_a_playlist_bundle_whose_playlist_creators_or_places_are_damaged_and_writes_nothing(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    async with running(app_on(sender, transcripts)) as client:
+        await sharpening_picks(client, transcripts)
+    bundle = export_playlist(sender, "PL-picks", tmp_path / "picks.seek").path
+    name = "has a name that is empty, too long, or holds control characters"
+
+    damaged = [
+        (
+            altered(bundle, "uncredited.seek", "DELETE FROM creators WHERE youtube_channel_id = 'UC-rex'"),
+            "the Video v-knives is credited to a creator the Bundle does not list",
+        ),
+        (
+            # What a Sync puts in the URL it asks yt-dlp for.
+            altered(bundle, "id.seek", "UPDATE playlist SET youtube_playlist_id = 'PL-picks&list=PL-other'"),
+            "its Playlist has an id that is not a YouTube id",
+        ),
+        (
+            altered(bundle, "lines.seek", "UPDATE playlist SET name = 'Picks' || char(10) || 'seek: all is well'"),
+            f"its Playlist {name}",
+        ),
+        (
+            altered(bundle, "override.seek", "UPDATE playlist SET name = 'Picks' || char(8238) || 'dedda soediV 0 :'"),
+            f"its Playlist {name}",
+        ),
+        (altered(bundle, "two.seek", "INSERT INTO playlist SELECT * FROM playlist"), "it does not hold exactly one Playlist"),
+        (altered(bundle, "none.seek", "DELETE FROM playlist"), "it does not hold exactly one Playlist"),
+        (
+            altered(
+                bundle,
+                "creator-id.seek",
+                "UPDATE creators SET youtube_channel_id = 'UC-rex/../x' WHERE youtube_channel_id = 'UC-rex'",
+            ),
+            "one of its creators has an id that is not a YouTube id",
+        ),
+        (
+            altered(bundle, "twice.seek", *unconstrained("creators"), "INSERT INTO creators SELECT * FROM creators"),
+            "the creator UC-wright is listed twice",
+        ),
+        (
+            # `seek list` prints a creator's name beside the Playlist.
+            altered(
+                bundle,
+                "escape.seek",
+                "UPDATE creators SET name = 'Rex' || char(27) || '[2J' WHERE youtube_channel_id = 'UC-rex'",
+            ),
+            f"the creator UC-rex {name}",
+        ),
+        (
+            altered(
+                bundle,
+                "backwards.seek",
+                "UPDATE creators SET name = 'Rex' || char(8238) || 'regeurK' WHERE youtube_channel_id = 'UC-rex'",
+            ),
+            f"the creator UC-rex {name}",
+        ),
+        (
+            altered(bundle, "unplaced.seek", "DELETE FROM playlist_videos WHERE youtube_video_id = 'v-chisels'"),
+            "the Video v-chisels has no place in the Playlist",
+        ),
+        (
+            altered(bundle, "last.seek", "UPDATE playlist_videos SET position = -1 WHERE youtube_video_id = 'v-chisels'"),
+            "the Video v-chisels has a place in the Playlist that is not a whole number",
+        ),
+        (
+            altered(
+                bundle,
+                "between.seek",
+                *unconstrained("playlist_videos"),
+                "UPDATE playlist_videos SET position = 0.5 WHERE youtube_video_id = 'v-chisels'",
+            ),
+            "the Video v-chisels has a place in the Playlist that is not a whole number",
+        ),
+        (
+            altered(
+                bundle,
+                "both.seek",
+                *unconstrained("playlist_videos"),
+                "INSERT INTO playlist_videos SELECT youtube_video_id, position + 5 FROM playlist_videos",
+            ),
+            "the Video v-knives is given two places in the Playlist",
+        ),
+    ]
+    for path, reason in damaged:
+        assert refusal(friend, path) == f"{path} is damaged or has been altered: {reason}"
+        assert not friend.data_dir.exists()
+    not_bundles = [
+        altered(bundle, "missing.seek", "DROP TABLE creators"),
+        # A view can run whatever SQL its maker wrote.
+        altered(
+            bundle,
+            "view.seek",
+            "ALTER TABLE playlist_videos RENAME TO held",
+            "CREATE VIEW playlist_videos AS SELECT * FROM held",
+        ),
+        altered(bundle, "virtual.seek", "DROP TABLE creators", "CREATE VIRTUAL TABLE creators USING fts5(youtube_channel_id, name, avatar_url)"),
+        # A Playlist Bundle is not a Channel Bundle with another word in it.
+        altered(bundle, "channel.seek", "UPDATE meta SET kind = 'channel'"),
+    ]
+    for path in not_bundles:
+        assert refusal(friend, path) == f"{path} is not a Seek Bundle"
+        assert not friend.data_dir.exists()
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        assert (await client.get("/api/playlists")).json() == []
+        assert await search(client, "sharpen") == []
+
+
+async def test_a_creators_avatar_that_youtube_does_not_serve_is_dropped_and_the_playlist_still_imports(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    async with running(app_on(sender, transcripts)) as client:
+        await sharpening_picks(client, transcripts)
+    bundle = altered(
+        export_playlist(sender, "PL-picks", tmp_path / "picks.seek").path,
+        "tracked.seek",
+        "UPDATE creators SET avatar_url = 'https://yt3.ggpht.com.tracker.example/rex' WHERE youtube_channel_id = 'UC-rex'",
+        # A place given for a Video the Bundle does not hold is passed over.
+        "INSERT INTO playlist_videos VALUES ('v-elsewhere', 7)",
+    )
+
+    import_bundle(friend, bundle)
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [playlist] = (await client.get("/api/playlists")).json()
+    assert [(creator["name"], creator["avatar_url"]) for creator in playlist["creators"]] == [
+        ("Rex Krueger", None),
+        ("Wood By Wright", WRIGHT_AVATAR),
+    ]
+    assert playlist["indexed_videos"] == 2
+
+
+async def test_a_video_the_friend_has_indexed_is_untouched_by_a_playlist_bundle_even_under_a_minimum_length_raised_since(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    async with running(app_on(sender, transcripts)) as client:
+        await sharpening_picks(client, transcripts)
+    bundle = export_playlist(sender, "PL-picks", tmp_path / "picks.seek").path
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright").videos.append(
+        fake_video("v-chisels", "My chisels", cues=said("Grind the chisel on a coarse wheel"))
+    )
+    async with running(app_on(friend, youtube)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    kept = stored(friend)
+
+    # Every Video in the Bundle is ten minutes long.
+    imported = import_bundle(replace(friend, min_duration_seconds=900), bundle)
+
+    now = stored(friend)
+    async with running(app_on(friend, youtube)) as client:
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "chisel")}
+    assert (imported.added, imported.already_indexed, imported.left_out) == (
+        0,
+        1,
+        {"Shorter than the 900 second minimum": 1},
+    )
+    assert found == {"v-chisels": "Grind the chisel on a coarse wheel"}
+    # Its own next Sync judges it; the import wrote nothing of it but that the Playlist includes it.
+    assert all(set(kept[table]) <= set(now[table]) for table in kept)

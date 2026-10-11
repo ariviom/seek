@@ -7,7 +7,7 @@ Status: breakdown approved by Drew on 2026-10-11. Spec: `docs/specs/0005-bundles
 | 01 | Share a Channel with someone who doesn't have it | — | done |
 | 02 | Refuse a damaged or hostile Bundle | 01 | done |
 | 03 | Import a Channel Bundle into a Library that already has some of it | 01 | done |
-| 04 | Share a Playlist | 03 | ready-for-agent |
+| 04 | Share a Playlist | 03 | done |
 | 05 | Import beside a running server | 01 | ready-for-agent |
 | 06 | Document Bundles | 02, 03, 04, 05 | ready-for-agent |
 

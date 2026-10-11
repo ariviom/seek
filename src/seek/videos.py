@@ -418,7 +418,7 @@ def record_playlist_discovery(
                 (entry.video_id,),
             ).fetchone()
             if row is not None:
-                _set_exclusion(conn, row, exclusion(rules, row["duration_seconds"], None, included=True))
+                judge_included(conn, row, rules)
             else:
                 creator = ChannelInfo(entry.channel_id, entry.channel_name, avatars.get(entry.channel_id))
                 row = conn.execute(
@@ -462,6 +462,13 @@ def record_playlist_discovery(
         )
         apply_keep_rule(conn, removed, rules.min_duration_seconds)
         return len(in_listing - set(included.values()))
+
+
+def judge_included(conn: sqlite3.Connection, video: sqlite3.Row, rules: ExclusionRules) -> None:
+    """Within a transaction: judges the Video, a row with its id, duration_seconds, pipeline_stage, and
+    excluded_reason, as one a Playlist includes. Only the minimum length excludes it, so an exclusion by its
+    Channel's filters is lifted."""
+    _set_exclusion(conn, video, exclusion(rules, video["duration_seconds"], None, included=True))
 
 
 def apply_keep_rule(conn: sqlite3.Connection, video_ids: Collection[int], min_duration_seconds: int) -> None:

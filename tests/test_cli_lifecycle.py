@@ -10,7 +10,17 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 import uvicorn
-from harness import add_channel, add_playlist, fake_channel, fake_video, running, serving, sync, wait_for_syncs
+from harness import (
+    add_channel,
+    add_playlist,
+    fake_channel,
+    fake_video,
+    running,
+    serving,
+    sync,
+    sync_playlist,
+    wait_for_syncs,
+)
 
 from seek import cli
 from seek.app import create_app
@@ -222,14 +232,66 @@ async def test_export_and_import_carry_a_channel_between_data_directories_and_re
     assert sorted(file.name for file in isolated_home.iterdir() if file.is_file()) == ["wright.seek"]
 
 
-def test_export_needs_a_channel(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    command(monkeypatch, "linux", "export", "wright.seek")
+async def test_export_and_import_carry_a_playlist_and_a_name_already_taken_is_refused_pointing_at_name(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    transcripts: FakeTranscriptSource,
+) -> None:
+    monkeypatch.setenv("SEEK_EMBEDDING_MODEL", FakeEmbedder.model_name)
+    monkeypatch.setenv("SEEK_EMBEDDING_DIMENSION", str(FakeEmbedder.dimension))
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Sharpening picks", [("UC-rex", "v-knives")])
+    transcripts.playlists["PL-other"] = FakePlaylist("Other", [("UC-rex", "v-knives")])
+    for data_dir, playlist in (("sender", "PL-picks"), ("friend", "PL-other")):
+        app = create_app(
+            Config(data_dir=isolated_home / data_dir), transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(),
+            static_dir=isolated_home / "none",
+        )
+        async with running(app) as client:
+            # The friend already calls another Playlist by the name the Bundle brings.
+            added = await add_playlist(client, playlist, "Sharpening Picks")
+            if data_dir == "sender":
+                await sync_playlist(client, added)
+    bundle = isolated_home / "picks.seek"
+
+    def run(data_dir: str, *args: str) -> str:
+        monkeypatch.setenv("SEEK_DATA_DIR", str(isolated_home / data_dir))
+        command(monkeypatch, "linux", *args)
+        cli.main()
+        return capsys.readouterr().out
+
+    exported = run("sender", "export", "--playlist", "PL-picks", str(bundle))
+    with pytest.raises(SystemExit) as taken:
+        run("friend", "import", str(bundle))
+    imported = run("friend", "import", str(bundle), "--name", "Rex's picks")
+
+    assert exported.splitlines()[0].startswith(f"Exported Sharpening Picks to {bundle}: 1 Videos, 1 Segments, ")
+    assert taken.value.code == (
+        "seek: A Playlist named 'Sharpening Picks' already exists; import this one under another name with --name"
+    )
+    assert imported.splitlines() == [
+        "Imported Rex's picks: 1 Videos added, 0 already indexed, 0 left out.",
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
+        "Next, start a Sync to pick up the Videos added to the playlist since: seek sync --playlist PL-picks",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [
+        ([], "one of the arguments --channel --playlist is required"),
+        (["--channel", "Wood By Wright", "--playlist", "Sharpening picks"], "not allowed with argument --channel"),
+    ],
+)
+def test_export_takes_exactly_one_of_a_channel_and_a_playlist(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], entries: list[str], message: str
+) -> None:
+    command(monkeypatch, "linux", "export", *entries, "wright.seek")
 
     with pytest.raises(SystemExit) as error:
         cli.main()
 
     assert error.value.code == 2
-    assert "the following arguments are required: --channel" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
 
 
 def test_startup_preserves_existing_config_and_database(
