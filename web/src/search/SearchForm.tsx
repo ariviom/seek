@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Search } from "lucide-react";
-import type { Channel, Group, PreferRecent } from "@/lib/api";
+import type { Channel, Group, Playlist, PreferRecent } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -34,6 +34,7 @@ export function SearchForm({
   search,
   channels,
   groups,
+  playlists,
   focusRequest,
   onFocused,
   onSearch,
@@ -41,6 +42,7 @@ export function SearchForm({
   search: SearchState;
   channels: Channel[] | null;
   groups: Group[] | null;
+  playlists: Playlist[] | null;
   focusRequest: number;
   // Clears the request once met, so a later remount of the form doesn't take focus again.
   onFocused: () => void;
@@ -54,7 +56,7 @@ export function SearchForm({
   }, [focusRequest, onFocused]);
 
   const is = (scope: SearchScope) =>
-    search.scope.kind === scope.kind && (scope.kind !== "group" || (search.scope.kind === "group" && search.scope.id === scope.id));
+    search.scope.kind === scope.kind && (!("id" in scope) || ("id" in search.scope && search.scope.id === scope.id));
 
   return (
     <form
@@ -87,10 +89,18 @@ export function SearchForm({
           />
           {(groups ?? []).map((group) => (
             <ScopeOption
-              key={group.id}
+              key={`group:${group.id}`}
               label={group.name}
               pressed={is({ kind: "group", id: group.id })}
               onClick={() => search.setScope({ kind: "group", id: group.id })}
+            />
+          ))}
+          {(playlists ?? []).map((playlist) => (
+            <ScopeOption
+              key={`playlist:${playlist.id}`}
+              label={playlist.name}
+              pressed={is({ kind: "playlist", id: playlist.id })}
+              onClick={() => search.setScope({ kind: "playlist", id: playlist.id })}
             />
           ))}
           <ScopeOption

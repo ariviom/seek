@@ -225,7 +225,7 @@ export function App() {
   const syncing = active.length > 0 && active.every((channel) => channelSync(syncs, channel.id) !== null);
   const library = useLibraryDialogs({ select, reloadChannels, reloadGroups, reloadPlaylists });
 
-  const search = useSearch(channels, groups);
+  const search = useSearch(channels, groups, playlists);
 
   const closePlayback = playback.close;
   // Leaving a section stops what it was playing.
@@ -343,6 +343,7 @@ export function App() {
           search={search}
           channels={channels}
           groups={groups}
+          playlists={playlists}
           focusRequest={focusSearch}
           onFocused={clearFocusSearch}
           onSearch={() => {

@@ -301,6 +301,12 @@ async def sync(client: httpx.AsyncClient, *channels: Json) -> None:
     assert all(s["status"] == "done" for s in await wait_for_syncs(client))
 
 
+async def sync_playlist(client: httpx.AsyncClient, playlist: Json) -> None:
+    """Syncs the Playlist and checks every Sync so far finished."""
+    await start_playlist_sync(client, playlist["id"])
+    assert all(s["status"] == "done" for s in await wait_for_syncs(client))
+
+
 async def list_videos(client: httpx.AsyncClient, channel_id: int) -> dict[str, Json]:
     """The Channel's Videos by title."""
     response = await client.get(f"/api/channels/{channel_id}/videos")
@@ -338,6 +344,15 @@ def take_out_of_library(config: Config, channel: Json) -> None:
     conn = db.connect(config.database_path)
     try:
         conn.execute("UPDATE channels SET in_library = 0 WHERE id = ?", (channel["id"],))
+    finally:
+        conn.close()
+
+
+def pause_playlist(config: Config, playlist: Json) -> None:
+    """Pauses the Playlist, written directly until the API can."""
+    conn = db.connect(config.database_path)
+    try:
+        conn.execute("UPDATE playlists SET indexed = 0 WHERE id = ?", (playlist["id"],))
     finally:
         conn.close()
 

@@ -411,8 +411,8 @@ codex mcp add seek --url http://127.0.0.1:7337/mcp
 localhost. [Publish the server](#publishing-through-a-reverse-proxy), behind an identity gate. Then, in Settings →
 Connectors → Add custom connector, enter `https://seek.example.com/mcp`.
 
-The tools are `list_groups`, `list_channels`, `search` (scoped to a `group` or a list of `channels`), `expand`,
-`get_video`, and `sql`.
+The tools are `list_groups`, `list_playlists`, `list_channels`, `search` (scoped to a `group`, a list of `channels`,
+or a `playlist`), `expand`, `get_video`, and `sql`.
 
 ## Settings
 

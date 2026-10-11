@@ -15,23 +15,26 @@ type SearchQuery = Annotated[str, StringConstraints(strip_whitespace=True, min_l
 # A JSON number is a Group id and a string is a Group name, so a Group named "12" stays reachable by name.
 type GroupRef = StrictInt | Name
 type ChannelIds = Annotated[list[StrictInt], Field(min_length=1)]
+# An id or a name, as a Group is.
+type PlaylistRef = StrictInt | Name
 # Only as many results as go to the reranker can come back.
 type ResultLimit = Annotated[StrictInt, Field(ge=1, le=CANDIDATES)]
 
 
 class SearchBody(BaseModel):
-    """At most one scope: a Group or a list of Channels. Neither searches every Channel."""
+    """At most one scope: a Group, a list of Channels, or a Playlist. None searches everything."""
 
     query: SearchQuery
     group: GroupRef | None = None
     channels: ChannelIds | None = None
+    playlist: PlaylistRef | None = None
     limit: ResultLimit = 10
     prefer_recent: PreferRecent = "gentle"
 
     @model_validator(mode="after")
     def one_scope(self) -> Self:
-        if self.group is not None and self.channels is not None:
-            raise ValueError("Search a Group or a list of Channels, not both")
+        if sum(given is not None for given in (self.group, self.channels, self.playlist)) > 1:
+            raise ValueError("Search a Group, a list of Channels, or a Playlist, not more than one")
         return self
 
 
@@ -44,7 +47,12 @@ def search_router(search: Search, database: Database) -> APIRouter:
     @router.post("/search")
     async def run_search(body: SearchBody) -> list[SearchResult]:
         return await search.search(
-            body.query, group=body.group, channel_ids=body.channels, limit=body.limit, prefer_recent=body.prefer_recent
+            body.query,
+            group=body.group,
+            channel_ids=body.channels,
+            playlist=body.playlist,
+            limit=body.limit,
+            prefer_recent=body.prefer_recent,
         )
 
     @router.get("/segments/{segment_id}/expand")

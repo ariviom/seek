@@ -13,7 +13,7 @@ from seek.app import create_app
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeSecrets, FakeTranscriptSource
 
-TOOLS = {"list_groups", "list_channels", "search", "expand", "get_video", "sql"}
+TOOLS = {"list_groups", "list_playlists", "list_channels","search", "expand", "get_video", "sql"}
 
 
 def command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, port: int) -> None:

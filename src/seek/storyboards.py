@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from seek.db import now_iso
 from seek.ports import Storyboard
+from seek.scope import VIDEO_IN_SCOPE, Scope, scope_params
 
 # The most frames one strip asks for: five in search, three in the Sources column.
 MAX_FRAMES = 5
@@ -121,17 +122,17 @@ def frames_at(storyboard: Storyboard, duration_seconds: int | None, moment: Mome
 def read_frames(conn: sqlite3.Connection, moments: Sequence[Moment]) -> list[VideoFrames]:
     """The frames each moment asks for, leaving out any Video with no stored geometry and no frames to give.
 
-    A Video of a Channel that is not indexed is left out too, as it is everywhere else.
+    A Video that is not searchable is left out too, as it is everywhere else.
     """
     rows = conn.execute(
-        """
+        f"""
         SELECT storyboards.*, videos.duration_seconds
         FROM storyboards
         JOIN videos ON videos.id = storyboards.video_id
         JOIN channels ON channels.id = videos.channel_id
-        WHERE channels.indexed = 1 AND storyboards.video_id IN (SELECT value FROM json_each(?))
+        WHERE {VIDEO_IN_SCOPE} AND storyboards.video_id IN (SELECT value FROM json_each(:video_ids))
         """,
-        (_ids(moments),),
+        {**scope_params(None), "video_ids": _ids(moments)},
     )
     stored = {row["video_id"]: row for row in rows}
     found = []
@@ -146,21 +147,20 @@ def read_frames(conn: sqlite3.Connection, moments: Sequence[Moment]) -> list[Vid
 
 
 def missing(conn: sqlite3.Connection, channel_id: int | None) -> list[tuple[int, str]]:
-    """The searchable Videos of the Channel, or of every Channel, with no storyboard stored yet, as discovered.
+    """The searchable Videos of the Channel, or every searchable Video, with no storyboard stored yet, as discovered.
 
-    Only a done Video of an indexed Channel can be cited, and read_frames serves only those, so no YouTube call is
-    spent on any other; a Video still being ingested gets its geometry from its own extraction.
+    Only a searchable Video can be cited, and read_frames serves only those, so no YouTube call is spent on any
+    other; a Video still being ingested gets its geometry from its own extraction.
     """
     rows = conn.execute(
-        """
+        f"""
         SELECT videos.id, videos.youtube_video_id FROM videos
         JOIN channels ON channels.id = videos.channel_id
         LEFT JOIN storyboards ON storyboards.video_id = videos.id
-        WHERE storyboards.video_id IS NULL AND videos.pipeline_stage = 'done' AND channels.indexed = 1
-          AND (?1 IS NULL OR videos.channel_id = ?1)
+        WHERE storyboards.video_id IS NULL AND {VIDEO_IN_SCOPE}
         ORDER BY videos.id
         """,
-        (channel_id,),
+        scope_params(None if channel_id is None else Scope("channel", channel_id)),
     )
     return [(row["id"], row["youtube_video_id"]) for row in rows]
 

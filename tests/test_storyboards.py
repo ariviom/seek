@@ -11,29 +11,33 @@ from fastapi import FastAPI
 from harness import (
     Json,
     add_channel,
+    add_playlist,
     fake_channel,
     fake_storyboard,
     fake_video,
+    list_playlist_videos,
     list_videos,
     mcp_client,
+    pause_playlist,
     query,
     running,
     said,
     sync,
+    sync_playlist,
 )
 
 from seek import db, storyboards, syncs
 from seek.app import create_app
 from seek.backfill_command import SYNC_RUNNING, BackfillReport, backfill_storyboards
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import Storyboard, VideoUnavailable
 from seek.storyboards import Frame, Moment, frames_at
 from seek.storyboards_api import MAX_MOMENTS
 from seek.sync_command import SyncCommandError
 from seek.videos import Source
 
-# Every field a search result has carried since before frames existed; a signed sheet URL is not among them.
+# Every field a search result carries; a signed sheet URL is not among them.
 SEARCH_RESULT_FIELDS = {
     "segment_id",
     "text",
@@ -46,6 +50,7 @@ SEARCH_RESULT_FIELDS = {
     "chapter_title",
     "channel_id",
     "channel_name",
+    "playlist_ids",
     "score",
     "url",
 }
@@ -240,6 +245,32 @@ async def test_frames_leave_out_a_channel_that_is_not_indexed(
     assert (await client.post("/api/frames", json=moments)).json() == []
 
 
+async def test_a_playlists_videos_have_frames_whatever_their_creators_while_the_playlist_is_active(
+    served: Served, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    client, _ = served
+    # Ingested with no storyboard on offer, so the backfill is what fetches them.
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-bench", "Flattening a bench"))
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-saw", "Saw files"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-wright", "v-bench"), ("UC-rex", "v-saw")])
+    # One creator Paused in the Library, the other outside it.
+    wright = await add_channel(client, "@woodbywright", "Paul Wright")
+    await client.patch(f"/api/channels/{wright['id']}", json={"indexed": False})
+    playlist = await add_playlist(client, "PL-picks")
+    await sync_playlist(client, playlist)
+    videos = await list_playlist_videos(client, playlist["id"])
+    moments = {"moments": [{"video_id": video["id"], "seconds": 0.0, "count": 1} for video in videos]}
+    _now_offers_storyboards(transcripts)
+
+    report = backfill_storyboards(config, None, transcripts)
+    shown = (await client.post("/api/frames", json=moments)).json()
+    pause_playlist(config, playlist)
+
+    assert report == BackfillReport(stored=2, absent=0, failed=0, remaining=0)
+    assert [frames["video_id"] for frames in shown] == [video["id"] for video in videos]
+    assert (await client.post("/api/frames", json=moments)).json() == []
+
+
 async def test_a_stored_storyboard_changes_nothing_a_model_is_handed(
     served: Served, transcripts: FakeTranscriptSource
 ) -> None:
@@ -252,7 +283,7 @@ async def test_a_stored_storyboard_changes_nothing_a_model_is_handed(
         searched = await mcp.call_tool("search", arguments)
         described = await mcp.call_tool("get_video", {"video_id": with_frames["id"]})
 
-    # The same fields as before frames existed, and no sheet URL anywhere in what a model reads.
+    # Only its own fields, and no sheet URL anywhere in what a model reads.
     assert api != []
     assert [set(result) for result in api] == [SEARCH_RESULT_FIELDS for _ in api]
     assert searched.structured_content == {"result": api}

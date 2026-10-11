@@ -10,14 +10,15 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field, ValidationError
 
-from seek import groups, sources
+from seek import groups, playlists, sources
 from seek.db import Database
 from seek.errors import NotFound
 from seek.groups import ChannelSummary, GroupSummary
+from seek.playlists import PlaylistSummary
 from seek.ports import ModelUnavailable
 from seek.scope import SCOPE_NOUN, Scope, ScopeKind
 from seek.search import CANDIDATES, PreferRecent, Search, SearchResult
-from seek.search_api import ChannelIds, GroupRef, ResultLimit, SearchBody, SearchQuery
+from seek.search_api import ChannelIds, GroupRef, PlaylistRef, ResultLimit, SearchBody, SearchQuery
 from seek.sources import DEFAULT_EXPAND_SECONDS, MAX_EXPAND_SECONDS, Expansion, VideoInfo
 from seek.sql import ROW_LIMIT, TEXT_LIMIT, QueryRejected, QueryResult, run_query
 
@@ -42,13 +43,15 @@ RESOURCE_ADVISOR = (
 )
 
 INSTRUCTIONS = f"""\
-This server searches the Transcripts of YouTube Channels the user trusts, which can be organised into Groups. Each \
-Video's Transcript is cut into timestamped Segments.
+This server searches the Transcripts of YouTube Channels the user trusts, which can be organised into Groups, and \
+of the Videos in the user's Playlists, whichever Channels made them. Each Video's Transcript is cut into timestamped \
+Segments.
 
 {RESOURCE_ADVISOR}
 
-Start with search (after list_groups or list_channels when one should scope it), use expand when a Segment needs \
-more context, get_video for a Video's chapters and description, and sql only for counting or listing questions."""
+Start with search (after list_groups, list_playlists, or list_channels when one should scope it), use expand when \
+a Segment needs more context, get_video for a Video's chapters and description, and sql only for counting or listing \
+questions."""
 
 _SCOPE_INSTRUCTIONS = """\
 This server searches the Transcripts of {{consulted}} the user trusts. Each Video's Transcript is cut into \
@@ -148,7 +151,7 @@ def _server(
             description=_describe(
                 (
                     "The Groups, each with its Channels and how many searchable Videos each has. Scope search with a "
-                    "Group's id or name, or with Channel ids."
+                    "Group's id or name, a Playlist's, or with Channel ids."
                     if scope is None
                     else "The Group this Conversation consults, with its Channels and how many searchable Videos "
                     "each has."
@@ -158,6 +161,19 @@ def _server(
         )
         async def list_groups() -> list[GroupSummary]:
             return await database.run(lambda conn: groups.group_summaries(conn, group_id))
+
+    if scope is None:
+
+        @server.tool(
+            name="list_playlists",
+            description=_describe(
+                "The Playlists, each with the Channels its Videos are credited to and how many searchable Videos each "
+                "has in it. Scope search with a Playlist's id or name.",
+                advisor,
+            ),
+        )
+        async def list_playlists() -> list[PlaylistSummary]:
+            return await database.run(playlists.playlist_summaries)
 
     @server.tool(
         name="list_channels",
@@ -180,8 +196,8 @@ def _server(
             description=_describe(
                 "Find the Transcript Segments that best answer a question, matched by meaning and by exact words, "
                 "reranked, with newer Videos preferred on near-ties. Scope it with at most one of group (a number is "
-                "a Group id, a string is a Group name) or channels (Channel ids); give neither to search every "
-                "Channel. " + _SEARCH_RESULTS,
+                "a Group id, a string is a Group name), channels (Channel ids), or playlist (a Playlist id or name); "
+                "give none to search every Channel and Playlist. " + _SEARCH_RESULTS,
                 advisor,
             ),
         )
@@ -189,16 +205,25 @@ def _server(
             query: SearchQuery,
             group: GroupRef | None = None,
             channels: ChannelIds | None = None,
+            playlist: PlaylistRef | None = None,
             limit: ResultLimit = 10,
             prefer_recent: PreferRecent = "gentle",
         ) -> list[SearchResult]:
             with _tool_errors():
                 # The arguments are already valid one by one; the body adds the rule that they give one scope.
-                body = SearchBody(query=query, group=group, channels=channels, limit=limit, prefer_recent=prefer_recent)
+                body = SearchBody(
+                    query=query,
+                    group=group,
+                    channels=channels,
+                    playlist=playlist,
+                    limit=limit,
+                    prefer_recent=prefer_recent,
+                )
                 return await search.search(
                     body.query,
                     group=body.group,
                     channel_ids=body.channels,
+                    playlist=body.playlist,
                     limit=body.limit,
                     prefer_recent=body.prefer_recent,
                 )
@@ -261,10 +286,12 @@ def _server(
             name="sql",
             description=_describe(
                 "Run one read-only SQLite SELECT over the knowledge base, for counting or listing questions search "
-                "can't answer, such as how many Videos a Channel has from a given year. Tables include channels, "
-                "groups, group_channels, videos (pipeline_stage 'done' means searchable), transcripts, segments, and "
-                "segments_fts (FTS5 over segments.context and segments.text); read sqlite_master for the full "
-                f"schema. Returns at most {ROW_LIMIT} rows within {time_limit:g} seconds; text over "
+                "can't answer, such as how many Videos a Channel has from a given year. Tables include channels "
+                "(in_library 0 is a Channel known only as the creator of a Playlist's Videos), groups, "
+                "group_channels, playlists, playlist_videos (which Videos a Playlist includes, with their position), "
+                "videos (pipeline_stage 'done' means searchable), transcripts, segments, and segments_fts (FTS5 over "
+                "segments.context and segments.text); read sqlite_master for the full schema. "
+                f"Returns at most {ROW_LIMIT} rows within {time_limit:g} seconds; text over "
                 f"{TEXT_LIMIT} characters is cut short, blobs come back as placeholders, and rows stop early for a "
                 "very large result.",
                 advisor,

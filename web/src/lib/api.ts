@@ -151,11 +151,13 @@ export type Sync = SyncSource & {
 };
 
 export type PreferRecent = "off" | "gentle" | "strong";
-// At most one of `group` (a number is an id, a string a name) and `channels`; neither searches every Channel.
+// At most one of `group`, `channels`, and `playlist` (for a Group or Playlist, a number is an id and a string a
+// name); none searches everything.
 export type SearchRequest = {
   query: string;
   group?: number | string;
   channels?: number[];
+  playlist?: number | string;
   limit?: number;
   prefer_recent?: PreferRecent;
 };
@@ -172,6 +174,8 @@ export type SearchResult = {
   chapter_title: string | null;
   channel_id: number;
   channel_name: string;
+  // The Active Playlists that include the Video.
+  playlist_ids: number[];
   score: number;
   url: string;
 };

@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from seek.channels import CheckHours
 from seek.db import transaction
 from seek.errors import Conflict
+from seek.groups import ChannelSummary, channel_summaries
 from seek.ports import PlaylistInfo
+from seek.scope import Scope
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,28 @@ def _select(conn: sqlite3.Connection, playlist_id: int | None = None) -> list[Pl
 
 def list_playlists(conn: sqlite3.Connection) -> list[Playlist]:
     return _select(conn)
+
+
+@dataclass(frozen=True)
+class PlaylistSummary:
+    id: int
+    name: str
+    video_count: int
+    creators: list[ChannelSummary]
+
+
+def playlist_summaries(conn: sqlite3.Connection) -> list[PlaylistSummary]:
+    """Every indexed Playlist, with its creators and how many searchable Videos each has in it."""
+    rows = conn.execute("SELECT id, name FROM playlists WHERE indexed = 1 ORDER BY name COLLATE NOCASE, id").fetchall()
+    summaries = []
+    for row in rows:
+        creators = channel_summaries(conn, Scope("playlist", row["id"]))
+        summaries.append(
+            PlaylistSummary(
+                id=row["id"], name=row["name"], video_count=sum(c.video_count for c in creators), creators=creators
+            )
+        )
+    return summaries
 
 
 def create_playlist(conn: sqlite3.Connection, info: PlaylistInfo, name: str | None = None) -> Playlist:

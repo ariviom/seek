@@ -7,18 +7,21 @@ from harness import (
     Json,
     add_channel,
     add_group,
+    add_playlist,
     fake_channel,
     fake_video,
+    pause_playlist,
     running,
     said,
     start_sync,
     sync,
+    sync_playlist,
     wait_for_syncs,
 )
 
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import Chapter, Cue
 
 
@@ -71,6 +74,7 @@ async def test_a_result_carries_its_channel_video_chapter_and_a_citation_to_the_
         "chapter_title": "Sawing",
         "channel_id": wright["id"],
         "channel_name": "Paul Wright",
+        "playlist_ids": [],
         "score": results[0]["score"],
         "url": "https://www.youtube.com/watch?v=v-dovetails&t=41s",
     }
@@ -125,6 +129,11 @@ async def test_search_is_scoped_to_a_group_by_id_or_name_to_channels_or_to_every
         ({"query": "chisel", "group": 999}, 404),
         ({"query": "chisel", "group": "Nobody"}, 404),
         ({"query": "chisel", "channels": [999]}, 404),
+        ({"query": "chisel", "playlist": 999}, 404),
+        ({"query": "chisel", "playlist": "Nobody"}, 404),
+        ({"query": "chisel", "playlist": 1, "group": 1}, 422),
+        ({"query": "chisel", "playlist": 1, "channels": [1]}, 422),
+        ({"query": "chisel", "playlist": True}, 422),
     ],
 )
 async def test_invalid_searches_are_rejected(client: httpx.AsyncClient, body: Json, status: int) -> None:
@@ -154,6 +163,64 @@ async def test_not_indexed_channels_are_left_out_of_every_scope(
     assert {r["youtube_video_id"] for r in before} == {"v-main", "v-vlog"}
     for scope in ({}, {"group": group["id"]}, {"channels": [wright["id"], vlog["id"]]}):
         assert [r["youtube_video_id"] for r in await search(client, "flatten the board", **scope)] == ["v-main"]
+
+
+async def sharpening_picks(client: httpx.AsyncClient, transcripts: FakeTranscriptSource) -> tuple[Json, Json]:
+    """Wood By Wright in the Library with two Videos, and the Playlist "Sharpening picks": one of those and one of
+    Rex Krueger's, who stays outside the Library."""
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Sharpen the knife on a fine stone"))
+    )
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Sharpening picks", [("UC-rex", "v-knives"), ("UC-wright", "v-chisels")]
+    )
+    wright = await add_channel(client, "@woodbywright")
+    await sync(client, wright)
+    playlist = await add_playlist(client, "PL-picks")
+    await sync_playlist(client, playlist)
+    return wright, playlist
+
+
+async def test_a_playlist_is_searched_by_id_or_name_and_everything_includes_its_videos(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    wright, playlist = await sharpening_picks(client, transcripts)
+
+    async def found(**scope: object) -> set[str]:
+        return {r["youtube_video_id"] for r in await search(client, "sharpen on a fine stone", **scope)}
+
+    assert await found() == {"v-chisels", "v-saws", "v-knives"}
+    assert await found(playlist=playlist["id"]) == {"v-chisels", "v-knives"}
+    assert await found(playlist="sharpening picks") == {"v-chisels", "v-knives"}
+    assert await found(channels=[wright["id"]]) == {"v-chisels", "v-saws"}
+    # Each result names the Active Playlists that include it.
+    assert {
+        r["youtube_video_id"]: r["playlist_ids"] for r in await search(client, "sharpen on a fine stone")
+    } == {"v-chisels": [playlist["id"]], "v-knives": [playlist["id"]], "v-saws": []}
+
+
+async def test_pausing_a_channel_or_a_playlist_affects_only_what_was_paused(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    wright, playlist = await sharpening_picks(client, transcripts)
+
+    async def found(**scope: object) -> set[str]:
+        return {r["youtube_video_id"] for r in await search(client, "sharpen on a fine stone", **scope)}
+
+    await client.patch(f"/api/channels/{wright['id']}", json={"indexed": False})
+    # The Paused Channel's Video stays searchable through the Playlist, and nowhere else.
+    assert await found() == await found(playlist=playlist["id"]) == {"v-chisels", "v-knives"}
+    assert await found(channels=[wright["id"]]) == set()
+
+    await client.patch(f"/api/channels/{wright['id']}", json={"indexed": True})
+    pause_playlist(config, playlist)
+    paused = await search(client, "sharpen on a fine stone")
+    assert {r["youtube_video_id"]: r["playlist_ids"] for r in paused} == {"v-chisels": [], "v-saws": []}
+    assert await found(playlist=playlist["id"]) == await found(playlist="Sharpening picks") == set()
 
 
 async def test_newer_videos_win_near_ties_gently_by_default_and_strongly_when_asked(

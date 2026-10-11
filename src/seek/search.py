@@ -16,7 +16,7 @@ from seek.db import Database
 from seek.errors import NotFound
 from seek.ports import Embedder, ModelUnavailable, Reranker
 from seek.ranking import Recency, fuse, matched_seconds, recency_score
-from seek.scope import VIDEO_IN_SCOPE, Scope, scope_params
+from seek.scope import ACTIVE_PLAYLIST_IDS, SCOPE_NOUN, VIDEO_IN_SCOPE, Scope, ScopeKind, scope_params
 from seek.segmentation import SegmentCue
 from seek.segments import passage_text
 from seek.sources import watch_url
@@ -44,6 +44,8 @@ class SearchResult:
     chapter_title: str | None
     channel_id: int
     channel_name: str
+    # The indexed Playlists that include the Video, in id order.
+    playlist_ids: list[int]
     # Recency-adjusted reranker confidence; zero for unscored fused fallback results.
     score: float
     url: str
@@ -58,19 +60,23 @@ class _Candidate:
 
 # Blocking: run through Database.run.
 def _scope_videos(
-    conn: sqlite3.Connection, scope: Scope | None, group: int | str | None, channel_ids: Sequence[int] | None
+    conn: sqlite3.Connection,
+    scope: Scope | None,
+    group: int | str | None,
+    channel_ids: Sequence[int] | None,
+    playlist: int | str | None,
 ) -> list[int]:
-    """The searchable Videos a search covers: a Conversation's scope, a Group's, the given Channels', or every one.
+    """The searchable Videos a search covers: a Conversation's scope, a Group's, the given Channels', a Playlist's,
+    or every one.
 
-    A Group is given by id (an int) or by name (a str), so a Group named "12" is never confused with Group 12.
+    A Group or Playlist is given by id (an int) or by name (a str), so a Group named "12" is never confused with
+    Group 12.
     """
     chosen_channels = None
     if scope is None and group is not None:
-        column = "id" if isinstance(group, int) else "name"
-        found = conn.execute(f"SELECT id FROM groups WHERE {column} = ?", (group,)).fetchone()
-        if found is None:
-            raise NotFound(f"Group {group!r} not found")
-        scope = Scope("group", found["id"])
+        scope = _named(conn, "group", "groups", group)
+    elif scope is None and playlist is not None:
+        scope = _named(conn, "playlist", "playlists", playlist)
     elif scope is None and channel_ids is not None:
         # Bound as one JSON array, as groups.set_members does.
         chosen_channels = json.dumps(list(dict.fromkeys(channel_ids)))
@@ -89,12 +95,23 @@ def _scope_videos(
         JOIN channels ON channels.id = videos.channel_id
         WHERE {VIDEO_IN_SCOPE}
           AND (
-            :chosen_channels IS NULL OR videos.channel_id IN (SELECT value FROM json_each(:chosen_channels))
+            :chosen_channels IS NULL
+            -- Chosen Channels are searched as Channels: one that is not indexed gives nothing, even where an
+            -- indexed Playlist keeps its Videos searchable.
+            OR (channels.indexed = 1 AND videos.channel_id IN (SELECT value FROM json_each(:chosen_channels)))
           )
         """,
         {**scope_params(scope), "chosen_channels": chosen_channels},
     )
     return [row["id"] for row in rows]
+
+
+def _named(conn: sqlite3.Connection, kind: ScopeKind, table: str, ref: int | str) -> Scope:
+    column = "id" if isinstance(ref, int) else "name"
+    found = conn.execute(f"SELECT id FROM {table} WHERE {column} = ?", (ref,)).fetchone()
+    if found is None:
+        raise NotFound(f"{SCOPE_NOUN[kind]} {ref!r} not found")
+    return Scope(kind, found["id"])
 
 
 # Blocking: run through Database.run.
@@ -128,10 +145,10 @@ def _candidates(
         rankings.append([row["id"] for row in lexical])
     fused = fuse(rankings, limit=CANDIDATES)
     rows = conn.execute(
-        """
+        f"""
         SELECT segments.id, segments.text, segments.context, segments.start_seconds, segments.cues,
                segments.chapter_title, videos.id AS video_id, videos.youtube_video_id, videos.title, videos.published_on,
-               channels.id AS channel_id, channels.name AS channel_name
+               channels.id AS channel_id, channels.name AS channel_name, {ACTIVE_PLAYLIST_IDS} AS playlist_ids
         FROM segments
         JOIN videos ON videos.id = segments.video_id
         JOIN channels ON channels.id = videos.channel_id
@@ -159,6 +176,7 @@ def _unscored(query: str, row: sqlite3.Row) -> _Candidate:
         chapter_title=row["chapter_title"],
         channel_id=row["channel_id"],
         channel_name=row["channel_name"],
+        playlist_ids=json.loads(row["playlist_ids"]),
         score=0.0,
         url=watch_url(row["youtube_video_id"], int(matched)),
     )
@@ -187,14 +205,15 @@ class Search:
         scope: Scope | None = None,
         group: int | str | None = None,
         channel_ids: Sequence[int] | None = None,
+        playlist: int | str | None = None,
         limit: int = 10,
         prefer_recent: PreferRecent = "gentle",
     ) -> list[SearchResult]:
-        """The best Segments for the query within one scope: a Conversation's, a Group, some Channels, or (none
-        given) everything."""
+        """The best Segments for the query within one scope: a Conversation's, a Group, some Channels, a Playlist,
+        or (none given) everything."""
         # Composed, so accented words typed in decomposed form still match the transcript's words.
         query = unicodedata.normalize("NFC", query)
-        covered = await self._database.run(lambda conn: _scope_videos(conn, scope, group, channel_ids))
+        covered = await self._database.run(lambda conn: _scope_videos(conn, scope, group, channel_ids, playlist))
         # Embedded even when the scope covers nothing, so a model that isn't ready is reported, not read as no results.
         query_vector = await asyncio.to_thread(self._embedder.embed_query, query)
         if not covered:

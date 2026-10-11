@@ -11,14 +11,17 @@ from harness import (
     Json,
     add_channel,
     add_group,
+    add_playlist,
     fake_channel,
     fake_video,
     list_videos,
     mcp_client,
+    pause_playlist,
     query,
     running,
     said,
     sync,
+    sync_playlist,
     take_out_of_library,
     wait_for_syncs,
 )
@@ -26,10 +29,10 @@ from mcp.types import CallToolResult, TextContent
 
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
 from seek.ports import Chapter
 
-TOOLS = {"list_groups", "list_channels", "search", "expand", "get_video", "sql"}
+TOOLS = {"list_groups", "list_playlists", "list_channels", "search", "expand", "get_video", "sql"}
 
 type Served = tuple[httpx.AsyncClient, FastAPI]
 
@@ -116,7 +119,10 @@ async def test_the_search_tool_returns_what_the_search_api_returns(
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
-        ({"query": "chisel", "group": 1, "channels": [1]}, "not both"),
+        ({"query": "chisel", "group": 1, "channels": [1]}, "not more than one"),
+        ({"query": "chisel", "group": 1, "playlist": 1}, "not more than one"),
+        ({"query": "chisel", "playlist": "Nobody"}, "Playlist 'Nobody' not found"),
+        ({"query": "chisel", "playlist": True}, "playlist"),
         ({"query": "   "}, "query"),
         ({"query": "chisel", "channels": []}, "channels"),
         ({"query": "chisel", "limit": 51}, "limit"),
@@ -183,6 +189,102 @@ async def test_list_groups_and_list_channels_show_channels_with_their_searchable
             {"id": rex["id"], "name": "Rex Krueger", "video_count": 0},
         ]
     }
+
+
+async def test_a_playlist_is_listed_searched_and_read_over_mcp_while_it_is_active(
+    served: Served, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    client, app = served
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-irons", "Plane irons", cues=said("Sharpen the plane iron on a fine stone")),
+        fake_video("v-short", "A short", duration=20, listed_duration=20),
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Sharpen the knife on a fine stone"))
+    )
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Sharpening picks",
+        [("UC-wright", "v-chisels"), ("UC-rex", "v-knives"), ("UC-wright", "v-irons"), ("UC-wright", "v-short")],
+    )
+    transcripts.playlists["PL-paused"] = FakePlaylist("Paused picks", [("UC-rex", "v-knives")])
+    transcripts.playlists["PL-empty"] = FakePlaylist("Empty picks", [])
+    # Rex is in the Library and Paused; Wood By Wright is known only through the Playlists.
+    rex = await add_channel(client, "@rexkrueger")
+    await client.patch(f"/api/channels/{rex['id']}", json={"indexed": False})
+    picks = await add_playlist(client, "PL-picks")
+    paused = await add_playlist(client, "PL-paused")
+    empty = await add_playlist(client, "PL-empty")
+    for playlist in (picks, paused):
+        await sync_playlist(client, playlist)
+    pause_playlist(config, paused)
+    [wright_id] = [c["id"] for c in (await client.get("/api/playlists")).json()[2]["creators"] if c["id"] != rex["id"]]
+
+    listed = await call(app, "list_playlists")
+    by_id = await call(app, "search", query="sharpen on a fine stone", playlist=picks["id"])
+    by_name = await call(app, "search", query="sharpen on a fine stone", playlist="sharpening picks")
+    everything = await call(app, "search", query="sharpen on a fine stone")
+    [knives] = [r for r in by_id["result"] if r["youtube_video_id"] == "v-knives"]
+
+    # Only Active Playlists, each with its creators and how many of their Videos in it are searchable: the Paused
+    # creator's Video counts, the one too short to index doesn't.
+    assert listed == {
+        "result": [
+            {"id": empty["id"], "name": "Empty picks", "video_count": 0, "creators": []},
+            {
+                "id": picks["id"],
+                "name": "Sharpening picks",
+                "video_count": 3,
+                "creators": [
+                    {"id": rex["id"], "name": "Rex Krueger", "video_count": 1},
+                    {"id": wright_id, "name": "Wood By Wright", "video_count": 2},
+                ],
+            },
+        ]
+    }
+    assert {r["youtube_video_id"] for r in by_id["result"]} == {"v-chisels", "v-knives", "v-irons"}
+    assert by_id == by_name == everything
+    assert by_id == {
+        "result": (await client.post("/api/search", json={"query": "sharpen on a fine stone", "playlist": picks["id"]})).json()
+    }
+    assert knives["playlist_ids"] == [picks["id"]]
+    assert await call(app, "search", query="sharpen on a fine stone", playlist=paused["id"]) == {"result": []}
+    # list_channels stays the Library's: no creator known only through a Playlist, and no Paused Channel.
+    assert await call(app, "list_channels") == {"result": []}
+    assert (await call(app, "expand", segment_id=knives["segment_id"]))["video_id"] == knives["video_id"]
+    assert (await call(app, "get_video", video_id=knives["video_id"]))["channel_name"] == "Rex Krueger"
+
+    pause_playlist(config, picks)
+
+    assert await call(app, "list_playlists") == {
+        "result": [{"id": empty["id"], "name": "Empty picks", "video_count": 0, "creators": []}]
+    }
+    assert await call(app, "search", query="sharpen on a fine stone") == {"result": []}
+    assert (await call_tool(app, "expand", {"segment_id": knives["segment_id"]})).is_error
+    assert (await call_tool(app, "get_video", {"video_id": knives["video_id"]})).is_error
+
+
+async def test_the_sql_tool_describes_the_playlist_tables_and_reads_them(
+    served: Served, transcripts: FakeTranscriptSource
+) -> None:
+    client, app = served
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Sharpening picks", [("UC-rex", "v-knives")])
+    await sync_playlist(client, await add_playlist(client, "PL-picks"))
+
+    async with mcp_client(app) as mcp:
+        [sql] = [tool for tool in (await mcp.list_tools()).tools if tool.name == "sql"]
+    counted = await call(
+        app,
+        "sql",
+        query="SELECT playlists.name, channels.name AS creator, channels.in_library FROM playlist_videos"
+        " JOIN playlists ON playlists.id = playlist_videos.playlist_id"
+        " JOIN videos ON videos.id = playlist_videos.video_id JOIN channels ON channels.id = videos.channel_id",
+    )
+
+    assert sql.description is not None
+    assert [word for word in ("playlists", "playlist_videos", "in_library") if word not in sql.description] == []
+    assert counted["rows"] == [["Sharpening picks", "Rex Krueger", 0]]
 
 
 async def test_expand_returns_the_transcript_around_a_segment_in_the_api_and_over_mcp(

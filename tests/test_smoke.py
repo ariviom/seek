@@ -851,6 +851,27 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
             await expect(library.get_by_role("tab", name="Playlists")).to_have_attribute("aria-selected", "true")
             await expect(rows).to_have_count(4)
 
+            # The Playlist is a Search scope of its own, and its creators, though outside the Library, are searched
+            # through it and through Everything, under their own names and avatars.
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Search").click()
+            search = page.get_by_role("complementary", name="Search")
+            picks = search.get_by_role("button", name="Hand tool picks")
+            await expect(search.get_by_role("button", name="Everything")).to_have_attribute("aria-pressed", "true")
+            await picks.click()
+            await expect(picks).to_have_attribute("aria-pressed", "true")
+            await expect(search.get_by_role("button", name="Everything")).to_have_attribute("aria-pressed", "false")
+            await search.get_by_label("Question", exact=True).fill("flatten the bench")
+            await search.get_by_role("button", name="Search", exact=True).click()
+            await expect(main).to_contain_text("in Hand tool picks for “flatten the bench”")
+            results = main.get_by_role("list", name="Results for flatten the bench").get_by_role("listitem")
+            result = results.filter(has_text="Today we flatten the bench")
+            await expect(result).to_contain_text("Wood By Wright")
+            await expect(result.locator("img")).to_have_attribute("src", WRIGHT_AVATAR)
+            await search.get_by_role("button", name="Everything").click()
+            await search.get_by_role("button", name="Search", exact=True).click()
+            await expect(main).to_contain_text("in every channel for “flatten the bench”")
+            await expect(result).to_contain_text("Wood By Wright")
+
     # The browser logs each refusal the dialog showed, and nothing else went wrong.
     refused = "Failed to load resource: the server responded with a status of"
     assert errors == [f"{refused} 422 (Unprocessable Content)", f"{refused} 409 (Conflict)", f"{refused} 409 (Conflict)"]
