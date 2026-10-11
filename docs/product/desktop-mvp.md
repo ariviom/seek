@@ -63,6 +63,8 @@ Model files download on first run as today. Keep the "one embedding model per da
 
 `TranscriptSource` already has `list_playlist`. Add a source kind on Channel-like entities: `channel`, `playlist`, `video`. A playlist or single video behaves as a Channel of one publisher for grouping and citation. Sync logic is unchanged; discovery differs per kind.
 
+Superseded for playlists by ADR 0006: a Playlist is its own scope over Videos, which stay credited to their real Channels. Single videos are still open.
+
 yt-dlp keeps needing a JS runtime. Bundle a runtime binary with the app rather than requiring Deno on PATH; yt-dlp accepts `--js-runtimes` with deno, node, bun, or quickjs. This is the biggest packaging unknown and should be spiked first.
 
 ### 4. Shareable Groups as recipes
