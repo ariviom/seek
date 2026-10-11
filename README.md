@@ -45,6 +45,9 @@ web UI, or give your coding agents (Claude Code, Codex) the same library over MC
   timestamped links. The sources panel shows frames from each cited moment.
 - **Group what belongs together.** Put channels into Groups ("woodworking", "pricing") and ask a whole Group at once,
   or just one channel.
+- **Follow a playlist.** Add a YouTube playlist, yours or anyone's, and ask it on its own. Each video stays credited
+  to the channel that made it, and the Playlist keeps in step with YouTube: videos added there are added, videos
+  removed there are removed.
 - **Prefer what's current.** Advice ages. Searches can gently or strongly favour newer videos.
 - **Bring it to your agents.** Seek is an MCP server, so Claude Code or Codex can search your library while they work.
 - **Keyless by default.** Search, the Library, Syncs and the MCP tools need no account or API key. Only the web chat
@@ -54,7 +57,7 @@ web UI, or give your coding agents (Claude Code, Codex) the same library over MC
 
 ```mermaid
 flowchart LR
-    A[YouTube channel] -->|Sync: captions via yt-dlp| B[Transcripts]
+    A[YouTube channel<br/>or playlist] -->|Sync: captions via yt-dlp| B[Transcripts]
     B -->|cut into timestamped Segments| C[(seek.db<br/>SQLite)]
     C --> D{Search}
     D -->|keyword + vector,<br/>fused and reranked| E[Web UI]
@@ -62,7 +65,7 @@ flowchart LR
     D --> G[MCP tools<br/>for your agents]
 ```
 
-A **Sync** lists a channel's videos, fetches their captions, and cuts each transcript into timestamped Segments. A local
+A **Sync** lists a channel's or a playlist's videos, fetches their captions, and cuts each transcript into timestamped Segments. A local
 embedding model ([Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)) turns each Segment into a
 vector. Search combines full-text and vector matches, then a local reranker
 ([mxbai-rerank-base-v2](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v2)) puts the best first. Everything
@@ -142,13 +145,14 @@ Status: `systemctl --user status seek`. Logs: `journalctl --user -u seek`.
 
 1. **Add a channel.** Open **Library**, choose **Add channel**, and paste a channel's URL or `@handle`. Start with a
    small one, a few dozen videos: Seek fetches and indexes every video it finds, and YouTube limits how fast it can
-   (roughly 300 videos an hour without a signed-in cookie file).
+   (roughly 300 videos an hour without a signed-in cookie file). A playlist is added the same way, from the
+   Library's **Playlists** tab with **Add playlist** and its URL.
 2. **Watch it Sync.** **Syncs** shows each video as it becomes searchable, with the rate, an estimated finish, and any
    failures. You can close the tab: syncing carries on while Seek runs, and an interrupted Sync resumes where it
    stopped.
 3. **Search.** Use **Search** as soon as the first videos are ready. Results link to the moment in the video.
 4. **Set up chat (optional).** Open **Settings** (the gear) and either paste an Anthropic API key or check that Claude
-   Code shows as ready. Then start a chat on a channel or Group from the Library, and ask away. Answers cite the moments
+   Code shows as ready. Then start a chat on a channel, Group or Playlist from the Library, and ask away. Answers cite the moments
    they draw on, and the chat shows the tokens each Conversation used.
 5. **Connect your agents (optional).** Run `seek mcp-config` for the exact command, or see
    [Register Seek with your agents](#register-seek-with-your-agents). For Claude Code:
@@ -156,6 +160,18 @@ Status: `systemctl --user status seek`. Logs: `journalctl --user -u seek`.
    ```sh
    claude mcp add --transport http --scope user seek http://127.0.0.1:7337/mcp
    ```
+
+A Playlist's videos can come from channels you haven't added. Those creators are named on the Playlist's page and in
+every result and citation, but they aren't Channels in your Library until you add them, which keeps the videos already
+indexed. A video a Playlist includes is searchable even where its Channel's Filters would leave it out (the minimum
+length still applies), and Search can cover one Playlist or everything, which includes every active Playlist. Pausing
+a Playlist takes it out of searches of everything and stops its checks; a video an active Channel of yours also has
+stays searchable.
+
+**Remove playlist** on the Playlist's page deletes the Playlist and its Syncs, and each of its videos unless a Channel
+in your Library or another Playlist still has it. Its chats stay readable but can't be continued. Removing a Channel
+works the other way round: videos a Playlist includes stay, still credited to that creator, who is then no longer in
+your Library.
 
 If something looks wrong, `seek doctor` prints one block, with secrets redacted, to paste to whoever is helping.
 
@@ -183,6 +199,11 @@ already queued or running; like any later Sync it stops listing at videos Seek a
 the new ones. Checks happen only while Seek is running, on macOS and Linux alike; any that came due while it was
 stopped run as it starts. Pausing a Channel stops its checks without changing the setting, so resuming it restores
 them.
+
+A Playlist is checked the same way, under **Check for changes** on its page: daily unless you choose otherwise, and
+only after the first Sync you start. Every Sync of a Playlist lists the whole playlist, ingests the videos new to it,
+and drops the ones no longer there. If YouTube lists nothing at all for a Playlist that has videos, the Sync fails and
+removes nothing.
 
 To Sync without waiting for a check:
 
@@ -248,8 +269,8 @@ knowledge base just to report that none exists.
 
 The data directory contains:
 
-- `seek.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Transcripts, Segments, vectors,
-  and Conversations.
+- `seek.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Playlists, Transcripts, Segments,
+  vectors, and Conversations.
 - `chat/` is the empty working directory the web chat runs the Claude CLI in when no project directory is attached.
 
 Backup is a copy of `seek.db`. The database uses WAL mode, so recent changes can sit in `seek.db-wal` beside it.
@@ -421,7 +442,8 @@ localhost. [Publish the server](#publishing-through-a-reverse-proxy), behind an 
 Connectors → Add custom connector, enter `https://seek.example.com/mcp`.
 
 The tools are `list_groups`, `list_playlists`, `list_channels`, `search` (scoped to a `group`, a list of `channels`,
-or a `playlist`), `expand`, `get_video`, and `sql`.
+or a `playlist`), `expand`, `get_video`, and `sql`. A `search` with no scope covers every active Channel and
+Playlist, and each result carries its Channel and the ids of the active Playlists that include its video.
 
 ## Settings
 
@@ -441,7 +463,7 @@ Changing the default model reaches your next question. A chat that pinned its ow
 
 ## Web chat
 
-A chat in a Group or a Channel answers through one of two engines: the **Anthropic API**, using a key you store in
+A chat in a Group, a Channel or a Playlist answers through one of two engines: the **Anthropic API**, using a key you store in
 Settings (or `PUT /api/credentials/anthropic`), or your own **Claude CLI**, using the Claude Code login you already
 have. Both get
 the same scoped Seek tools, the same grounded-advisor prompt, and the same streamed answers with Citations.
