@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
-import { api, type Playlist, type Stage, type Sync } from "@/lib/api";
+import { api, type Playlist, type Scope, type Stage, type Sync } from "@/lib/api";
 import { AvatarStack } from "@/components/Avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -30,11 +30,13 @@ export function PlaylistPage({
   playlist,
   syncs,
   refresh,
+  onNewChat,
   onOpenSync,
 }: {
   playlist: Playlist;
   syncs: Sync[] | null;
   refresh: () => Promise<void>;
+  onNewChat: (scope: Scope) => void;
   onOpenSync: (syncId: number) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +77,13 @@ export function PlaylistPage({
               : `Videos by ${playlist.creators.map((c) => c.name).join(", ")}`}
           </p>
         </div>
+        <Button
+          size="sm"
+          disabled={!playlist.indexed || playlist.creators.length === 0}
+          onClick={() => onNewChat({ kind: "playlist", id: playlist.id })}
+        >
+          New chat
+        </Button>
       </div>
 
       <fieldset disabled={busy} className="min-w-0 space-y-5">

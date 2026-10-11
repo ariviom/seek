@@ -1,6 +1,15 @@
 import { useState, type ReactNode } from "react";
 import { Play } from "lucide-react";
-import { api, errorText, type Expansion as ExpansionShape, type Group, type Scope, type SearchResult } from "@/lib/api";
+import {
+  api,
+  errorText,
+  type Channel,
+  type Expansion as ExpansionShape,
+  type Group,
+  type Playlist,
+  type Scope,
+  type SearchResult,
+} from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { useChannelAvatars } from "@/lib/channel-avatars";
 import { FrameStrip, momentKey, runsOf, searchFrames, useFrames } from "@/components/Frames";
@@ -11,7 +20,7 @@ import { formatDuration, plural } from "@/lib/format";
 import { playableKey, type Playable, type PlaybackControls } from "@/lib/playback";
 import { cn } from "@/lib/utils";
 import { Expansion } from "./Expansion";
-import type { SearchState } from "./useSearch";
+import type { Outcome, SearchState } from "./useSearch";
 
 // A result at a second, as the player takes it.
 function playableAt(result: SearchResult, seconds: number): Playable {
@@ -23,12 +32,16 @@ function playableAt(result: SearchResult, seconds: number): Playable {
 export function SearchResults({
   search,
   groups,
+  channels,
+  playlists,
   thumbnails,
   playback,
   onAsk,
 }: {
   search: SearchState;
   groups: Group[] | null;
+  channels: Channel[] | null;
+  playlists: Playlist[] | null;
   // Whether a run of results shows frames of what it cites; off, every row carries its own title again.
   thumbnails: boolean;
   playback: PlaybackControls;
@@ -46,9 +59,17 @@ export function SearchResults({
     thumbnails,
   );
 
-  // The Group searched, else the result's own Channel.
-  function askScope(result: SearchResult, groupId: number | null): { scope: Scope; name: string } {
-    const group = groups?.find((g) => g.id === groupId);
+  // The Playlist or Group searched. Otherwise the result's own Channel when it can answer (in the Library and
+  // Active), else the first Active Playlist, by name, that includes the Video: the Playlists are listed by name.
+  function askScope(result: SearchResult, searched: Outcome): { scope: Scope; name: string } {
+    const channel = channels?.find((c) => c.id === result.channel_id);
+    const group = groups?.find((g) => g.id === searched.groupId);
+    const playlist =
+      playlists?.find((p) => p.id === searched.playlistId) ??
+      (group !== undefined || channel?.indexed
+        ? undefined
+        : playlists?.find((p) => result.playlist_ids.includes(p.id)));
+    if (playlist !== undefined) return { scope: { kind: "playlist", id: playlist.id }, name: playlist.name };
     return group === undefined
       ? { scope: { kind: "channel", id: result.channel_id }, name: result.channel_name }
       : { scope: { kind: "group", id: group.id }, name: group.name };
@@ -104,7 +125,7 @@ export function SearchResults({
                   titled={video === undefined}
                   playingKey={playback.playingKey}
                   onPlay={(seconds) => playback.play(playableAt(result, seconds))}
-                  ask={askScope(result, outcome.groupId)}
+                  ask={askScope(result, outcome)}
                   onAsk={onAsk}
                 />
               ));

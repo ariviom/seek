@@ -17,7 +17,7 @@ from seek.sources import watch_url
 @dataclass(frozen=True)
 class ConversationScope:
     """What the Conversation consults, as stored: the scope.Scope it was created with, whose id is None once the
-    Group or Channel is deleted, and the name it last had."""
+    Group, Channel, or Playlist is deleted, and the name it last had."""
 
     kind: ScopeKind
     id: int | None
@@ -139,7 +139,7 @@ class Turn:
 TITLE_LENGTH = 80
 
 _CONVERSATION_COLUMNS = (
-    "id, group_id, channel_id, scope_kind, scope_name, model, workspace_path, web_access, created_at"
+    "id, group_id, channel_id, playlist_id, scope_kind, scope_name, model, workspace_path, web_access, created_at"
 )
 
 
@@ -201,8 +201,7 @@ def conversation_usage(conn: sqlite3.Connection, conversation_id: int) -> Conver
 
 def _scope(row: sqlite3.Row) -> ConversationScope:
     kind: ScopeKind = row["scope_kind"]
-    scope_id = row["group_id"] if kind == "group" else row["channel_id"]
-    return ConversationScope(kind=kind, id=scope_id, name=row["scope_name"])
+    return ConversationScope(kind=kind, id=row[f"{kind}_id"], name=row["scope_name"])
 
 
 def _conversation(row: sqlite3.Row) -> Conversation:
@@ -257,12 +256,17 @@ def _summaries(conn: sqlite3.Connection, where: str, params: tuple[object, ...])
 
 
 def list_conversations(
-    conn: sqlite3.Connection, group_id: int | None = None, channel_id: int | None = None
+    conn: sqlite3.Connection,
+    group_id: int | None = None,
+    channel_id: int | None = None,
+    playlist_id: int | None = None,
 ) -> list[ConversationSummary]:
-    """Every Conversation, or a Group's or a Channel's, most recently active first. Conversations of deleted Groups
-    and Channels are included in the full list."""
+    """Every Conversation, or a Group's, a Channel's, or a Playlist's, most recently active first. Conversations of
+    deleted Groups, Channels, and Playlists are included in the full list."""
     return _summaries(
-        conn, "(?1 IS NULL OR group_id = ?1) AND (?2 IS NULL OR channel_id = ?2)", (group_id, channel_id)
+        conn,
+        "(?1 IS NULL OR group_id = ?1) AND (?2 IS NULL OR channel_id = ?2) AND (?3 IS NULL OR playlist_id = ?3)",
+        (group_id, channel_id, playlist_id),
     )
 
 
@@ -293,7 +297,8 @@ def get_conversation(conn: sqlite3.Connection, conversation_id: int) -> Conversa
 
 
 def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
-    """The scope's name, or Conflict if it cannot answer yet: a paused Channel, or a Group with no Channels."""
+    """The scope's name, or Conflict if it cannot answer yet: a paused Channel or Playlist, a Group with no Channels,
+    or a Playlist with no Videos."""
     if scope.kind == "group":
         group = conn.execute("SELECT name FROM groups WHERE id = ?", (scope.id,)).fetchone()
         if group is None:
@@ -301,6 +306,16 @@ def _answerable_scope_name(conn: sqlite3.Connection, scope: Scope) -> str:
         if conn.execute("SELECT 1 FROM group_channels WHERE group_id = ? LIMIT 1", (scope.id,)).fetchone() is None:
             raise Conflict(f"The Group {group['name']!r} has no Channels yet, so nothing can answer")
         return str(group["name"])
+    if scope.kind == "playlist":
+        playlist = conn.execute("SELECT name, indexed FROM playlists WHERE id = ?", (scope.id,)).fetchone()
+        if playlist is None:
+            raise NotFound(f"Playlist {scope.id} not found")
+        if not playlist["indexed"]:
+            raise Conflict(f"The Playlist {playlist['name']!r} is paused, so it can't answer")
+        included = conn.execute("SELECT 1 FROM playlist_videos WHERE playlist_id = ? LIMIT 1", (scope.id,))
+        if included.fetchone() is None:
+            raise Conflict(f"The Playlist {playlist['name']!r} has no Videos yet, so nothing can answer")
+        return str(playlist["name"])
     channel = conn.execute(
         "SELECT name, indexed FROM channels WHERE id = ? AND in_library = 1", (scope.id,)
     ).fetchone()
@@ -320,13 +335,15 @@ def create_conversation(
         row = conn.execute(
             f"""
             INSERT INTO conversations
-                (group_id, channel_id, scope_kind, scope_name, model, workspace_path, web_access, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (group_id, channel_id, playlist_id, scope_kind, scope_name, model, workspace_path, web_access,
+                 created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING {_CONVERSATION_COLUMNS}
             """,
             (
                 scope.id if scope.kind == "group" else None,
                 scope.id if scope.kind == "channel" else None,
+                scope.id if scope.kind == "playlist" else None,
                 scope.kind,
                 name,
                 model,

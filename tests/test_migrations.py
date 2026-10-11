@@ -20,6 +20,7 @@ SCHEMA_17 = 17
 SCHEMA_18 = 18
 SCHEMA_19 = 19
 SCHEMA_20 = 20
+SCHEMA_21 = 21
 
 
 def tables(conn: sqlite3.Connection) -> set[str]:
@@ -396,6 +397,93 @@ async def test_migration_21_adds_playlists_and_lets_a_sync_belong_to_one_keeping
     assert conn.execute("SELECT count(*) FROM playlist_videos").fetchone()[0] == 0
     conn.execute("DELETE FROM channels WHERE id = 3")
     assert conn.execute("SELECT count(*) FROM syncs").fetchone()[0] == 0
+    conn.close()
+
+
+CONVERSATION_COLUMNS = (
+    "id, group_id, channel_id, scope_kind, scope_name, model, claude_session_id, created_at, title, workspace_path, "
+    "web_access"
+)
+
+
+async def test_migration_22_lets_a_conversation_consult_a_playlist_keeping_every_conversation_and_its_messages(
+    config: Config, tmp_path: Path
+) -> None:
+    conn = db.connect(config.database_path)
+    with pytest.MonkeyPatch.context() as pinned:
+        pinned.setattr(db, "MIGRATIONS", db.MIGRATIONS[:SCHEMA_21])
+        db.migrate(conn)
+    conn.executescript(
+        f"""
+        INSERT INTO channels (id, youtube_channel_id, name) VALUES (3, 'UC-wright', 'Wood By Wright');
+        INSERT INTO groups (id, name) VALUES (2, 'Woodworking');
+        INSERT INTO group_channels (group_id, channel_id) VALUES (2, 3);
+        INSERT INTO playlists (id, youtube_playlist_id, name) VALUES (5, 'PL-sharpening', 'Sharpening');
+        INSERT INTO conversations ({CONVERSATION_COLUMNS})
+            VALUES (4, 2, NULL, 'group', 'Woodworking', 'opus', 'session-1', '2025-01-01T00:00:00+00:00', 'Stones',
+                    '/home/me/bench', 1),
+                   (7, NULL, 3, 'channel', 'Wood By Wright', NULL, NULL, '2025-01-02T00:00:00+00:00', NULL, NULL, 0),
+                   (8, NULL, NULL, 'channel', 'A deleted Channel', NULL, NULL, '2025-01-03T00:00:00+00:00', NULL, NULL, 0);
+        INSERT INTO messages (id, conversation_id, role, content, created_at)
+            VALUES (1, 4, 'user', 'Which stone?', '2025-01-01T00:00:00+00:00');
+        """
+    )
+    before = [tuple(row) for row in conn.execute(f"SELECT {CONVERSATION_COLUMNS} FROM conversations ORDER BY id")]
+    conn.close()
+    app = create_app(
+        config, FakeTranscriptSource(), FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "no-bundle"
+    )
+
+    async with running(app) as client:
+        listed = (await client.get("/api/conversations")).json()
+        reopened = (await client.get("/api/conversations/4")).json()
+
+    assert [(c["id"], c["scope"], c["title"], c["message_count"]) for c in listed] == [
+        (4, {"kind": "group", "id": 2, "name": "Woodworking"}, "Stones", 1),
+        (8, {"kind": "channel", "id": None, "name": "A deleted Channel"}, "New Conversation", 0),
+        (7, {"kind": "channel", "id": 3, "name": "Wood By Wright"}, "New Conversation", 0),
+    ]
+    assert (reopened["model"], reopened["context"], [m["content"] for m in reopened["messages"]]) == (
+        "opus",
+        {"workspace": "/home/me/bench", "web_access": True},
+        ["Which stone?"],
+    )
+    conn = db.connect(config.database_path)
+    assert user_version(conn) == len(db.MIGRATIONS)
+    assert [
+        tuple(row) for row in conn.execute(f"SELECT {CONVERSATION_COLUMNS} FROM conversations ORDER BY id")
+    ] == before
+    assert all(row["playlist_id"] is None for row in conn.execute("SELECT playlist_id FROM conversations"))
+    indexes = conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'conversations'")
+    assert {row["name"] for row in indexes} == {
+        "conversations_group_id",
+        "conversations_channel_id",
+        "conversations_playlist_id",
+    }
+    conn.execute(
+        "INSERT INTO conversations (id, playlist_id, scope_kind, scope_name, created_at) "
+        "VALUES (9, 5, 'playlist', 'Sharpening', '2025-01-04T00:00:00+00:00')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO conversations (scope_kind, scope_name, created_at) VALUES ('video', 'V', '')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE conversations SET web_access = 2 WHERE id = 4")
+    # A new Conversation never takes a deleted one's id, and each outlives what it consulted.
+    conn.execute("DELETE FROM conversations WHERE id = 9")
+    conn.execute(
+        "INSERT INTO conversations (playlist_id, scope_kind, scope_name, created_at) VALUES (5, 'playlist', 'Sharpening', '')"
+    )
+    conn.execute("DELETE FROM playlists WHERE id = 5")
+    conn.execute("DELETE FROM groups WHERE id = 2")
+    assert [tuple(row) for row in conn.execute("SELECT id, group_id, playlist_id FROM conversations ORDER BY id")] == [
+        (4, None, None),
+        (7, None, None),
+        (8, None, None),
+        (10, None, None),
+    ]
+    # A Conversation's messages still go with it.
+    conn.execute("DELETE FROM conversations WHERE id = 4")
+    assert conn.execute("SELECT count(*) FROM messages").fetchone()[0] == 0
     conn.close()
 
 

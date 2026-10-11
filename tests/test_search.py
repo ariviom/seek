@@ -7,21 +7,20 @@ from harness import (
     Json,
     add_channel,
     add_group,
-    add_playlist,
     fake_channel,
     fake_video,
     pause_playlist,
     running,
     said,
+    sharpening_picks,
     start_sync,
     sync,
-    sync_playlist,
     wait_for_syncs,
 )
 
 from seek.app import create_app
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from seek.ports import Chapter, Cue
 
 
@@ -163,26 +162,6 @@ async def test_not_indexed_channels_are_left_out_of_every_scope(
     assert {r["youtube_video_id"] for r in before} == {"v-main", "v-vlog"}
     for scope in ({}, {"group": group["id"]}, {"channels": [wright["id"], vlog["id"]]}):
         assert [r["youtube_video_id"] for r in await search(client, "flatten the board", **scope)] == ["v-main"]
-
-
-async def sharpening_picks(client: httpx.AsyncClient, transcripts: FakeTranscriptSource) -> tuple[Json, Json]:
-    """Wood By Wright in the Library with two Videos, and the Playlist "Sharpening picks": one of those and one of
-    Rex Krueger's, who stays outside the Library."""
-    fake_channel(transcripts, "UC-wright").videos += [
-        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
-        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
-    ]
-    fake_channel(transcripts, "UC-rex").videos.append(
-        fake_video("v-knives", "Knives", cues=said("Sharpen the knife on a fine stone"))
-    )
-    transcripts.playlists["PL-picks"] = FakePlaylist(
-        "Sharpening picks", [("UC-rex", "v-knives"), ("UC-wright", "v-chisels")]
-    )
-    wright = await add_channel(client, "@woodbywright")
-    await sync(client, wright)
-    playlist = await add_playlist(client, "PL-picks")
-    await sync_playlist(client, playlist)
-    return wright, playlist
 
 
 async def test_a_playlist_is_searched_by_id_or_name_and_everything_includes_its_videos(

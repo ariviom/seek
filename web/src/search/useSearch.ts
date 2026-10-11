@@ -21,8 +21,10 @@ export type Outcome = {
   id: number;
   query: string;
   results: SearchResult[];
-  // The Group searched, if any, so "Ask about this" asks the same Group; and how the scope reads in the header.
+  // The Group or Playlist searched, if any, so "Ask about this" asks the same one; and how the scope reads in the
+  // header.
   groupId: number | null;
+  playlistId: number | null;
   scopeName: string;
 };
 
@@ -65,7 +67,14 @@ export function useSearch(channels: Channel[] | null, groups: Group[] | null, pl
             ? (channels?.find((c) => c.id === chosenIds[0])?.name ?? "1 channel")
             : `${chosenIds.length} channels`
           : "every channel");
-      setOutcome({ id: ++searches.current, query: query.trim(), results, groupId: group?.id ?? null, scopeName });
+      setOutcome({
+        id: ++searches.current,
+        query: query.trim(),
+        results,
+        groupId: group?.id ?? null,
+        playlistId: playlist?.id ?? null,
+        scopeName,
+      });
     } catch (e) {
       setOutcome(null);
       setError(errorText(e));

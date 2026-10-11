@@ -1,10 +1,17 @@
-import type { Sync } from "@/lib/api";
+import type { ScopeKind, Sync } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { plural } from "@/lib/format";
 import { channelSync, syncCounts } from "@/lib/sync-status";
 import type { LiveScope } from "./scope";
+
+const consulted: Record<ScopeKind, string> = {
+  group:
+    "These channels answer together. The chat stays in this group; to ask a different set, start a chat in another group.",
+  channel: "Only this channel’s videos are consulted. The chat stays with this channel.",
+  playlist: "Only this playlist’s videos are consulted, whoever made them. The chat stays with this playlist.",
+};
 
 export function NewChat({
   scope,
@@ -19,9 +26,7 @@ export function NewChat({
     <div className="pt-8">
       <h1 className="text-lg font-semibold tracking-tight">New chat in {scope.name}</h1>
       <p className="mt-1.5 max-w-prose text-sm text-muted-foreground">
-        {scope.kind === "group"
-          ? "These channels answer together. The chat stays in this group; to ask a different set, start a chat in another group."
-          : "Only this channel’s videos are consulted. The chat stays with this channel."}
+        {consulted[scope.kind]}
       </p>
       {scope.unavailable !== null && (
         <Alert className="mt-4">
@@ -42,15 +47,18 @@ export function NewChat({
         ) : (
           <ul className="divide-y">
             {scope.members.map((member) => {
-              const running = channelSync(syncs, member.id);
+              // A Playlist's creators are synced through it, not on their own.
+              const running = scope.kind === "playlist" ? null : channelSync(syncs, member.id);
               return (
                 <li key={member.id} className="flex items-center gap-3 px-4 py-2.5">
                   <Avatar name={member.name} src={member.avatar_url} size="sm" />
                   <span className="min-w-0 flex-1 truncate text-sm">{member.name}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    {plural(member.videos, "video")}
-                    {running !== null && ` · ${syncCounts(running)}`}
-                  </span>
+                  {member.videos !== null && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {plural(member.videos, "video")}
+                      {running !== null && ` · ${syncCounts(running)}`}
+                    </span>
+                  )}
                 </li>
               );
             })}

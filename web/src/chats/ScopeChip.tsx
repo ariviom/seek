@@ -20,10 +20,10 @@ export function ScopeChip({
       title={locked ? "Who answers is fixed once a chat starts" : undefined}
       className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border pr-2 pl-1.5 text-xs font-medium"
     >
-      {kind === "group" ? (
-        <AvatarStack members={members} shape="round" size="xs" ringClassName="ring-card" />
-      ) : (
+      {kind === "channel" ? (
         <Avatar name={name} src={members[0]?.src} size="xs" />
+      ) : (
+        <AvatarStack members={members} shape="round" size="xs" ringClassName="ring-card" />
       )}
       <span className="truncate">{name}</span>
       {locked && <Lock className="size-3 shrink-0 text-muted-foreground" aria-hidden />}

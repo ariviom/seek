@@ -771,6 +771,10 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
         "Hand tool picks", [("UC-rex", "v-hone"), ("UC-wright", "bench-flat1"), ("UC-rex", "v-live")]
     )
     transcripts.playlists["PL-other"] = FakePlaylist("Other picks", [])
+    engine.script = [
+        TextDelta("A jack plane: [Wood By Wright, 0:05](https://youtube.com/watch?v=bench-flat1&t=5s)."),
+        ChatDone("session-1"),
+    ]
     app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle, secrets=FakeSecrets())
 
     async with serving(app) as base_url:
@@ -867,10 +871,43 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
             result = results.filter(has_text="Today we flatten the bench")
             await expect(result).to_contain_text("Wood By Wright")
             await expect(result.locator("img")).to_have_attribute("src", WRIGHT_AVATAR)
+            ask = result.get_by_role("button", name="Ask Hand tool picks about this")
+            await expect(ask).to_be_visible()
             await search.get_by_role("button", name="Everything").click()
             await search.get_by_role("button", name="Search", exact=True).click()
             await expect(main).to_contain_text("in every channel for “flatten the bench”")
             await expect(result).to_contain_text("Wood By Wright")
+
+            # Wood By Wright isn't in the Library, so asking about its Video opens a chat in the Playlist that
+            # includes it, where its creators answer and the question is ready to finish.
+            await ask.click()
+            await expect(main.get_by_role("heading", name="New chat in Hand tool picks")).to_be_visible()
+            await expect(main).to_contain_text("Only this playlist’s videos are consulted")
+            answering = main.locator("section").filter(has=page.get_by_role("heading", name="Who answers"))
+            await expect(answering.get_by_role("listitem")).to_have_text(["RKRex Krueger", "Wood By Wright"])
+            composer = main.get_by_role("form", name="Ask Hand tool picks")
+            question = composer.get_by_label("Question for Hand tool picks")
+            await expect(question).to_have_value("About what Wood By Wright says in “Flattening a Workbench” at 0:00: ")
+            await question.press_sequentially("which plane?")
+            await composer.get_by_role("button", name="Ask", exact=True).click()
+            await expect(main.get_by_role("list", name="Conversation")).to_contain_text("A jack plane")
+            # The Video is in the Playlist, so the link to it is a Citation, and the chat is filed under the Playlist.
+            sources = page.get_by_role("complementary", name="Sources")
+            await expect(sources.get_by_role("listitem").filter(has_text="Flattening a Workbench")).to_have_count(1)
+            chats = page.get_by_role("complementary", name="Chats")
+            await expect(chats.get_by_role("button", name=re.compile(r"^Hand tool picks"))).to_be_visible()
+            await expect(chats.get_by_role("button").filter(has_text="which plane?")).to_be_visible()
+            await page.reload()
+            await expect(main.get_by_role("list", name="Conversation")).to_contain_text("A jack plane")
+            await expect(main.get_by_role("form", name="Ask Hand tool picks")).to_be_visible()
+
+            # A Playlist starts a chat from the Chats list and from its own page, as a Group or Channel does.
+            await chats.get_by_role("button", name="New chat", exact=True).click()
+            await page.get_by_role("menuitem", name="Hand tool picks").click()
+            await expect(main.get_by_role("heading", name="New chat in Hand tool picks")).to_be_visible()
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            await main.get_by_role("button", name="New chat").click()
+            await expect(main.get_by_role("heading", name="New chat in Hand tool picks")).to_be_visible()
 
     # The browser logs each refusal the dialog showed, and nothing else went wrong.
     refused = "Failed to load resource: the server responded with a status of"

@@ -301,7 +301,7 @@ class ChatRequest:
     # Optional read-only resources selected when the Conversation was created.
     workspace: Path | None
     web_access: bool
-    # The only tools the model may use: served in-process under the name "seek", already bound to one Group or Channel.
+    # The only tools the model may use: served in-process under the name "seek", already bound to one Group, Channel, or Playlist.
     tools: MCPServer
     tool_names: Sequence[str]
 

@@ -7,18 +7,23 @@ from harness import (
     Json,
     add_channel,
     add_group,
+    add_playlist,
     done_message,
     new_group_conversation,
+    pause_playlist,
     send,
+    sharpening_picks,
     start_channel_conversation,
     start_conversation,
+    start_playlist_conversation,
     stream_events,
+    sync_playlist,
     take_out_of_library,
     woodworkers,
 )
 
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeTranscriptSource
+from seek.fakes import FakeChatEngine, FakePlaylist, FakeTranscriptSource
 from seek.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, PastMessage, TextDelta
 
 
@@ -124,6 +129,50 @@ async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_w
         {"detail": "The Group 'Empty' has no Channels yet, so nothing can answer"},
     )
     assert unknown.status_code == 404
+
+
+async def test_a_conversation_starts_with_a_playlist_that_is_active_and_has_videos_and_is_listed_by_it(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+) -> None:
+    wright, picks = await sharpening_picks(client, transcripts)
+    transcripts.playlists["PL-later"] = FakePlaylist("Watch later", [("UC-rex", "v-knives")])
+    transcripts.playlists["PL-paused"] = FakePlaylist("Paused picks", [("UC-rex", "v-knives")])
+    never_synced = await add_playlist(client, "PL-later")
+    paused = await add_playlist(client, "PL-paused")
+    await sync_playlist(client, paused)
+    pause_playlist(config, paused)
+    with_wright = await start_channel_conversation(client, wright["id"])
+
+    started = await start_playlist_conversation(client, picks["id"], model="haiku")
+    empty = await client.post(f"/api/playlists/{never_synced['id']}/conversations", json={"model": None})
+    not_indexed = await client.post(f"/api/playlists/{paused['id']}/conversations", json={"model": None})
+    unknown = await client.post("/api/playlists/999/conversations", json={"model": None})
+    two_filters = await client.get(
+        "/api/conversations", params={"playlist_id": picks["id"], "channel_id": wright["id"]}
+    )
+
+    assert started | {"created_at": ""} == {
+        "id": started["id"],
+        "scope": {"kind": "playlist", "id": picks["id"], "name": "Sharpening picks"},
+        "model": "haiku",
+        "context": {"workspace": None, "web_access": False},
+        "created_at": "",
+    }
+    assert (empty.status_code, empty.json()) == (
+        409,
+        {"detail": "The Playlist 'Watch later' has no Videos yet, so nothing can answer"},
+    )
+    assert (not_indexed.status_code, not_indexed.json()) == (
+        409,
+        {"detail": "The Playlist 'Paused picks' is paused, so it can't answer"},
+    )
+    assert (unknown.status_code, unknown.json()) == (404, {"detail": "Playlist 999 not found"})
+    assert [c["id"] for c in await list_conversations(client)] == [with_wright["id"], started["id"]][::-1]
+    assert [c["scope"] for c in await list_conversations(client, playlist_id=picks["id"])] == [started["scope"]]
+    assert await list_conversations(client, playlist_id=paused["id"]) == []
+    assert [c["id"] for c in await list_conversations(client, channel_id=wright["id"])] == [with_wright["id"]]
+    assert two_filters.status_code == 422
+    assert (await get_conversation(client, started["id"]))["scope"] == started["scope"]
 
 
 async def test_a_conversation_cannot_start_with_a_channel_outside_the_library(

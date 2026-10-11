@@ -256,7 +256,7 @@ export function App() {
   const chatOpen = selection.conversation !== undefined || chat.scope !== null;
   const summary = conversations.items?.find((c) => c.id === selection.conversation);
   const chatScopeName =
-    chat.scope !== null ? (liveScope(chat.scope, groups, channels)?.name ?? "") : (summary?.scope.name ?? "");
+    chat.scope !== null ? (liveScope(chat.scope, groups, channels, playlists)?.name ?? "") : (summary?.scope.name ?? "");
   const sources = sourcesOf(chatCitations);
 
   // Each section's list column and main pane.
@@ -279,13 +279,14 @@ export function App() {
           )}
         </span>
       ),
-      actions: <NewChatMenu groups={groups} channels={channels} onNewChat={newChat} />,
+      actions: <NewChatMenu groups={groups} channels={channels} playlists={playlists} onNewChat={newChat} />,
       list: (
         <Folders
           conversations={conversations.items}
           error={conversations.error}
           groups={groups}
           channels={channels}
+          playlists={playlists}
           selectedId={selection.conversation ?? null}
           reload={conversations.reload}
           onOpen={openConversation}
@@ -303,6 +304,7 @@ export function App() {
           draft={chat.draft}
           groups={groups}
           channels={channels}
+          playlists={playlists}
           syncs={syncs}
           chat={health?.chat ?? null}
           defaultChoice={settings?.model ?? null}
@@ -331,8 +333,8 @@ export function App() {
       ) : (
         <PaneMessage>
           {conversations.items?.length === 0
-            ? "No chats yet. Start one with + on a group or channel, or from its page in the Library."
-            : "Pick a chat, or start a new one with + on a group or channel."}
+            ? "No chats yet. Start one with + on a group, channel, or playlist, or from its page in the Library."
+            : "Pick a chat, or start a new one with + on a group, channel, or playlist."}
         </PaneMessage>
       ),
     },
@@ -359,6 +361,8 @@ export function App() {
           <SearchResults
             search={search}
             groups={groups}
+            channels={channels}
+            playlists={playlists}
             thumbnails={settings?.thumbnails ?? true}
             playback={playback}
             onAsk={newChat}

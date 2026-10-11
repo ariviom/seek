@@ -6,6 +6,7 @@ import {
   type Channel,
   type ConversationSummary,
   type Group,
+  type Playlist,
   type Scope,
 } from "@/lib/api";
 import { Avatar, AvatarStack, type AvatarMember } from "@/components/Avatar";
@@ -24,11 +25,11 @@ import { avatarsOf } from "@/lib/channel-avatars";
 import { useChanges } from "@/lib/changes";
 import { formatWhen, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { scopeKey } from "./scope";
+import { scopeKey, scopeNoun } from "./scope";
 
 type Folder = {
   key: string;
-  // Null for the trailing folder of chats whose Group or Channel was removed.
+  // Null for the trailing folder of chats whose Group, Channel, or Playlist was removed.
   scope: Scope | null;
   name: string;
   members: AvatarMember[];
@@ -60,9 +61,14 @@ export function useConversations(version: number) {
   return { items, error, reload };
 }
 
-// One flat list of Groups and Channels, each holding its chats, the folder with the newest chat first and those with
+// One flat list of Groups, Channels, and Playlists, each holding its chats, the folder with the newest chat first and those with
 // none last, alphabetically. The list is already newest first, so a folder ranks by where its first chat appears.
-function foldersOf(conversations: ConversationSummary[], groups: Group[], channels: Channel[]): Folder[] {
+function foldersOf(
+  conversations: ConversationSummary[],
+  groups: Group[],
+  channels: Channel[],
+  playlists: Playlist[],
+): Folder[] {
   const avatars = avatarsOf(channels);
   const live: Folder[] = [
     ...groups.map((group) => ({
@@ -77,6 +83,13 @@ function foldersOf(conversations: ConversationSummary[], groups: Group[], channe
       scope: { kind: "channel" as const, id: channel.id },
       name: channel.name,
       members: [{ name: channel.name, src: channel.avatar_url }],
+      chats: [],
+    })),
+    ...playlists.map((playlist) => ({
+      key: scopeKey({ kind: "playlist", id: playlist.id }),
+      scope: { kind: "playlist" as const, id: playlist.id },
+      name: playlist.name,
+      members: playlist.creators.map((c) => ({ name: c.name, src: c.avatar_url })),
       chats: [],
     })),
   ];
@@ -122,13 +135,15 @@ function FolderAvatar({ folder, ringClassName }: { folder: Folder; ringClassName
 export function NewChatMenu({
   groups,
   channels,
+  playlists,
   onNewChat,
 }: {
   groups: Group[] | null;
   channels: Channel[] | null;
+  playlists: Playlist[] | null;
   onNewChat: (scope: Scope) => void;
 }) {
-  const folders = foldersOf([], groups ?? [], channels ?? []);
+  const folders = foldersOf([], groups ?? [], channels ?? [], playlists ?? []);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -138,10 +153,12 @@ export function NewChatMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuLabel>New chat in</DropdownMenuLabel>
-        {groups === null || channels === null ? (
+        {groups === null || channels === null || playlists === null ? (
           <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
         ) : (
-          folders.length === 0 && <DropdownMenuItem disabled>Add a channel in the Library first</DropdownMenuItem>
+          folders.length === 0 && (
+            <DropdownMenuItem disabled>Add a channel or playlist in the Library first</DropdownMenuItem>
+          )
         )}
         {folders.map((folder) => (
           <DropdownMenuItem key={folder.key} onSelect={() => folder.scope !== null && onNewChat(folder.scope)}>
@@ -159,6 +176,7 @@ export function Folders({
   error: loadError,
   groups,
   channels,
+  playlists,
   selectedId,
   reload,
   onOpen,
@@ -169,6 +187,7 @@ export function Folders({
   error: string | null;
   groups: Group[] | null;
   channels: Channel[] | null;
+  playlists: Playlist[] | null;
   selectedId: number | null;
   reload: () => Promise<void>;
   onOpen: (conversationId: number) => void;
@@ -181,7 +200,7 @@ export function Folders({
   const [renaming, setRenaming] = useState<{ id: number; title: string } | null>(null);
   const [deleting, setDeleting] = useState<ConversationSummary | null>(null);
 
-  if (conversations === null || groups === null || channels === null) {
+  if (conversations === null || groups === null || channels === null || playlists === null) {
     return loadError === null ? (
       <p className="px-2 py-3 text-xs text-muted-foreground">Loading…</p>
     ) : (
@@ -191,7 +210,7 @@ export function Folders({
     );
   }
 
-  const folders = foldersOf(conversations, groups, channels);
+  const folders = foldersOf(conversations, groups, channels, playlists);
 
   async function rename(event: FormEvent) {
     event.preventDefault();
@@ -211,11 +230,11 @@ export function Folders({
       {conversations.length === 0 && (
         <p className="px-2 pt-1 pb-2 text-xs text-muted-foreground">
           {folders.length === 0
-            ? "No chats yet. Add a channel in the Library, then start a chat here."
-            : "No chats yet. Start one with + on a group or channel."}
+            ? "No chats yet. Add a channel or playlist in the Library, then start a chat here."
+            : "No chats yet. Start one with + on a group, channel, or playlist."}
         </p>
       )}
-      <nav aria-label="Chats by group or channel">
+      <nav aria-label="Chats by group, channel, or playlist">
         {folders.map((folder) => {
           const hidden = collapsed.includes(folder.key);
           return (
@@ -278,7 +297,7 @@ export function Folders({
                           >
                             <span className="block w-full truncate text-sm">{chat.title}</span>
                             <span className="block w-full truncate text-xs text-muted-foreground">
-                              {folder.scope === null && `${chat.scope.kind === "group" ? "Group" : "Channel"} ${chat.scope.name} · `}
+                              {folder.scope === null && `${scopeNoun[chat.scope.kind]} ${chat.scope.name} · `}
                               {formatWhen(chat.last_message_at ?? chat.created_at)} · {plural(chat.message_count, "message")}
                             </span>
                           </button>

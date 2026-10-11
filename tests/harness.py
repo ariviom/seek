@@ -15,7 +15,7 @@ from mcp import Client
 
 from seek import db
 from seek.config import Config
-from seek.fakes import FakeChannel, FakeTranscriptSource, FakeVideo
+from seek.fakes import FakeChannel, FakePlaylist, FakeTranscriptSource, FakeVideo
 from seek.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
@@ -401,6 +401,26 @@ async def woodworkers(client: httpx.AsyncClient, transcripts: FakeTranscriptSour
     return group, wright, rex
 
 
+async def sharpening_picks(client: httpx.AsyncClient, transcripts: FakeTranscriptSource) -> tuple[Json, Json]:
+    """Wood By Wright in the Library with two Videos, and the Playlist "Sharpening picks": one of those and one of
+    Rex Krueger's, who stays outside the Library."""
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Sharpen the knife on a fine stone"))
+    )
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Sharpening picks", [("UC-rex", "v-knives"), ("UC-wright", "v-chisels")]
+    )
+    wright = await add_channel(client, "@woodbywright")
+    await sync(client, wright)
+    playlist = await add_playlist(client, "PL-picks")
+    await sync_playlist(client, playlist)
+    return wright, playlist
+
+
 async def start_conversation(
     client: httpx.AsyncClient,
     group_id: int,
@@ -428,6 +448,13 @@ async def start_channel_conversation(
         f"/api/channels/{channel_id}/conversations",
         json={"model": model, "workspace": workspace, "web_access": web_access},
     )
+    assert response.status_code == 201, response.text
+    conversation: Json = response.json()
+    return conversation
+
+
+async def start_playlist_conversation(client: httpx.AsyncClient, playlist_id: int, model: str | None = None) -> Json:
+    response = await client.post(f"/api/playlists/{playlist_id}/conversations", json={"model": model})
     assert response.status_code == 201, response.text
     conversation: Json = response.json()
     return conversation

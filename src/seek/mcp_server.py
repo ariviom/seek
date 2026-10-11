@@ -1,5 +1,5 @@
 """The MCP tools, the product's primary interface: served over Streamable HTTP at /mcp, and in-process to the web
-chat bound to one Group or Channel."""
+chat bound to one Group, Channel, or Playlist."""
 
 import asyncio
 from collections.abc import Iterator
@@ -54,7 +54,7 @@ a Segment needs more context, get_video for a Video's chapters and description, 
 questions."""
 
 _SCOPE_INSTRUCTIONS = """\
-This server searches the Transcripts of {{consulted}} the user trusts. Each Video's Transcript is cut into \
+This server searches the Transcripts of {consulted} the user trusts. Each Video's Transcript is cut into \
 timestamped Segments.
 
 {advisor}
@@ -62,18 +62,26 @@ timestamped Segments.
 Start with search, use expand when a Segment needs more context, and get_video for a Video's chapters and \
 description."""
 
-GROUP_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(
-    consulted="one Group of YouTube Channels", advisor=GROUNDED_ADVISOR
-)
-CHANNEL_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted="one YouTube Channel", advisor=GROUNDED_ADVISOR)
+# What a bound server says it searches the Transcripts of.
+_CONSULTED: dict[ScopeKind, str] = {
+    "group": "one Group of YouTube Channels",
+    "channel": "one YouTube Channel",
+    "playlist": "the Videos in one Playlist",
+}
+
+GROUP_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted=_CONSULTED["group"], advisor=GROUNDED_ADVISOR)
+CHANNEL_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted=_CONSULTED["channel"], advisor=GROUNDED_ADVISOR)
+PLAYLIST_INSTRUCTIONS = _SCOPE_INSTRUCTIONS.format(consulted=_CONSULTED["playlist"], advisor=GROUNDED_ADVISOR)
 
 # sql reads every Channel's data, so a chat bound to a scope goes without it; list_groups only means something for
-# a Group.
+# a Group. A Playlist's list_channels gives its creators.
 GROUP_TOOL_NAMES = ("list_groups", "list_channels", "search", "expand", "get_video")
 CHANNEL_TOOL_NAMES = ("list_channels", "search", "expand", "get_video")
+PLAYLIST_TOOL_NAMES = ("list_channels", "search", "expand", "get_video")
 _BOUND: dict[ScopeKind, tuple[str, tuple[str, ...]]] = {
     "group": (GROUP_INSTRUCTIONS, GROUP_TOOL_NAMES),
     "channel": (CHANNEL_INSTRUCTIONS, CHANNEL_TOOL_NAMES),
+    "playlist": (PLAYLIST_INSTRUCTIONS, PLAYLIST_TOOL_NAMES),
 }
 
 _SEARCH_RESULTS = (
@@ -119,8 +127,8 @@ def create_mcp_server(database: Database, search: Search, sql_time_limit_seconds
 def create_scope_server(
     database: Database, search: Search, scope: Scope, *, additional_resources: bool = False
 ) -> MCPServer:
-    """The tools a chat with one Group or Channel may use: search covers only the scope, Segments and Videos outside
-    it aren't found, and there is no sql."""
+    """The tools a chat with one Group, Channel, or Playlist may use: search covers only the scope, Segments and
+    Videos outside it aren't found, and there is no sql."""
     advisor = RESOURCE_ADVISOR if additional_resources else GROUNDED_ADVISOR
     return _server(database, search, scope, None, advisor)
 
@@ -138,8 +146,7 @@ def _server(
     elif advisor == GROUNDED_ADVISOR:
         instructions = _BOUND[scope.kind][0]
     else:
-        consulted = "one Group of YouTube Channels" if scope.kind == "group" else "one YouTube Channel"
-        instructions = _SCOPE_INSTRUCTIONS.format(consulted=consulted, advisor=advisor)
+        instructions = _SCOPE_INSTRUCTIONS.format(consulted=_CONSULTED[scope.kind], advisor=advisor)
     # The SDK configures root logging at this level; INFO would log every library's chatter.
     server = MCPServer("seek", instructions=instructions, log_level="WARNING")
 

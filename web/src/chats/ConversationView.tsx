@@ -9,21 +9,22 @@ import {
   type ConversationDetail,
   type Group,
   type ModelChoice,
+  type Playlist,
   type Scope,
   type Sync,
   type TokenUsage,
 } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { PlaybackControls } from "@/lib/playback";
-import { channelSync, syncingNote } from "@/lib/sync-status";
+import { channelSync, playlistSync, syncingNote } from "@/lib/sync-status";
 import { Composer, type Blocked } from "./Composer";
 import { NewChat } from "./NewChat";
 import { ScopeChip } from "./ScopeChip";
 import { TokenTotals } from "./TokenTotals";
-import { liveScope } from "./scope";
+import { liveScope, scopeNoun } from "./scope";
 import { consultedVideos, entryOf, Transcript, type Answer, type Entry } from "./Transcript";
 
-// A chat with one Group or Channel: a new Conversation in `scope` (created with the first question), or the saved one
+// A chat with one Group, Channel, or Playlist: a new Conversation in `scope` (created with the first question), or the saved one
 // `conversationId` names, whose scope comes with it and may since have been deleted, leaving it read-only. `draft`
 // prefills the question. Remounted for each chat opened, but not when a new Conversation gets its id.
 export function ConversationView({
@@ -32,6 +33,7 @@ export function ConversationView({
   draft: initialDraft,
   groups,
   channels,
+  playlists,
   syncs,
   chat,
   defaultChoice,
@@ -48,6 +50,7 @@ export function ConversationView({
   draft: string;
   groups: Group[] | null;
   channels: Channel[] | null;
+  playlists: Playlist[] | null;
   syncs: Sync[] | null;
   // Both engines and the one that would answer the next turn, for the composer's models, context controls and
   // its dead end when neither can answer; null until the server has said.
@@ -121,11 +124,11 @@ export function ConversationView({
   const loading = initialId !== null && detail === null && error === null;
   // A Conversation that couldn't be loaded isn't continued blind.
   const loadFailed = initialId !== null && detail === null && error !== null;
-  // The scope as held: a new chat's, or the saved Conversation's while its Group or Channel still exists.
+  // The scope as held: a new chat's, or the saved Conversation's while its Group, Channel, or Playlist still exists.
   const heldScope: Scope | null =
     newScope ?? (detail === null || detail.scope.id === null ? null : { kind: detail.scope.kind, id: detail.scope.id });
-  const live = heldScope === null ? null : liveScope(heldScope, groups, channels);
-  const listsLoaded = groups !== null && channels !== null;
+  const live = heldScope === null ? null : liveScope(heldScope, groups, channels, playlists);
+  const listsLoaded = groups !== null && channels !== null && playlists !== null;
   const deleted = (detail !== null && detail.scope.id === null) || (heldScope !== null && listsLoaded && live === null);
   // The scope's name as last seen, for when it is deleted while this chat is open.
   const lastName = useRef("");
@@ -264,11 +267,16 @@ export function ConversationView({
             : null;
   // The totals as last listed, which are newer than the detail this chat opened with.
   const totals = usage ?? detail?.usage ?? null;
-  const members = live?.members ?? [];
-  const syncingNotice = syncingNote(
-    members.filter((member) => channelSync(syncs, member.id) !== null).map((member) => member.name),
-    members.reduce((ready, member) => ready + member.videos, 0),
-  );
+  // A Playlist is synced as one; a Group or Channel by its Channels.
+  const syncingNames =
+    live === null
+      ? []
+      : live.kind === "playlist"
+        ? playlistSync(syncs, live.id) !== null
+          ? [live.name]
+          : []
+        : live.members.filter((member) => channelSync(syncs, member.id) !== null).map((member) => member.name);
+  const syncingNotice = syncingNote(syncingNames, live?.videos ?? 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -278,8 +286,8 @@ export function ConversationView({
           {deleted && (
             <Alert>
               <AlertDescription>
-                The {(detail?.scope.kind ?? heldScope?.kind) === "channel" ? "channel" : "group"} {name} was removed, so
-                this chat can be read but not continued.
+                The {scopeNoun[detail?.scope.kind ?? heldScope?.kind ?? "group"].toLowerCase()} {name} was removed, so this
+                chat can be read but not continued.
               </AlertDescription>
             </Alert>
           )}

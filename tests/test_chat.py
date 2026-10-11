@@ -13,8 +13,10 @@ from harness import (
     running,
     said,
     send,
+    sharpening_picks,
     start_channel_conversation,
     start_conversation,
+    start_playlist_conversation,
     stored_messages,
     stream_events,
     woodworkers,
@@ -25,7 +27,7 @@ from seek.app import create_app
 from seek.chat import citation_links
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from seek.mcp_server import GROUNDED_ADVISOR
+from seek.mcp_server import GROUNDED_ADVISOR, RESOURCE_ADVISOR
 from seek.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
 
 
@@ -192,6 +194,97 @@ async def test_a_chat_with_one_channel_sees_only_that_channel(
     [request] = engine.requests
     assert sorted(request.tool_names) == ["expand", "get_video", "list_channels", "search"]
     assert "the Channel 'Paul Wright'" in request.system_prompt and "Group" not in request.system_prompt
+
+
+async def test_a_chat_with_a_playlist_sees_only_its_videos_whoever_made_them(
+    client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource
+) -> None:
+    _, playlist = await sharpening_picks(client, transcripts)
+    results = (await client.post("/api/search", json={"query": "sharpen with something fine"})).json()
+    by_video = {r["youtube_video_id"]: r for r in results}
+    conversation = await start_playlist_conversation(client, playlist["id"])
+    seen: Json = {}
+
+    async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        async with Client(request.tools) as mcp:
+            tools = {tool.name: tool for tool in (await mcp.list_tools()).tools}
+            found = await mcp.call_tool("search", {"query": "sharpen with something fine"})
+            own = await mcp.call_tool("expand", {"segment_id": by_video["v-knives"]["segment_id"]})
+            own_video = await mcp.call_tool("get_video", {"video_id": by_video["v-knives"]["video_id"]})
+            expanded = await mcp.call_tool("expand", {"segment_id": by_video["v-saws"]["segment_id"]})
+            video = await mcp.call_tool("get_video", {"video_id": by_video["v-saws"]["video_id"]})
+            channels = await mcp.call_tool("list_channels", {})
+            instructions = mcp.instructions
+        assert found.structured_content and own.structured_content and own_video.structured_content
+        assert channels.structured_content and instructions
+        seen.update(
+            tools=sorted(tools),
+            search_arguments=sorted(tools["search"].input_schema["properties"]),
+            search_names_the_playlist="this Conversation's Playlist" in (tools["search"].description or ""),
+            instructions_name_the_playlist="the Videos in one Playlist the user trusts" in instructions,
+            found={r["youtube_video_id"] for r in found.structured_content["result"]},
+            own=(own.structured_content["channel_name"], own_video.structured_content["channel_name"]),
+            refused=[expanded.is_error, video.is_error],
+            channels=[(c["name"], c["video_count"]) for c in channels.structured_content["result"]],
+        )
+        yield TextDelta(
+            "Knives: https://www.youtube.com/watch?v=v-knives&t=5s, chisels: youtu.be/v-chisels?t=5, "
+            "saws: youtu.be/v-saws?t=5"
+        )
+        yield ChatDone("session-1")
+
+    engine.respond = respond
+
+    response = await send(client, conversation["id"], "How do I sharpen?")
+
+    assert response.status_code == 200, response.text
+    assert seen == {
+        "tools": ["expand", "get_video", "list_channels", "search"],
+        "search_arguments": ["limit", "prefer_recent", "query"],
+        "search_names_the_playlist": True,
+        "instructions_name_the_playlist": True,
+        "found": {"v-knives", "v-chisels"},
+        "own": ("Rex Krueger", "Rex Krueger"),
+        "refused": [True, True],
+        # The Playlist's creators, in the Library or not, each with their Videos in it.
+        "channels": [("Rex Krueger", 1), ("Wood By Wright", 1)],
+    }
+    # Wood By Wright's saws are in the Library but not in the Playlist, so they are no Citation here.
+    assert [(c["youtube_video_id"], c["channel_name"]) for c in done_message(response)["citations"]] == [
+        ("v-knives", "Rex Krueger"),
+        ("v-chisels", "Wood By Wright"),
+    ]
+    [request] = engine.requests
+    assert sorted(request.tool_names) == ["expand", "get_video", "list_channels", "search"]
+    assert GROUNDED_ADVISOR in request.system_prompt
+    assert "the Playlist 'Sharpening picks' (Channels: Rex Krueger, Wood By Wright)" in request.system_prompt
+    assert "Group" not in request.system_prompt
+
+
+async def test_a_playlist_chat_with_other_resources_is_still_told_it_consults_a_playlist(
+    client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource
+) -> None:
+    _, playlist = await sharpening_picks(client, transcripts)
+    response = await client.post(f"/api/playlists/{playlist['id']}/conversations", json={"web_access": True})
+    seen: list[str | None] = []
+
+    async def respond(request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        async with Client(request.tools) as mcp:
+            seen.append(mcp.instructions)
+        yield ChatDone("session-1")
+
+    engine.respond = respond
+
+    await send(client, response.json()["id"], "How do I sharpen?")
+
+    [instructions] = seen
+    assert instructions is not None
+    assert "the Videos in one Playlist the user trusts" in instructions and RESOURCE_ADVISOR in instructions
+    [request] = engine.requests
+    assert (
+        "consulting the Playlist 'Sharpening picks' (Channels: Rex Krueger, Wood By Wright) and public web pages"
+        in request.system_prompt
+    )
 
 
 async def test_links_to_the_groups_videos_are_saved_as_citations_with_their_names(

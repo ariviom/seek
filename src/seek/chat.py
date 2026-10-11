@@ -1,4 +1,5 @@
-"""Web chat turns: a Conversation's question answered by the ChatEngine, using tools bound to its Group or Channel."""
+"""Web chat turns: a Conversation's question answered by the ChatEngine, using tools bound to its Group, Channel, or
+Playlist."""
 
 import asyncio
 import contextlib
@@ -29,7 +30,7 @@ from seek.ports import (
     ToolResult,
     UsageReported,
 )
-from seek.scope import Scope
+from seek.scope import SCOPE_NOUN, Scope
 from seek.search import Search
 from seek.settings import read_settings
 
@@ -49,10 +50,10 @@ _TIMESTAMP = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?")
 def system_prompt(
     scope: Scope, scope_name: str, channel_names: list[str], today: str, context: ConversationContext
 ) -> str:
-    if scope.kind == "group":
-        consulted = f"the Group {scope_name!r} (Channels: {', '.join(channel_names) or 'none yet'})"
-    else:
+    if scope.kind == "channel":
         consulted = f"the Channel {scope_name!r}"
+    else:
+        consulted = f"the {SCOPE_NOUN[scope.kind]} {scope_name!r} (Channels: {', '.join(channel_names) or 'none yet'})"
     if context.workspace is None and not context.web_access:
         return f"""\
 You answer questions in a web chat by consulting {consulted} through tools that search the Transcripts of its \

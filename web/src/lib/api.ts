@@ -204,8 +204,8 @@ export type Expansion = {
 };
 
 // A null model follows the default model setting rather than pinning one.
-// `scope.id` is null once the Group or Channel is deleted, which leaves the Conversation read-only.
-export type ScopeKind = "group" | "channel";
+// `scope.id` is null once the Group, Channel, or Playlist is deleted, which leaves the Conversation read-only.
+export type ScopeKind = "group" | "channel" | "playlist";
 export type Scope = { kind: ScopeKind; id: number };
 export type ConversationScope = { kind: ScopeKind; id: number | null; name: string };
 export type ChatContext = { workspace: string | null; web_access: boolean };
@@ -349,7 +349,7 @@ export const api = {
       method: "POST",
       body: { model, ...context },
     }),
-  // Every Conversation, or one Group's or Channel's.
+  // Every Conversation, or one Group's, Channel's, or Playlist's.
   listConversations: (scope: Scope | null) =>
     request<ConversationSummary[]>(
       scope === null ? "conversations" : `conversations?${scope.kind}_id=${scope.id}`,

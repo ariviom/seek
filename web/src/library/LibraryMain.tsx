@@ -73,6 +73,7 @@ export function LibraryMain({
         playlist={playlist}
         syncs={syncs}
         refresh={reloadPlaylists}
+        onNewChat={onNewChat}
         onOpenSync={onOpenSync}
       />
     );

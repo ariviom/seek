@@ -213,6 +213,44 @@ def _playlists(conn: sqlite3.Connection) -> None:
     )
 
 
+def _playlist_conversations(conn: sqlite3.Connection) -> None:
+    """Schema 22: a Conversation may consult a Playlist.
+
+    scope_kind's CHECK can't be altered, so the table is rebuilt the way SQLite documents. messages references
+    conversations by name, so renaming the new table into place makes it resolve again; foreign keys are off
+    meanwhile (see migrate), so dropping the old one deletes no messages.
+    """
+    conn.executescript(
+        """
+        -- As before, with a Playlist: exactly one id is set at creation and cleared when what it names is deleted.
+        CREATE TABLE conversations_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+            channel_id INTEGER REFERENCES channels(id) ON DELETE SET NULL,
+            playlist_id INTEGER REFERENCES playlists(id) ON DELETE SET NULL,
+            scope_kind TEXT NOT NULL CHECK (scope_kind IN ('group', 'channel', 'playlist')),
+            scope_name TEXT NOT NULL,
+            model TEXT,
+            claude_session_id TEXT,
+            created_at TEXT NOT NULL,
+            title TEXT,
+            workspace_path TEXT,
+            web_access INTEGER NOT NULL DEFAULT 0 CHECK (web_access IN (0, 1))
+        );
+        INSERT INTO conversations_new (id, group_id, channel_id, scope_kind, scope_name, model, claude_session_id,
+                                       created_at, title, workspace_path, web_access)
+            SELECT id, group_id, channel_id, scope_kind, scope_name, model, claude_session_id, created_at, title,
+                   workspace_path, web_access
+            FROM conversations;
+        DROP TABLE conversations;
+        ALTER TABLE conversations_new RENAME TO conversations;
+        CREATE INDEX conversations_group_id ON conversations(group_id);
+        CREATE INDEX conversations_channel_id ON conversations(channel_id);
+        CREATE INDEX conversations_playlist_id ON conversations(playlist_id);
+        """
+    )
+
+
 # Applied in order; PRAGMA user_version records how many have run. Never edit a shipped entry.
 # A string entry runs with foreign keys ON inside a transaction, where they cannot be switched off: keep those
 # additive, because DROP TABLE on a parent would cascade-delete its children. A callable entry is a rebuild that
@@ -480,6 +518,7 @@ MIGRATIONS: list[str | Callable[[sqlite3.Connection], None]] = [
     ALTER TABLE channels ADD COLUMN in_library INTEGER NOT NULL DEFAULT 1 CHECK (in_library IN (0, 1));
     """,
     _playlists,
+    _playlist_conversations,
 ]
 
 
