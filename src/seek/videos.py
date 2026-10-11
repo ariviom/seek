@@ -15,6 +15,7 @@ from seek.ports import (
     ChannelInfo,
     Chapter,
     PlaylistEntry,
+    SourceUnavailable,
     Transcript,
     VideoDetails,
     VideoListing,
@@ -29,6 +30,12 @@ type StageOutcome = Literal["advanced", "stopped", "gone"]
 PIPELINE: tuple[PipelineStage, ...] = ("discovered", "transcript_fetched", "segmented", "embedded", "done")
 
 STAGES: tuple[Stage, ...] = (*PIPELINE, "failed", "excluded")
+
+# Why a Playlist Sync fails when the playlist lists nothing while the Playlist has Videos.
+EMPTY_LISTING = (
+    "YouTube listed no Videos in this playlist, so nothing was removed. If the playlist really is empty now, "
+    "delete the Playlist"
+)
 
 # The stage a Video shows: exclusion wins over failure, which wins over the last completed stage.
 _STAGE_SQL = """
@@ -83,6 +90,59 @@ def _of(source: Source, parameter: str = "?") -> str:
     return f"videos.id IN (SELECT video_id FROM playlist_videos WHERE playlist_id = {parameter})"
 
 
+@dataclass(frozen=True)
+class Listed:
+    """Where Videos are listed: under the Channel they are credited to, and in the Playlists that include them."""
+
+    channel_id: int
+    playlist_ids: list[int]
+
+
+def listed(conn: sqlite3.Connection, video_id: int) -> Listed | None:
+    """Where the Video is listed; None if it is gone."""
+    row = conn.execute("SELECT channel_id FROM videos WHERE id = ?", (video_id,)).fetchone()
+    if row is None:
+        return None
+    playlists = conn.execute(
+        "SELECT playlist_id FROM playlist_videos WHERE video_id = ? ORDER BY playlist_id", (video_id,)
+    )
+    return Listed(row["channel_id"], [playlist["playlist_id"] for playlist in playlists])
+
+
+def creators(conn: sqlite3.Connection, source: Source) -> set[int]:
+    """The ids of the Channels the source's Videos are credited to: the Channel itself, or a Playlist's creators."""
+    if source.kind == "channel":
+        return {source.id}
+    rows = conn.execute(f"SELECT DISTINCT channel_id FROM videos WHERE {_of(source)}", (source.id,))
+    return {row["channel_id"] for row in rows}
+
+
+def listed_by_creator(conn: sqlite3.Connection, source: Source, also: Collection[int] = ()) -> list[Listed]:
+    """Where the source's Videos are listed, a creator at a time: each Channel one of them is credited to, with
+    every Playlist that includes any of that Channel's Videos.
+
+    `also` names Channels to list as well, such as the creators of Videos a Playlist has just dropped. A Channel
+    that is gone is left out.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT channels.id, playlist_videos.playlist_id
+        FROM channels
+        LEFT JOIN videos ON videos.channel_id = channels.id
+        LEFT JOIN playlist_videos ON playlist_videos.video_id = videos.id
+        WHERE channels.id IN (SELECT value FROM json_each(?))
+        ORDER BY channels.id, playlist_videos.playlist_id
+        """,
+        (json.dumps(sorted({*creators(conn, source), *also})),),
+    )
+    playlists: dict[int, list[int]] = {}
+    for row in rows:
+        included_in = playlists.setdefault(row["id"], [])
+        if row["playlist_id"] is not None:
+            included_in.append(row["playlist_id"])
+    return [Listed(channel_id, playlist_ids) for channel_id, playlist_ids in playlists.items()]
+
+
 def _require_channel(conn: sqlite3.Connection, channel_id: int) -> None:
     if conn.execute("SELECT 1 FROM channels WHERE id = ? AND in_library = 1", (channel_id,)).fetchone() is None:
         raise NotFound(f"Channel {channel_id} not found")
@@ -96,10 +156,17 @@ class ExclusionRules:
     filters: ChannelFilters
 
 
-def _exclusion(rules: ExclusionRules, duration_seconds: int | None, published_on: date | None) -> str | None:
-    """The reason a Video is excluded by the rules that need only its own metadata; unknown values pass."""
+def _exclusion(
+    rules: ExclusionRules, duration_seconds: int | None, published_on: date | None, included: bool
+) -> str | None:
+    """The reason a Video is excluded by the rules that need only its own metadata; unknown values pass.
+
+    Inclusion wins: a Video some Playlist includes is judged by the minimum length alone.
+    """
     if duration_seconds is not None and duration_seconds < rules.min_duration_seconds:
         return f"Shorter than the {rules.min_duration_seconds} second minimum"
+    if included:
+        return None
     after, before = rules.filters.published_after, rules.filters.published_before
     if published_on is not None and after is not None and published_on < after:
         return f"Published before {after.isoformat()}, outside the Channel's filters"
@@ -307,7 +374,13 @@ def record_playlist_discovery(
 ) -> int | None:
     """Records the playlist's listing: a creator not yet known becomes a Channel outside the Library, a Video not
     yet known is credited to its creator and judged by the rules, and the Playlist includes each Video at its
-    place in the listing. A Video already known, such as one a Library Channel has ingested, is left as it is.
+    place in the listing. A Video already known, such as one a Library Channel has ingested, is judged again as
+    one a Playlist includes, which lifts an exclusion by its Channel's filters. The Playlist stops including a
+    Video the listing no longer has.
+
+    `entries` is a listing that completed: one that failed must not get here, since every Video it lacks leaves
+    the Playlist. YouTube can also answer with no entries and no error, so an empty listing for a Playlist that
+    has Videos raises SourceUnavailable and nothing is removed.
 
     `avatars` holds the avatar of each creator that may be new, by YouTube channel id. Returns how many Videos
     are new to the Playlist, or None if the Sync is gone.
@@ -315,12 +388,23 @@ def record_playlist_discovery(
     with transaction(conn):
         if not _sync_exists(conn, sync_id, Source("playlist", playlist_id)):
             return None
-        count = "SELECT count(*) FROM playlist_videos WHERE playlist_id = ?"
-        (before,) = conn.execute(count, (playlist_id,)).fetchone()
+        members = conn.execute("SELECT video_id FROM playlist_videos WHERE playlist_id = ?", (playlist_id,))
+        included = {row["video_id"] for row in members}
+        if included and not entries:
+            raise SourceUnavailable(EMPTY_LISTING)
+        in_listing: set[int] = set()
         discovered_at = now_iso()
         for position, entry in enumerate(entries):
-            row = conn.execute("SELECT id FROM videos WHERE youtube_video_id = ?", (entry.video_id,)).fetchone()
-            if row is None:
+            row = conn.execute(
+                """
+                SELECT id, duration_seconds, pipeline_stage, excluded_reason FROM videos
+                WHERE youtube_video_id = ?
+                """,
+                (entry.video_id,),
+            ).fetchone()
+            if row is not None:
+                _set_exclusion(conn, row, _exclusion(rules, row["duration_seconds"], None, included=True))
+            else:
                 creator = ChannelInfo(entry.channel_id, entry.channel_name, avatars.get(entry.channel_id))
                 row = conn.execute(
                     """
@@ -334,7 +418,7 @@ def record_playlist_discovery(
                         entry.video_id,
                         entry.title,
                         entry.duration_seconds,
-                        _exclusion(rules, entry.duration_seconds, None),
+                        _exclusion(rules, entry.duration_seconds, None, included=True),
                         discovered_at,
                     ),
                 ).fetchone()
@@ -345,8 +429,62 @@ def record_playlist_discovery(
                 """,
                 (playlist_id, row["id"], position),
             )
-        (after,) = conn.execute(count, (playlist_id,)).fetchone()
-        return int(after - before)
+            in_listing.add(row["id"])
+        # Worked out before any delete, since the memberships are what say which Videos to settle.
+        removed = included - in_listing
+        conn.execute(
+            "DELETE FROM playlist_videos WHERE playlist_id = ? AND video_id IN (SELECT value FROM json_each(?))",
+            (playlist_id, json.dumps(sorted(removed))),
+        )
+        apply_keep_rule(conn, removed, rules.min_duration_seconds)
+        return len(in_listing - included)
+
+
+def apply_keep_rule(conn: sqlite3.Connection, video_ids: Collection[int], min_duration_seconds: int) -> None:
+    """Within a transaction: settles Videos that have just lost a Playlist that included them, or the Library
+    Channel they were credited to. A Video is kept while its Channel is in the Library or any Playlist includes it.
+
+    - A Video some Playlist still includes is left as it is.
+    - One whose Channel is in the Library is no longer included, so it is judged again from what is stored: by
+      the minimum length and its Channel's date window. The Channel's playlist filter and most-recent count need
+      a listing, so they catch up at the Channel's next Sync.
+    - Any other is deleted, with its Transcript, Segments, vectors, and storyboard. Every creator that leaves with
+      no Videos is then forgotten.
+
+    Read `video_ids` before deleting what kept them: a Playlist's memberships go with the Playlist, and then
+    nothing says which Videos to look at.
+    """
+    no_longer_included = conn.execute(
+        """
+        SELECT videos.id, videos.channel_id, videos.duration_seconds, videos.published_on, videos.pipeline_stage,
+               videos.excluded_reason, channels.in_library, channels.published_after, channels.published_before,
+               channels.playlist_id, channels.most_recent
+        FROM videos JOIN channels ON channels.id = videos.channel_id
+        WHERE videos.id IN (SELECT value FROM json_each(?))
+          AND NOT EXISTS (SELECT 1 FROM playlist_videos WHERE playlist_videos.video_id = videos.id)
+        """,
+        (json.dumps(sorted(video_ids)),),
+    ).fetchall()
+    unkept = [row for row in no_longer_included if not row["in_library"]]
+    for row in no_longer_included:
+        if row["in_library"]:
+            rules = ExclusionRules(min_duration_seconds, channels.read_filters(row))
+            published_on = date.fromisoformat(row["published_on"]) if row["published_on"] else None
+            _set_exclusion(conn, row, _exclusion(rules, row["duration_seconds"], published_on, included=False))
+    conn.execute(
+        "DELETE FROM videos WHERE id IN (SELECT value FROM json_each(?))",
+        (json.dumps([row["id"] for row in unkept]),),
+    )
+    # Last, so a creator is judged by the Videos left once every delete is done. Only the creators of the Videos
+    # just deleted are looked at, and only outside the Library: a Library Channel stays with no Videos at all.
+    conn.execute(
+        """
+        DELETE FROM channels
+        WHERE id IN (SELECT value FROM json_each(?)) AND in_library = 0
+          AND NOT EXISTS (SELECT 1 FROM videos WHERE videos.channel_id = channels.id)
+        """,
+        (json.dumps(sorted({row["channel_id"] for row in unkept})),),
+    )
 
 
 def _sync_exists(conn: sqlite3.Connection, sync_id: int, source: Source) -> bool:
@@ -364,7 +502,8 @@ def _apply_exclusions(
 ) -> None:
     rows = conn.execute(
         """
-        SELECT id, youtube_video_id, duration_seconds, published_on, pipeline_stage, excluded_reason
+        SELECT id, youtube_video_id, duration_seconds, published_on, pipeline_stage, excluded_reason,
+               EXISTS (SELECT 1 FROM playlist_videos WHERE playlist_videos.video_id = videos.id) AS included
         FROM videos WHERE channel_id = ? ORDER BY id
         """,
         (channel_id,),
@@ -372,8 +511,13 @@ def _apply_exclusions(
     reasons: dict[int, str | None] = {}
     for row in rows:
         published_on = date.fromisoformat(row["published_on"]) if row["published_on"] else None
-        reason = _exclusion(rules, row["duration_seconds"], published_on)
-        if reason is None and playlist_video_ids is not None and row["youtube_video_id"] not in playlist_video_ids:
+        reason = _exclusion(rules, row["duration_seconds"], published_on, bool(row["included"]))
+        if (
+            reason is None
+            and not row["included"]
+            and playlist_video_ids is not None
+            and row["youtube_video_id"] not in playlist_video_ids
+        ):
             reason = f"Not in playlist {rules.filters.playlist_id}, outside the Channel's filters"
         reasons[row["id"]] = reason
     if rules.filters.most_recent is not None:
@@ -388,22 +532,31 @@ def _apply_exclusions(
                 return (1, -date.fromisoformat(row["published_on"]).toordinal())
             return (2, 0)
 
-        eligible = sorted((row for row in rows if reasons[row["id"]] is None), key=newest_first)
+        # A Video a Playlist includes takes none of the places: the Channel keeps its N newest besides.
+        eligible = sorted(
+            (row for row in rows if reasons[row["id"]] is None and not row["included"]), key=newest_first
+        )
         for row in eligible[rules.filters.most_recent :]:
             reasons[row["id"]] = (
                 f"Not among the {rules.filters.most_recent} most recent Videos, outside the Channel's filters"
             )
-    conn.executemany(
-        "UPDATE videos SET excluded_reason = ? WHERE id = ?",
-        [(reasons[row["id"]], row["id"]) for row in rows if reasons[row["id"]] != row["excluded_reason"]],
-    )
-    # Excluded Videos leave the search indexes but keep their Transcripts, so lifting the exclusion re-segments
-    # them without fetching again. Stepping back to transcript_fetched also clears any failure at a later
-    # stage; those are all transient, so lifting the exclusion retries them.
     for row in rows:
-        if reasons[row["id"]] is not None and row["pipeline_stage"] in ("segmented", "embedded", "done"):
-            conn.execute("DELETE FROM segments WHERE video_id = ?", (row["id"],))
-            complete_stage(conn, row["id"], "transcript_fetched")
+        _set_exclusion(conn, row, reasons[row["id"]])
+
+
+def _set_exclusion(conn: sqlite3.Connection, video: sqlite3.Row, reason: str | None) -> None:
+    """Records why the Video, a row with its id, pipeline_stage, and excluded_reason, is excluded, or that it no
+    longer is.
+
+    An excluded Video leaves the search indexes but keeps its Transcript, so lifting the exclusion re-segments it
+    without fetching again. Stepping back to transcript_fetched also clears any failure at a later stage; those
+    are all transient, so lifting the exclusion retries them.
+    """
+    if reason != video["excluded_reason"]:
+        conn.execute("UPDATE videos SET excluded_reason = ? WHERE id = ?", (reason, video["id"]))
+    if reason is not None and video["pipeline_stage"] in ("segmented", "embedded", "done"):
+        conn.execute("DELETE FROM segments WHERE video_id = ?", (video["id"],))
+        complete_stage(conn, video["id"], "transcript_fetched")
 
 
 def youtube_ids(conn: sqlite3.Connection, channel_id: int) -> set[str]:
@@ -426,6 +579,14 @@ def pending_videos(conn: sqlite3.Connection, source: Source) -> list[PendingVide
     return [PendingVideo(row["id"], row["youtube_video_id"], row["title"], row["pipeline_stage"]) for row in rows]
 
 
+def _exclusion_by_details(
+    conn: sqlite3.Connection, video_id: int, details: VideoDetails, rules: ExclusionRules
+) -> str | None:
+    """The reason the Video's full metadata excludes it, if it does."""
+    included = conn.execute("SELECT 1 FROM playlist_videos WHERE video_id = ? LIMIT 1", (video_id,)).fetchone()
+    return _exclusion(rules, details.duration_seconds, details.published_on, included is not None)
+
+
 def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetails, rules: ExclusionRules) -> bool:
     cursor = conn.execute(
         """
@@ -439,7 +600,7 @@ def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetai
             details.duration_seconds,
             details.description,
             json.dumps([asdict(c) for c in details.chapters]),
-            _exclusion(rules, details.duration_seconds, details.published_on),
+            _exclusion_by_details(conn, video_id, details, rules),
             video_id,
         ),
     )
@@ -483,7 +644,7 @@ def record_transcript(
                 now_iso(),
             ),
         )
-        return "stopped" if _exclusion(rules, details.duration_seconds, details.published_on) else "advanced"
+        return "stopped" if _exclusion_by_details(conn, video_id, details, rules) else "advanced"
 
 
 def complete_stage(conn: sqlite3.Connection, video_id: int, stage: PipelineStage) -> bool:

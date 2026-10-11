@@ -75,12 +75,14 @@ async def test_sync_progress_and_video_stages_stream_live_while_the_sync_runs(
     progress = syncs_in(before_release)
     assert [s["status"] for s in progress[:2]] == ["queued", "running"]
     assert all(s["id"] == queued["id"] for s in progress)
-    assert {"type": "videos", "channel_id": channel_id} in before_release
+    assert {"type": "videos", "channel_id": channel_id, "playlist_ids": []} in before_release
     discovered = next(s for s in progress if s["new_videos"] == 2)
     assert discovered["stage_counts"] == NO_COUNTS | {"discovered": 2}
     assert progress[-1]["stage_counts"] == NO_COUNTS | {"discovered": 1, "done": 1}
     assert stages_of(before_release, "First") == ["transcript_fetched", "segmented", "embedded", "done"]
-    assert all(e["channel_id"] == channel_id for e in before_release if e["type"] == "video")
+    assert all(
+        (e["channel_id"], e["playlist_ids"]) == (channel_id, []) for e in before_release if e["type"] == "video"
+    )
     assert stages_of(after_release, "Second") == ["transcript_fetched", "segmented", "embedded", "done"]
     assert syncs_in(after_release)[-1] == listed
     assert listed["stage_counts"] == NO_COUNTS | {"done": 2}
@@ -113,7 +115,7 @@ async def test_failures_and_retry_failed_stream_over_events(
     # A failed Video is finished with as far as this Sync goes, so it counts too.
     assert syncs_in(first_sync)[-1]["completed_videos"] == 1
     assert retry.status_code == 202
-    assert retried[0] == {"type": "videos", "channel_id": channel_id}
+    assert retried[0] == {"type": "videos", "channel_id": channel_id, "playlist_ids": []}
     assert syncs_in(retried)[0] == retry.json()
     assert stages_of(retried, "Live Q&A")[-1] == "done"
 
@@ -137,18 +139,69 @@ async def test_a_playlists_sync_and_its_retry_of_failed_videos_stream_under_the_
         retried = await stream.until(sync_status("done"))
         videos = await list_playlist_videos(client, playlist_id)
 
-    assert {"type": "videos", "playlist_id": playlist_id} in first_sync
+    # Named by the creator the Videos are credited to and the Playlist that includes them.
+    rex = videos[0]["channel_id"]
+    reload = {"type": "videos", "channel_id": rex, "playlist_ids": [playlist_id]}
+    assert reload in first_sync
     changed = [e for e in first_sync if e["type"] == "video"]
     assert [e["video"]["stage"] for e in changed] == ["failed", "failed"]
-    assert all(e["playlist_id"] == playlist_id and "channel_id" not in e for e in changed)
+    assert all((e["channel_id"], e["playlist_ids"]) == (rex, [playlist_id]) for e in changed)
     assert syncs_in(first_sync)[-1]["stage_counts"] == NO_COUNTS | {"failed": 2}
     # The retry takes the permanent failure too, as a Channel's does.
     assert retry.status_code == 202
-    assert retried[0] == {"type": "videos", "playlist_id": playlist_id}
+    assert retried[0] == reload
     assert syncs_in(retried)[0] == retry.json()
     assert (retry.json()["playlist_id"], retry.json()["stage_counts"]) == (playlist_id, NO_COUNTS | {"discovered": 2})
     assert [v["stage"] for v in videos] == ["done", "done"]
     assert syncs_in(retried)[-1]["completed_videos"] == 2
+
+
+def videos_in(events: list[Json]) -> list[tuple[int, list[int]]]:
+    """The Channel and Playlists each reload of Videos names, in order."""
+    return [(e["channel_id"], e["playlist_ids"]) for e in events if e["type"] == "videos"]
+
+
+def changed_in(events: list[Json]) -> set[tuple[str, int, tuple[int, ...]]]:
+    """Each Video that changed, with the Channel and Playlists its events name."""
+    return {
+        (e["video"]["youtube_video_id"], e["channel_id"], tuple(e["playlist_ids"]))
+        for e in events
+        if e["type"] == "video"
+    }
+
+
+async def test_video_events_name_the_videos_channel_and_every_playlist_that_includes_it_whichever_sync_caused_them(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [fake_video("v-chisels", "Chisels"), fake_video("v-saws", "Saws")]
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-rex", "v-knives"), ("UC-wright", "v-chisels")])
+    transcripts.playlists["PL-chisels"] = FakePlaylist("Chisels", [("UC-wright", "v-chisels")])
+    app = make_app(config, transcripts, tmp_path)
+
+    async with running(app) as client, event_stream(app) as stream:
+        wright = (await add_channel(client, "@woodbywright"))["id"]
+        picks = (await add_playlist(client, "PL-picks"))["id"]
+        chisels = (await add_playlist(client, "PL-chisels"))["id"]
+        await start_playlist_sync(client, picks)
+        picks_sync = await stream.until(sync_status("done"))
+        await start_playlist_sync(client, chisels)
+        chisels_sync = await stream.until(sync_status("done"))
+        await start_sync(client, wright)
+        channel_sync = await stream.until(sync_status("done"))
+        # The chisels leave Picks, so their Channel's page has to hear of it too.
+        transcripts.playlists["PL-picks"].entries.remove(("UC-wright", "v-chisels"))
+        await start_playlist_sync(client, picks)
+        removal = await stream.until(sync_status("done"))
+        [knives] = await list_playlist_videos(client, picks)
+
+    rex = knives["channel_id"]
+    assert videos_in(picks_sync) == [(wright, [picks]), (rex, [picks])]
+    assert changed_in(picks_sync) == {("v-knives", rex, (picks,)), ("v-chisels", wright, (picks,))}
+    assert videos_in(chisels_sync) == [(wright, [picks, chisels])]
+    assert videos_in(channel_sync) == [(wright, [picks, chisels])]
+    assert changed_in(channel_sync) == {("v-saws", wright, ())}
+    assert videos_in(removal) == [(wright, [chisels]), (rex, [picks])]
 
 
 async def test_the_event_stream_is_proxy_safe(

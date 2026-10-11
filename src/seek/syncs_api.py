@@ -25,9 +25,13 @@ def syncs_router(database: Database, events: Events, wake_worker: Callable[[], N
         wake_worker()
         return sync
 
+    async def videos_changed(source: Source) -> None:
+        for listed in await database.run(lambda conn: videos.listed_by_creator(conn, source)):
+            events.videos(listed)
+
     async def retry(source: Source) -> Sync:
         sync = await database.run(lambda conn: syncs.retry_failed(conn, source))
-        events.videos(source)
+        await videos_changed(source)
         events.sync(sync)
         wake_worker()
         return sync
@@ -60,7 +64,7 @@ def syncs_router(database: Database, events: Events, wake_worker: Callable[[], N
     @router.post("/videos/{video_id}/retry", status_code=status.HTTP_202_ACCEPTED)
     async def retry_video(video_id: int) -> Sync:
         channel_id, sync = await database.run(lambda conn: syncs.retry_video(conn, video_id))
-        events.videos(Source("channel", channel_id))
+        await videos_changed(Source("channel", channel_id))
         events.sync(sync)
         wake_worker()
         return sync

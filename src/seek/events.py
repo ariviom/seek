@@ -12,7 +12,7 @@ from fastapi.encoders import jsonable_encoder
 
 from seek.ports import ModelStatus
 from seek.syncs import Sync
-from seek.videos import Source, Video
+from seek.videos import Listed, Video
 
 # Events a subscriber may fall behind by before its stream is closed; the client reconnects and reloads.
 MAX_BACKLOG = 10_000
@@ -51,14 +51,17 @@ class Events:
         """The Sync's record changed."""
         self._publish({"type": "sync", "sync": sync})
 
-    def video(self, source: Source, video: Video) -> None:
-        """One Video of the Channel or Playlist changed; the event carries the source's id as channel_id or
-        playlist_id."""
-        self._publish({"type": "video", source.column: source.id, "video": video})
+    def video(self, video: Video, listed: Listed) -> None:
+        """One Video changed. The event names its Channel and every Playlist that includes it, whichever Sync
+        changed it, so each page that lists it follows."""
+        self._publish(
+            {"type": "video", "channel_id": listed.channel_id, "playlist_ids": listed.playlist_ids, "video": video}
+        )
 
-    def videos(self, source: Source) -> None:
-        """Many of the Channel's or Playlist's Videos may have changed; reload them."""
-        self._publish({"type": "videos", source.column: source.id})
+    def videos(self, listed: Listed) -> None:
+        """Many of the Channel's Videos may have changed; reload them, there and in the Playlists that include
+        any of them."""
+        self._publish({"type": "videos", "channel_id": listed.channel_id, "playlist_ids": listed.playlist_ids})
 
     def syncs(self) -> None:
         """Syncs were removed or their names changed; reload them."""

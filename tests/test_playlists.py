@@ -255,6 +255,38 @@ async def test_a_reindex_sync_of_a_playlist_embeds_its_videos_again_without_fetc
     assert fetched(transcripts) == fetched_once
 
 
+async def test_retry_failed_and_reindex_on_a_playlist_take_the_videos_it_shares_with_a_library_channel(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
+) -> None:
+    sharpening(transcripts)
+    chisels = fake_channel(transcripts, "UC-wright").videos[0]
+    chisels.failure = VideoUnavailable("Members-only Video", permanent=True)
+    wright = await add_channel(client, "@woodbywright")
+    playlist = await add_playlist(client, "PL-sharpening")
+    await start_sync(client, wright["id"])
+    await start_playlist_sync(client, playlist["id"])
+    await wait_for_syncs(client)
+    failed = await list_videos(client, wright["id"])
+
+    chisels.failure = None
+    retry = await client.post(f"/api/playlists/{playlist['id']}/retry-failed")
+    retried, *_ = await wait_for_syncs(client)
+    after_retry = await list_videos(client, wright["id"])
+    embedded, fetched_once = len(embedder.passages), fetched(transcripts)
+    await client.post(f"/api/playlists/{playlist['id']}/syncs", json={"reindex": True})
+    reindexed, *_ = await wait_for_syncs(client)
+
+    assert (failed["Sharpening chisels"]["stage"], failed["Sharpening chisels"]["permanent_failure"]) == ("failed", True)
+    assert retry.status_code == 202
+    assert (retried["status"], retried["completed_videos"]) == ("done", 1)
+    assert {title: v["stage"] for title, v in after_retry.items()} == {"Sharpening chisels": "done", "Plane irons": "done"}
+    # Every Video here is in the Playlist, the Channel's two among them, so the reindex embeds them all again.
+    assert (reindexed["status"], reindexed["completed_videos"]) == ("done", 3)
+    assert embedded > 0 and len(embedder.passages) == 2 * embedded
+    assert fetched(transcripts) == fetched_once
+    assert {v["stage"] for v in (await list_videos(client, wright["id"])).values()} == {"done"}
+
+
 async def test_syncing_or_listing_a_playlist_that_was_never_added_is_not_found(client: httpx.AsyncClient) -> None:
     responses = [
         await client.post("/api/playlists/999/syncs"),

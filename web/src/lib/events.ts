@@ -4,9 +4,10 @@ import type { Models, Sync, Video } from "@/lib/api";
 export type ServerEvent =
   | { type: "ready" }
   | { type: "sync"; sync: Sync }
-  // A Video event names the Channel or the Playlist whose Sync or retry caused it, never both.
-  | { type: "video"; channel_id?: number; playlist_id?: number; video: Video }
-  | { type: "videos"; channel_id?: number; playlist_id?: number }
+  // A Video event names the Video's Channel and every Playlist that includes it, whichever Sync or retry caused
+  // it. A reload names a Channel and every Playlist that includes any of its Videos.
+  | { type: "video"; channel_id: number; playlist_ids: number[]; video: Video }
+  | { type: "videos"; channel_id: number; playlist_ids: number[] }
   | { type: "syncs" }
   | { type: "models"; models: Models }
   | { type: "settings" }

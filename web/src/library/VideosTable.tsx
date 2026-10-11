@@ -30,8 +30,8 @@ export function VideosTable({ source }: { source: { kind: "channel" | "playlist"
   );
   const react = (event: ServerEvent): Reaction<Video | PlaylistVideo> => {
     if (event.type !== "video" && event.type !== "videos") return null;
-    // A Video event carries neither its creator nor its place in the playlist, so a Playlist's table reloads.
-    if (kind === "playlist") return event.playlist_id === id ? "reload" : null;
+    // A Video event carries neither its creator's name nor its place in the playlist, so a Playlist's table reloads.
+    if (kind === "playlist") return event.playlist_ids.includes(id) ? "reload" : null;
     if (event.channel_id !== id) return null;
     if (event.type === "videos") return "reload";
     return (videos) => [event.video, ...videos.filter((v) => v.id !== event.video.id)].sort(newestFirst);

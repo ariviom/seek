@@ -22,7 +22,7 @@ from seek.ports import (
     VideoUnavailable,
 )
 from seek.syncs import ClaimedSync, Sync
-from seek.videos import ExclusionRules, PendingVideo, PipelineStage, StageOutcome, Video
+from seek.videos import ExclusionRules, Listed, PendingVideo, PipelineStage, StageOutcome, Video
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class _Discovery:
     new_videos: int
     listings: Sequence[VideoListing] = ()
     playlist_video_ids: Collection[str] | None = None
+    # The Channels a Playlist's Videos were credited to before the listing, some of which it may have dropped.
+    creators_before: Collection[int] = ()
 
 
 class SyncWorker:
@@ -161,14 +163,14 @@ class SyncWorker:
                 # Not worth any YouTube calls: no Video could be embedded.
                 raise ModelUnavailable(model.error or f"The embedding model {model.name} failed to load")
             if sync.retry_failed:
-                self._events.videos(sync.source)
+                await self._videos_changed(sync)
             if sync.source.kind == "playlist":
                 discovery = await self._discover_playlist(sync, rules)
             else:
                 discovery = await self._discover_channel(sync, rules)
             if discovery is None:
                 return
-            self._events.videos(sync.source)
+            await self._videos_changed(sync, discovery.creators_before)
             if not await self._progress(sync, discovery.new_videos):
                 return
             attempted: set[int] = set()
@@ -193,7 +195,7 @@ class SyncWorker:
                     )
                 ):
                     return
-                self._events.videos(sync.source)
+                await self._videos_changed(sync)
         except _Throttled as e:
             error: str | None = (
                 f"{e}. {THROTTLE_LIMIT} Videos in a row were refused, so the Sync stopped; the "
@@ -254,12 +256,19 @@ class SyncWorker:
             if self._lease_lost:
                 return None
             avatars[creator] = await asyncio.to_thread(self._avatar, creator)
+        creators_before = await self._database.run(lambda conn: videos.creators(conn, sync.source))
         new_videos = await self._database.run(
             lambda conn: videos.record_playlist_discovery(
                 conn, sync.id, sync.source.id, listing.entries, avatars, rules
             )
         )
-        return None if new_videos is None else _Discovery(new_videos)
+        return None if new_videos is None else _Discovery(new_videos, creators_before=creators_before)
+
+    async def _videos_changed(self, sync: ClaimedSync, also: Collection[int] = ()) -> None:
+        """Publishes that the source's Videos may have changed, to every page that lists any of them; `also` names
+        further Channels whose Videos did."""
+        for listed in await self._database.run(lambda conn: videos.listed_by_creator(conn, sync.source, also)):
+            self._events.videos(listed)
 
     def _avatar(self, youtube_channel_id: str) -> str | None:
         """A new creator's avatar, looked up at the Sync's pace so a playlist of many creators doesn't burst
@@ -284,14 +293,15 @@ class SyncWorker:
         once however many times it is processed.
         """
 
-        def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None]:
+        def refresh(conn: sqlite3.Connection) -> tuple[Sync | None, Video | None, Listed | None]:
             changed = None if video is None else videos.get_video(conn, video.id)
+            listed = None if changed is None else videos.listed(conn, changed.id)
             finished = changed.id if changed is not None and changed.stage in ("done", "failed") else None
-            return syncs.update_progress(conn, sync.id, new_videos, finished, self._queue), changed
+            return syncs.update_progress(conn, sync.id, new_videos, finished, self._queue), changed, listed
 
-        updated, changed = await self._database.run(refresh)
-        if changed is not None:
-            self._events.video(sync.source, changed)
+        updated, changed, listed = await self._database.run(refresh)
+        if changed is not None and listed is not None:
+            self._events.video(changed, listed)
         if updated is None:
             return False
         self._events.sync(replace(updated, fetching=fetching))
