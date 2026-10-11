@@ -202,17 +202,23 @@ async def test_export_and_import_carry_a_channel_between_data_directories_and_re
         return capsys.readouterr().out
 
     exported = run("sender", "export", "--channel", "wood by wright", str(isolated_home / "wright"))
-    imported = run("friend", "import", str(bundle))
+    imported = run("friend", "import", "--name", "Paul Wright", str(bundle))
+    # The name is for a Channel import creates; this one is in the Library by now.
+    again = run("friend", "import", str(bundle), "--name", "Wright")
     with pytest.raises(SystemExit) as unknown:
         run("sender", "export", "--channel", "Paul Sellers", str(isolated_home / "sellers"))
-    with pytest.raises(SystemExit) as again:
-        run("friend", "import", str(bundle))
+    with pytest.raises(SystemExit) as missing:
+        run("friend", "import", str(isolated_home / "nowhere.seek"))
 
     assert exported.splitlines()[0].startswith(f"Exported Wood By Wright to {bundle}: 1 Videos, 1 Segments, ")
-    assert imported.splitlines()[0] == "Imported Wood By Wright: 1 Videos added, searchable now."
+    assert imported.splitlines()[0] == "Imported Paul Wright: 1 Videos added, 0 already indexed, 0 left out."
+    assert again.splitlines()[:2] == [
+        "Imported Paul Wright: 0 Videos added, 1 already indexed, 0 left out.",
+        "It was already in the Library, and keeps its name and settings.",
+    ]
     # A string as the exit code: printed to stderr, and the process exits 1.
     assert unknown.value.code == "seek: No Channel named 'Paul Sellers'; give a Channel's name or its YouTube channel id"
-    assert str(again.value.code).startswith("seek: This knowledge base already has the Channel 'Wood By Wright'")
+    assert missing.value.code == f"seek: {isolated_home / 'nowhere.seek'} is not a Seek Bundle"
     assert sorted(file.name for file in isolated_home.iterdir() if file.is_file()) == ["wright.seek"]
 
 

@@ -158,7 +158,7 @@ class ExclusionRules:
     filters: ChannelFilters
 
 
-def _exclusion(
+def exclusion(
     rules: ExclusionRules, duration_seconds: int | None, published_on: date | None, included: bool
 ) -> str | None:
     """The reason a Video is excluded by the rules that need only its own metadata; unknown values pass.
@@ -418,7 +418,7 @@ def record_playlist_discovery(
                 (entry.video_id,),
             ).fetchone()
             if row is not None:
-                _set_exclusion(conn, row, _exclusion(rules, row["duration_seconds"], None, included=True))
+                _set_exclusion(conn, row, exclusion(rules, row["duration_seconds"], None, included=True))
             else:
                 creator = ChannelInfo(entry.channel_id, entry.channel_name, avatars.get(entry.channel_id))
                 row = conn.execute(
@@ -433,7 +433,7 @@ def record_playlist_discovery(
                         entry.video_id,
                         entry.title,
                         entry.duration_seconds,
-                        _exclusion(rules, entry.duration_seconds, None, included=True),
+                        exclusion(rules, entry.duration_seconds, None, included=True),
                         discovered_at,
                     ),
                 ).fetchone()
@@ -494,7 +494,7 @@ def apply_keep_rule(conn: sqlite3.Connection, video_ids: Collection[int], min_du
         if row["in_library"]:
             rules = ExclusionRules(min_duration_seconds, channels.read_filters(row))
             published_on = date.fromisoformat(row["published_on"]) if row["published_on"] else None
-            _set_exclusion(conn, row, _exclusion(rules, row["duration_seconds"], published_on, included=False))
+            _set_exclusion(conn, row, exclusion(rules, row["duration_seconds"], published_on, included=False))
     conn.execute(
         "DELETE FROM videos WHERE id IN (SELECT value FROM json_each(?))",
         (json.dumps([row["id"] for row in unkept]),),
@@ -562,7 +562,7 @@ def _apply_exclusions(
     reasons: dict[int, str | None] = {}
     for row in rows:
         published_on = date.fromisoformat(row["published_on"]) if row["published_on"] else None
-        reason = _exclusion(rules, row["duration_seconds"], published_on, bool(row["included"]))
+        reason = exclusion(rules, row["duration_seconds"], published_on, bool(row["included"]))
         if (
             reason is None
             and not row["included"]
@@ -635,7 +635,7 @@ def _exclusion_by_details(
 ) -> str | None:
     """The reason the Video's full metadata excludes it, if it does."""
     included = conn.execute("SELECT 1 FROM playlist_videos WHERE video_id = ? LIMIT 1", (video_id,)).fetchone()
-    return _exclusion(rules, details.duration_seconds, details.published_on, included is not None)
+    return exclusion(rules, details.duration_seconds, details.published_on, included is not None)
 
 
 def _record_details(conn: sqlite3.Connection, video_id: int, details: VideoDetails, rules: ExclusionRules) -> bool:

@@ -172,9 +172,9 @@ def export(channel: str, file: Path) -> None:
         sys.exit(f"seek: {e}")
 
 
-def import_(file: Path) -> None:
+def import_(file: Path, name: str | None) -> None:
     try:
-        print(format_import(import_bundle(_config(), file)))
+        print(format_import(import_bundle(_config(), file, name)))
     except (SyncCommandError, Conflict) as e:
         sys.exit(f"seek: {e}")
 
@@ -290,9 +290,14 @@ def main() -> None:
     )
     export_parser.add_argument("file", metavar="FILE", type=Path, help="where to write it; .seek is added if missing")
     import_parser = commands.add_parser(
-        "import", help="add a Bundle's Channel to the Library, searchable at once with nothing fetched or embedded"
+        "import",
+        help="add a Bundle's Channel to the Library, or its Videos to the Channel already there; searchable at once "
+        "with nothing fetched or embedded",
     )
     import_parser.add_argument("file", metavar="FILE", type=Path, help="the .seek file to import")
+    import_parser.add_argument(
+        "--name", metavar="NAME", help="the name to add the Channel under; one already in the Library keeps its own"
+    )
     commands.add_parser("status", help="the server, models, chat engines, and running and queued Syncs")
     commands.add_parser("list", help="Channels, with Video counts and when each last synced, then Groups and Playlists")
     commands.add_parser("doctor", help="one pasteable block for support, with every secret redacted")
@@ -312,7 +317,7 @@ def main() -> None:
     elif args.command == "export":
         export(args.channel, args.file)
     elif args.command == "import":
-        import_(args.file)
+        import_(args.file, args.name)
     elif args.command == "status":
         show_status()
     elif args.command == "list":

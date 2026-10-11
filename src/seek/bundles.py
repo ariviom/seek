@@ -14,21 +14,25 @@ import sqlite3
 import struct
 import tempfile
 import unicodedata
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import cast
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from seek import channels, db
-from seek.channels import ChannelFilters
+from seek.channels import Channel, ChannelFilters
 from seek.channels_api import FiltersBody
 from seek.config import Config
+from seek.fields import Name
 from seek.ports import Chapter, ChannelInfo, Cue
 from seek.segmentation import SegmentCue
 from seek.sync_command import SyncCommandError, find_channel
+from seek.videos import ExclusionRules, exclusion
 
 # The ASCII bytes of "SEEK", kept in the SQLite header: how import tells a Bundle from any other SQLite file.
 APPLICATION_ID = 0x5345454B
@@ -114,6 +118,8 @@ _AS_STORED = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 _CHAPTERS = TypeAdapter(list[Chapter], config=_AS_STORED)
 _TRANSCRIPT_CUES = TypeAdapter(list[Cue], config=_AS_STORED)
 _SEGMENT_CUES = TypeAdapter(list[SegmentCue], config=_AS_STORED)
+# The name `--name` gives, held to what the web API takes for one.
+_NAME: TypeAdapter[str] = TypeAdapter(Name)
 
 
 @dataclass(frozen=True)
@@ -130,10 +136,19 @@ class ExportReport:
 
 @dataclass(frozen=True)
 class ImportReport:
+    """What an import did. Every Video in the Bundle is counted once, in `added`, `already_indexed`, or `left_out`."""
+
     channel_name: str
     youtube_channel_id: str
+    # The filters that arrived with the Channel. None when it was in the Library already, where it keeps its own
+    # along with its name and settings.
+    filters: ChannelFilters | None
     # Videos that became searchable from the Bundle.
     added: int
+    # Videos that were done here already, left as they were.
+    already_indexed: int
+    # Videos the Bundle did not fill in, counted by the reason.
+    left_out: dict[str, int]
 
 
 def _seek_version() -> str:
@@ -324,15 +339,25 @@ def _export_video(
     return len(segments)
 
 
-def import_bundle(config: Config, path: Path) -> ImportReport:
-    """Adds the Bundle's Channel to the Library, Active and checked daily, with its Videos searchable at once:
-    nothing is fetched from YouTube and nothing embedded. Creates the knowledge base if there is none yet.
+def import_bundle(config: Config, path: Path, name: str | None = None) -> ImportReport:
+    """Merges the Bundle's Channel into the Library, its Videos searchable at once: nothing is fetched from YouTube
+    and nothing embedded. Creates the knowledge base if there is none yet.
+
+    A Channel not in the Library is added to it, Active and checked daily, under `name` or else the Bundle's, with
+    the Bundle's avatar and filters; one known only for crediting a Playlist's Videos keeps those Videos. A Channel
+    already in the Library keeps its name and every setting. Then each Video: one that is done here is left exactly
+    as it is, one this Seek's own rules exclude or credits to another Channel is left out, and any other is filled
+    in from the Bundle. Running the import again repeats the merge, which is how an interrupted one resumes.
 
     A Bundle is untrusted input. It is refused whole, before anything is written, when this build can't read it,
-    when it was embedded with another model, when anything in it is not what a Sync would have stored, or when the
-    knowledge base already has its Channel or any of its Videos. Each Video is then committed on its own, so a
-    running server's writes wait for one Video at most.
+    when it was embedded with another model, or when anything in it is not what a Sync would have stored. Each
+    Video is then committed on its own, so a running server's writes wait for one Video at most.
     """
+    if name is not None:
+        try:
+            name = _NAME.validate_python(name)
+        except ValidationError as e:
+            raise SyncCommandError("A name is 1 to 200 characters") from e
     with _open_bundle(path) as bundle:
         meta = _meta(bundle)
         model, dimension = config.embedding_model, config.embedding_dimension
@@ -350,29 +375,64 @@ def import_bundle(config: Config, path: Path) -> ImportReport:
             _contents(bundle, youtube_video_id, dimension)
         _open_knowledge_base(config)
         with closing(db.connect(config.database_path)) as conn:
-            if _known(conn, info.channel_id, list(videos)):
-                raise SyncCommandError(
-                    f"This knowledge base already has the Channel {info.name!r} ({info.channel_id}) "
-                    "or some of its Videos, in the Library or through a Playlist; importing into what it already "
-                    "has is not supported yet"
-                )
-            channel = channels.create_channel(conn, info, filters=filters)
+            # A Channel already in the Library is the user's own: nothing of the Bundle's entry replaces it.
+            existing = [c for c in channels.list_channels(conn) if c.youtube_channel_id == info.channel_id]
+            channel = existing[0] if existing else channels.create_channel(conn, info, name, filters)
+            # The rules are this Seek's own: its minimum length, and the filters now in force on the Channel.
+            rules = ExclusionRules(config.min_duration_seconds, channel.filters)
+            added = already_indexed = 0
+            left_out: Counter[str] = Counter()
             for youtube_video_id, video in videos.items():
                 # Read again rather than kept since the check: a Channel's vectors run to a hundred megabytes.
                 transcript, segments = _contents(bundle, youtube_video_id, dimension)
                 with db.transaction(conn):
-                    _import_video(conn, channel.id, video, transcript, segments)
-    return ImportReport(channel.name, channel.youtube_channel_id, len(videos))
+                    known = conn.execute(
+                        "SELECT channel_id, pipeline_stage, excluded_reason FROM videos WHERE youtube_video_id = ?",
+                        (youtube_video_id,),
+                    ).fetchone()
+                    if (reason := _left_out(channel, rules, video, known)) is not None:
+                        left_out[reason] += 1
+                    elif known is not None and known["pipeline_stage"] == "done":
+                        already_indexed += 1
+                    else:
+                        _import_video(conn, channel.id, video, transcript, segments)
+                        added += 1
+    return ImportReport(
+        channel.name,
+        channel.youtube_channel_id,
+        None if existing else filters,
+        added,
+        already_indexed,
+        dict(left_out),
+    )
 
 
 def format_import(report: ImportReport) -> str:
-    return "\n".join(
-        [
-            f"Imported {report.channel_name}: {report.added} Videos added, searchable now.",
-            "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
-            "Next, start a Sync to pick up the Videos published since: "
-            f"seek sync --channel {report.youtube_channel_id}",
-        ]
+    left_out = sum(report.left_out.values())
+    counts = f"{report.added} Videos added, {report.already_indexed} already indexed, {left_out} left out"
+    lines = [f"Imported {report.channel_name}: {counts}."]
+    lines += [f"  {reason}: {count}" for reason, count in report.left_out.items()]
+    if report.filters is None:
+        lines.append("It was already in the Library, and keeps its name and settings.")
+    elif arrived := _described(report.filters):
+        lines.append(f"It arrived with its filters: {arrived}.")
+    lines += [
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
+        f"Next, start a Sync to pick up the Videos published since: seek sync --channel {report.youtube_channel_id}",
+    ]
+    return "\n".join(lines)
+
+
+def _described(filters: ChannelFilters) -> str:
+    """The date range and most-recent count in the web UI's words; empty when neither is set."""
+    return ", ".join(
+        part
+        for part in (
+            filters.published_after and f"published from {filters.published_after.isoformat()}",
+            filters.published_before and f"published until {filters.published_before.isoformat()}",
+            filters.most_recent and f"the {filters.most_recent} most recent",
+        )
+        if part
     )
 
 
@@ -648,16 +708,25 @@ def _contents(
     return {**dict(found), "cues": _as_stored(lines)}, segments
 
 
-def _known(conn: sqlite3.Connection, youtube_channel_id: str, youtube_video_ids: list[str]) -> bool:
-    """Whether the knowledge base has the Channel, in the Library or outside it, or any of the Videos, whichever
-    Channel they are credited to here."""
-    if youtube_channel_id in channels.youtube_channel_ids(conn):
-        return True
-    found = conn.execute(
-        "SELECT 1 FROM videos WHERE youtube_video_id IN (SELECT value FROM json_each(?)) LIMIT 1",
-        (json.dumps(youtube_video_ids),),
-    )
-    return found.fetchone() is not None
+def _left_out(
+    channel: Channel, rules: ExclusionRules, video: dict[str, object], known: sqlite3.Row | None
+) -> str | None:
+    """Why the Bundle's Video is not to be filled in, if it is not: `known` is its row here, when it has one.
+
+    A Video not yet known is judged by the rules that need only its own metadata: the minimum length and the
+    Channel's date range. One they exclude is not added, and the next Sync discovers it as usual. The Channel's
+    Playlist filter and most-recent count need a listing, so that Sync applies them.
+
+    A Video already known is not judged again. One that is excluded stays so: this Seek's own Sync judged it with
+    every filter. One a Playlist here includes was never excluded by the Channel's filters, so inclusion still wins.
+    """
+    if known is None:
+        length, published_on = cast(int, video["duration_seconds"]), _iso_date(video["published_on"])
+        return exclusion(rules, length, published_on, included=False)
+    if known["channel_id"] != channel.id:
+        # A Video keeps the Channel it is credited to, and its Transcript there is another creator's to index.
+        return "Credited here to another Channel"
+    return cast(str | None, known["excluded_reason"])
 
 
 def _import_video(
@@ -667,29 +736,45 @@ def _import_video(
     transcript: dict[str, object],
     segments: list[dict[str, object]],
 ) -> None:
-    """Within a transaction: the Video arrives done, with the Bundle's Transcript and its Segments as they were cut.
+    """Within a transaction: the Video becomes done, with the Bundle's Transcript and its Segments as they were cut.
 
-    The Transcript is never cut again: this Seek's segmenter could give a different number of Segments than the
-    vectors were made for. Each vector is filed under the id its Segment is given here, and the triggers keep the
-    lexical index in step.
+    A Video the knowledge base has, at whatever stage its own Syncs left it, keeps its Channel and takes
+    everything else from the Bundle in place of what it had, any failure included. The Transcript is never cut
+    again: this Seek's segmenter could give a different number of Segments than the vectors were made for. Each
+    vector is filed under the id its Segment is given here, and the triggers keep the lexical index in step.
+
+    The write holds the rule itself, whatever its caller decided: a Video that is done, excluded, or credited to
+    another Channel is never written over, and raises instead.
     """
-    (video_id,) = conn.execute(
+    written = conn.execute(
         """
         INSERT INTO videos (channel_id, youtube_video_id, title, duration_seconds, published_on, description,
                             chapters, language, pipeline_stage, discovered_at)
         VALUES (:channel_id, :youtube_video_id, :title, :duration_seconds, :published_on, :description,
                 :chapters, :language, 'done', :discovered_at)
+        ON CONFLICT (youtube_video_id) DO UPDATE SET
+            title = excluded.title, duration_seconds = excluded.duration_seconds,
+            published_on = excluded.published_on, description = excluded.description, chapters = excluded.chapters,
+            language = excluded.language, pipeline_stage = 'done', failure_stage = NULL, failure_reason = NULL,
+            failure_permanent = NULL
+        WHERE videos.channel_id = excluded.channel_id AND videos.pipeline_stage != 'done'
+          AND videos.excluded_reason IS NULL
         RETURNING id
         """,
         {**video, "channel_id": channel_id, "discovered_at": db.now_iso()},
     ).fetchone()
+    if written is None:
+        raise RuntimeError(f"The Video {video['youtube_video_id']} is not one an import may fill in")
+    (video_id,) = written
     conn.execute(
         """
-        INSERT INTO transcripts (video_id, source, language, cues, fetched_at)
+        INSERT OR REPLACE INTO transcripts (video_id, source, language, cues, fetched_at)
         VALUES (:video_id, :source, :language, :cues, :fetched_at)
         """,
         {**transcript, "video_id": video_id},
     )
+    # Whatever Segments a Sync of this Seek's own had cut go, and their vectors with them.
+    conn.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
     for segment in segments:
         (segment_id,) = conn.execute(
             """

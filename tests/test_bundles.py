@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 import sqlite3
+from collections.abc import Sequence
 from contextlib import closing
 from dataclasses import replace
 from datetime import date
@@ -20,6 +21,7 @@ from harness import (
     free_port,
     list_playlist_videos,
     list_videos,
+    query,
     running,
     said,
     search,
@@ -34,7 +36,7 @@ from seek.app import create_app
 from seek.bundles import export_channel, format_export, format_import, import_bundle
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
-from seek.ports import Chapter, Cue, VideoUnavailable
+from seek.ports import Chapter, Cue, GpuOutOfMemory, VideoUnavailable
 from seek.status_command import format_list, list_all
 from seek.sync_command import SyncCommandError
 
@@ -375,7 +377,14 @@ async def test_import_refuses_a_file_it_cannot_read_as_a_bundle_and_writes_nothi
         assert await search(client, "chisels") == []
 
 
-async def test_import_says_what_it_added_and_what_to_do_next_and_refuses_a_channel_already_known(
+def stored(config: Config) -> dict[str, list[tuple[object, ...]]]:
+    """Every row the knowledge base keeps of its Channels and Videos, vectors included, for a test of what an
+    import must not write."""
+    tables = ("channels", "videos", "transcripts", "segments", "segment_vectors", "playlist_videos")
+    return {table: [tuple(row) for row in query(config, f"SELECT * FROM {table} ORDER BY 1")] for table in tables}
+
+
+async def test_import_says_what_it_added_and_what_to_do_next_and_importing_the_bundle_again_changes_nothing(
     sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos += [fake_video("v-chisels", "Chisels"), fake_video("v-saws", "Saws")]
@@ -384,17 +393,26 @@ async def test_import_says_what_it_added_and_what_to_do_next_and_refuses_a_chann
     bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
 
     imported = import_bundle(friend, bundle)
-    with pytest.raises(SyncCommandError, match="already has the Channel 'Paul Wright'"):
-        import_bundle(friend, bundle)
+    kept = stored(friend)
+    again = import_bundle(friend, bundle)
 
     assert format_import(imported).splitlines() == [
-        "Imported Paul Wright: 2 Videos added, searchable now.",
+        "Imported Paul Wright: 2 Videos added, 0 already indexed, 0 left out.",
         "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
         "Next, start a Sync to pick up the Videos published since: seek sync --channel UC-wright",
     ]
+    assert format_import(again).splitlines() == [
+        "Imported Paul Wright: 0 Videos added, 2 already indexed, 0 left out.",
+        "It was already in the Library, and keeps its name and settings.",
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
+        "Next, start a Sync to pick up the Videos published since: seek sync --channel UC-wright",
+    ]
+    # Not a row of the knowledge base was written the second time.
+    assert stored(friend) == kept
     async with running(app_on(friend, FakeTranscriptSource())) as client:
         [channel] = (await client.get("/api/channels")).json()
         assert sorted(await list_videos(client, channel["id"])) == ["Chisels", "Saws"]
+        assert sorted(result["video_title"] for result in await search(client, "welcome")) == ["Chisels", "Saws"]
 
 
 async def test_an_imported_segment_is_found_by_its_words_beyond_the_nearest_vectors(
@@ -416,28 +434,445 @@ async def test_an_imported_segment_is_found_by_its_words_beyond_the_nearest_vect
     assert results[0]["youtube_video_id"] == "v-domino"
 
 
-async def test_import_refuses_a_bundle_whose_videos_the_library_credits_to_another_channel_and_writes_nothing(
+async def test_a_video_the_library_credits_to_another_channel_keeps_its_credit_and_is_reported_as_left_out(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+    # The friend's Playlist already includes one of those Videos, which their YouTube listing credits to Rex Krueger
+    # and where something else is said.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-rex").videos.append(
+        fake_video("v-chisels", "Rex on chisels", cues=said("Grind the chisel on a coarse wheel"))
+    )
+    youtube.playlists["PL-picks"] = FakePlaylist("Sharpening picks", [("UC-rex", "v-chisels")])
+    async with running(app_on(friend, youtube)) as client:
+        playlist = await add_playlist(client, "PL-picks")
+        await sync_playlist(client, playlist)
+
+    imported = import_bundle(friend, bundle)
+
+    async with running(app_on(friend, youtube)) as client:
+        [wright] = (await client.get("/api/channels")).json()
+        [video] = await list_playlist_videos(client, playlist["id"])
+        credited = sorted(await list_videos(client, wright["id"]))
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "chisel")}
+    assert (video["title"], video["channel_name"], video["stage"]) == ("Rex on chisels", "Rex Krueger", "done")
+    assert credited == ["Saws"]
+    assert found["v-chisels"] == "Grind the chisel on a coarse wheel"
+    assert format_import(imported).splitlines()[:2] == [
+        "Imported Wood By Wright: 1 Videos added, 0 already indexed, 1 left out.",
+        "  Credited here to another Channel: 1",
+    ]
+
+
+async def test_a_channel_already_in_the_library_keeps_its_name_and_settings_and_the_videos_it_has_indexed(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright", "Paul Wright"))
+    # A Bundle whose Channel has an avatar and filters of its own.
+    bundle = altered(
+        export_channel(sender, "UC-wright", tmp_path / "wright.seek").path,
+        "settings.seek",
+        "UPDATE channel SET avatar_url = 'https://yt3.ggpht.com/another', published_after = '2021-01-01', most_recent = 5",
+    )
+    # The friend indexed the first of those Videos themselves, from captions that say something else.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright").videos.append(
+        fake_video("v-chisels", "My chisels", cues=said("Grind the chisel on a coarse wheel"))
+    )
+    settings = {
+        "name": "Wright",
+        "indexed": False,
+        "check_every_hours": 168,
+        "filters": {"published_after": None, "published_before": "2030-01-01", "playlist_id": None, "most_recent": 50},
+    }
+    async with running(app_on(friend, youtube)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        assert (await client.patch(f"/api/channels/{wright['id']}", json=settings)).status_code == 200
+        [before] = (await client.get("/api/channels")).json()
+    kept = stored(friend)
+
+    imported = import_bundle(friend, bundle, name="Paul")
+    now = stored(friend)
+
+    async with running(app_on(friend, youtube)) as client:
+        [after] = (await client.get("/api/channels")).json()
+        titles = sorted(await list_videos(client, wright["id"]))
+        # A Paused Channel is not searched.
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"indexed": True})).status_code == 200
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "chisel saw")}
+    assert before | settings == before
+    assert after == before | {"indexed_videos": 2}
+    # Nothing of the Bundle's reached the Channel's own row, or any row of the Video it had indexed.
+    assert now["channels"] == kept["channels"]
+    assert all(set(kept[table]) <= set(now[table]) for table in kept)
+    assert titles == ["My chisels", "Saws"]
+    assert found == {"v-chisels": "Grind the chisel on a coarse wheel", "v-saws": "Sharpen the saw with a fine file"}
+    assert format_import(imported).splitlines()[:2] == [
+        "Imported Wright: 1 Videos added, 1 already indexed, 0 left out.",
+        "It was already in the Library, and keeps its name and settings.",
+    ]
+
+
+class Crowded(FakeEmbedder):
+    """An embedder whose GPU has no room for a passage about planes."""
+
+    def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        if any("plane" in text for text in texts):
+            raise GpuOutOfMemory("The GPU ran out of memory running the embedding model")
+        return super().embed_passages(texts)
+
+
+async def test_a_video_the_library_has_but_never_finished_is_completed_from_the_bundle_and_its_failure_cleared(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-members", "Members stream", cues=said("Thank you for joining the channel")),
+        fake_video("v-premiere", "Premiere", cues=said("Tonight we build a workbench")),
+        fake_video("v-planes", "Planes", cues=said("Set the cap iron close to the edge")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+    # The friend's own Sync got nowhere with any of them: one is members-only, one had not premiered, one was
+    # cut into Segments that would not fit on the GPU, and the network went before the last was fetched.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+
+    def lose_network() -> None:
+        youtube.unavailable = "Network unreachable"
+
+    fake_channel(youtube, "UC-wright").videos += [
+        fake_video("v-members", "Members stream", failure=VideoUnavailable("Members-only video", permanent=True)),
+        fake_video("v-premiere", "Premiere", failure=VideoUnavailable("Premieres in 3 days", permanent=False)),
+        fake_video("v-planes", "Planes, uncut", cues=said("Flatten the sole of the plane")),
+        fake_video("v-saws", "Saws", before_fetch=lose_network),
+    ]
+    async with running(app_on(friend, youtube, Crowded())) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await start_sync(client, wright["id"])
+        await wait_for_syncs(client)
+        unfinished = await list_videos(client, wright["id"])
+
+    imported = import_bundle(friend, bundle)
+
+    youtube.unavailable = None
+    youtube.calls.clear()
+    embedder = FakeEmbedder()
+    async with running(app_on(friend, youtube, embedder)) as client:
+        [channel] = (await client.get("/api/channels")).json()
+        completed = await list_videos(client, wright["id"])
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "the plane iron")}
+        await start_sync(client, wright["id"])
+        next_sync, _ = await wait_for_syncs(client)
+        synced = await list_videos(client, wright["id"])
+    assert {title: (video["stage"], video["failure_stage"]) for title, video in unfinished.items()} == {
+        "Members stream": ("failed", "transcript_fetched"),
+        "Premiere": ("failed", "transcript_fetched"),
+        "Planes, uncut": ("failed", "embedded"),
+        "Saws": ("discovered", None),
+    }
+    assert {title: (video["stage"], video["reason"], video["failure_stage"]) for title, video in completed.items()} == (
+        dict.fromkeys(["Members stream", "Premiere", "Planes", "Saws"], ("done", None, None))
+    )
+    assert (channel["indexed_videos"], channel["failed_videos"]) == (4, 0)
+    # What the Bundle says of planes, in place of the Segments the friend's own Sync had cut.
+    assert found["v-planes"] == "Set the cap iron close to the edge"
+    assert (imported.added, imported.already_indexed, imported.left_out) == (4, 0, {})
+    # The friend's next Sync finds them done, and neither fetches nor embeds anything.
+    assert (next_sync["status"], fetched(youtube), embedder.passages) == ("done", [], [])
+    assert [video["stage"] for video in synced.values()] == ["done"] * 4
+
+
+async def test_a_new_video_under_the_friends_minimum_length_or_outside_their_channels_date_range_is_not_added(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    carried = [
+        fake_video("v-tip", "Quick tip", listed_duration=600, duration=600),
+        fake_video("v-old", "Old build", listed_duration=1200, duration=1200, published_on=date(2020, 1, 1)),
+        fake_video("v-new", "New build", listed_duration=1200, duration=1200),
+    ]
+    fake_channel(transcripts, "UC-wright").videos += carried
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+    # The friend ingests nothing under a quarter of an hour, and of this Channel nothing from before 2024.
+    friend = replace(friend, min_duration_seconds=900)
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    filters = {"published_after": "2024-01-01", "published_before": None, "playlist_id": None, "most_recent": None}
+    async with running(app_on(friend, youtube)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+
+    imported = import_bundle(friend, bundle)
+
+    fake_channel(youtube, "UC-wright").videos += carried
+    async with running(app_on(friend, youtube)) as client:
+        arrived = sorted(await list_videos(client, wright["id"]))
+        # The next Sync discovers the two left out as it would have without the Bundle.
+        await sync(client, wright)
+        reasons = {title: video["reason"] for title, video in (await list_videos(client, wright["id"])).items()}
+    assert arrived == ["New build"]
+    assert format_import(imported).splitlines()[:3] == [
+        "Imported Wood By Wright: 1 Videos added, 0 already indexed, 2 left out.",
+        "  Shorter than the 900 second minimum: 1",
+        "  Published before 2024-01-01, outside the Channel's filters: 1",
+    ]
+    assert reasons == {
+        "Quick tip": "Shorter than the 900 second minimum",
+        "Old build": "Published before 2024-01-01, outside the Channel's filters",
+        "New build": None,
+    }
+    assert fetched(youtube) == []
+
+
+async def test_a_new_channels_date_range_arrives_first_and_leaves_out_the_videos_only_the_senders_playlist_included(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-new", "New build", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-old", "Old build", published_on=date(2020, 1, 1), cues=said("Sharpen the saw on a fine stone")),
+    ]
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-wright", "v-old")])
+    filters = {"published_after": "2024-01-01", "published_before": None, "playlist_id": None, "most_recent": None}
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+        await sync(client, wright)
+        # Searchable on the sender's machine though the Channel's filters exclude it, so it is in the Bundle.
+        await sync_playlist(client, await add_playlist(client, "PL-picks"))
+    exported = export_channel(sender, "UC-wright", tmp_path / "wright.seek")
+
+    imported = import_bundle(friend, exported.path)
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [channel] = (await client.get("/api/channels")).json()
+        titles = sorted(await list_videos(client, channel["id"]))
+    assert exported.videos == 2
+    assert (channel["filters"], titles) == (filters, ["New build"])
+    assert format_import(imported).splitlines()[:3] == [
+        "Imported Wood By Wright: 1 Videos added, 0 already indexed, 1 left out.",
+        "  Published before 2024-01-01, outside the Channel's filters: 1",
+        "It arrived with its filters: published from 2024-01-01.",
+    ]
+
+
+async def test_a_video_the_friends_own_sync_excluded_stays_excluded_whichever_filter_excluded_it(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    # Newest first, as a listing is.
+    carried = [
+        fake_video("v-new", "New build", published_on=date(2025, 3, 1), cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-vlog", "Shop vlog", published_on=date(2025, 2, 1), cues=said("Sharpen the pencil on a fine stone")),
+        fake_video("v-tip", "Quick tip", listed_duration=60, duration=60, published_on=date(2025, 1, 1)),
+        fake_video("v-old", "Old build", published_on=date(2024, 1, 1), cues=said("Sharpen the saw on a fine stone")),
+        fake_video("v-first", "First build", published_on=date(2020, 1, 1), cues=said("Sharpen the axe on a fine stone")),
+    ]
+    fake_channel(transcripts, "UC-wright").videos += carried
+    # The sender ingests Videos of any length, and all of this Channel's.
+    sender = replace(sender, min_duration_seconds=30)
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+    # The friend keeps only the newest of the Channel's builds since 2023, and nothing under two minutes.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright").videos += carried
+    youtube.playlists["PL-builds"] = FakePlaylist(
+        "Builds", [("UC-wright", video) for video in ("v-new", "v-tip", "v-old", "v-first")]
+    )
+    filters = {"published_after": "2023-01-01", "published_before": None, "playlist_id": "PL-builds", "most_recent": 1}
+    async with running(app_on(friend, youtube)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+        await sync(client, wright)
+        before = await list_videos(client, wright["id"])
+    kept = stored(friend)
+
+    imported = import_bundle(friend, bundle)
+
+    async with running(app_on(friend, youtube)) as client:
+        after = await list_videos(client, wright["id"])
+        found = {result["youtube_video_id"] for result in await search(client, "sharpen on a fine stone")}
+    assert {title: video["stage"] for title, video in before.items()} == {
+        "New build": "done",
+        "Shop vlog": "excluded",
+        "Quick tip": "excluded",
+        "Old build": "excluded",
+        "First build": "excluded",
+    }
+    assert after == before
+    assert found == {"v-new"}
+    # Not a row of the knowledge base was written.
+    assert stored(friend) == kept
+    assert format_import(imported).splitlines()[:5] == [
+        "Imported Wood By Wright: 0 Videos added, 1 already indexed, 4 left out.",
+        "  Not in playlist PL-builds, outside the Channel's filters: 1",
+        "  Shorter than the 120 second minimum: 1",
+        "  Not among the 1 most recent Videos, outside the Channel's filters: 1",
+        "  Published before 2023-01-01, outside the Channel's filters: 1",
+    ]
+
+
+async def test_an_unfinished_video_a_playlist_of_the_friends_includes_is_completed_whatever_its_channels_filters(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-old", "Saws", published_on=date(2020, 1, 1), cues=said("Sharpen the saw on a fine stone"))
+    )
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+    # The friend's Channel takes nothing from before 2024, but their Playlist includes this Video, and its Sync
+    # could not fetch it.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright").videos.append(
+        fake_video("v-old", "Saws", date_listed=False, failure=VideoUnavailable("Premieres in 3 days", permanent=False))
+    )
+    youtube.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-wright", "v-old")])
+    filters = {"published_after": "2024-01-01", "published_before": None, "playlist_id": None, "most_recent": None}
+    async with running(app_on(friend, youtube)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+        picks = await add_playlist(client, "PL-picks")
+        await sync_playlist(client, picks)
+        [failed] = (await list_videos(client, wright["id"])).values()
+
+    imported = import_bundle(friend, bundle)
+
+    async with running(app_on(friend, youtube)) as client:
+        [saws] = (await list_videos(client, wright["id"])).values()
+        found = await search(client, "sharpen the saw", playlist=picks["id"])
+    assert failed["stage"] == "failed"
+    assert (saws["stage"], saws["reason"], saws["published_on"]) == ("done", None, "2020-01-01")
+    assert [result["youtube_video_id"] for result in found] == ["v-old"]
+    assert (imported.added, imported.left_out) == (1, {})
+
+
+async def test_a_creator_known_only_through_a_playlist_comes_into_the_library_with_their_videos_and_the_bundles_filters(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    filters = {"published_after": "2023-01-01", "published_before": None, "playlist_id": None, "most_recent": 25}
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright", "Paul Wright")
+        assert (await client.patch(f"/api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+        await sync(client, wright)
+    bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
+    # The friend has one of those Videos through a Playlist, indexed from captions that say something else.
+    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
+    fake_channel(youtube, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", cues=said("Grind the chisel on a coarse wheel"))
+    )
+    youtube.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-wright", "v-chisels")])
+    async with running(app_on(friend, youtube)) as client:
+        picks = await add_playlist(client, "PL-picks")
+        await sync_playlist(client, picks)
+        outside = (await client.get("/api/channels")).json()
+
+    imported = import_bundle(friend, bundle)
+
+    async with running(app_on(friend, youtube)) as client:
+        [channel] = (await client.get("/api/channels")).json()
+        titles = sorted(await list_videos(client, channel["id"]))
+        [included] = await list_playlist_videos(client, picks["id"])
+        found = {result["youtube_video_id"]: result["text"] for result in await search(client, "chisel saw")}
+    assert outside == []
+    assert channel == {
+        "id": channel["id"],
+        "youtube_channel_id": "UC-wright",
+        "name": "Paul Wright",
+        "indexed": True,
+        "filters": filters,
+        "check_every_hours": 24,
+        "indexed_videos": 2,
+        "failed_videos": 0,
+        "excluded_videos": 0,
+        "last_synced_at": None,
+        "avatar_url": WRIGHT_AVATAR,
+    }
+    assert titles == ["Chisels", "Saws"]
+    assert (included["youtube_video_id"], included["channel_name"], included["stage"]) == ("v-chisels", "Paul Wright", "done")
+    assert found == {"v-chisels": "Grind the chisel on a coarse wheel", "v-saws": "Sharpen the saw with a fine file"}
+    assert format_import(imported).splitlines()[:2] == [
+        "Imported Paul Wright: 1 Videos added, 1 already indexed, 0 left out.",
+        "It arrived with its filters: published from 2023-01-01, the 25 most recent.",
+    ]
+
+
+async def test_a_channel_import_creates_takes_the_name_it_is_given_even_one_another_channel_has(
     sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
     fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
     async with running(app_on(sender, transcripts)) as client:
         await sync(client, await add_channel(client, "@woodbywright"))
     bundle = export_channel(sender, "UC-wright", tmp_path / "wright.seek").path
-    # The friend's Playlist already includes that Video, which their YouTube listing credits to Rex Krueger.
-    youtube = FakeTranscriptSource(channels=[replace(c, videos=[]) for c in transcripts.channels])
-    fake_channel(youtube, "UC-rex").videos.append(fake_video("v-chisels", "Chisels"))
-    youtube.playlists["PL-picks"] = FakePlaylist("Sharpening picks", [("UC-rex", "v-chisels")])
-    async with running(app_on(friend, youtube)) as client:
-        playlist = await add_playlist(client, "PL-picks")
-        await sync_playlist(client, playlist)
+    async with running(app_on(friend, transcripts)) as client:
+        await add_channel(client, "@wrightvlogs", "Wright")
 
-    with pytest.raises(SyncCommandError, match=r"already has the Channel 'Wood By Wright' \(UC-wright\) or some"):
-        import_bundle(friend, bundle)
+    # A name is held to what the web UI takes for one, before anything is written.
+    for unusable in ("  ", "x" * 201):
+        with pytest.raises(SyncCommandError, match="A name is 1 to 200 characters"):
+            import_bundle(friend, bundle, name=unusable)
+    imported = import_bundle(friend, bundle, name=" Wright ")
 
-    async with running(app_on(friend, youtube)) as client:
-        assert (await client.get("/api/channels")).json() == []
-        [video] = await list_playlist_videos(client, playlist["id"])
-    assert (video["title"], video["channel_name"], video["stage"]) == ("Chisels", "Rex Krueger", "done")
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        listed = [(c["name"], c["youtube_channel_id"], c["indexed_videos"]) for c in (await client.get("/api/channels")).json()]
+    assert listed == [("Wright", "UC-wright-vlog", 0), ("Wright", "UC-wright", 1)]
+    assert format_import(imported).splitlines()[0] == "Imported Wright: 1 Videos added, 0 already indexed, 0 left out."
+
+
+async def test_a_larger_bundle_of_a_channel_already_imported_adds_only_what_is_new_and_counts_every_video_once(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", listed_duration=1200, duration=1200, cues=said("Sharpen the chisel on a fine stone"))
+    )
+    friend = replace(friend, min_duration_seconds=900)
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright", "Paul Wright")
+        await sync(client, wright)
+        import_bundle(friend, export_channel(sender, "UC-wright", tmp_path / "first.seek").path)
+        # The Channel has published twice since, once under the friend's minimum length.
+        fake_channel(transcripts, "UC-wright").videos += [
+            fake_video("v-saws", "Saws", listed_duration=1200, duration=1200, cues=said("Sharpen the saw with a fine file")),
+            fake_video("v-tip", "Quick tip", cues=said("Sharpen the pencil with a fine knife")),
+        ]
+        await sync(client, wright)
+    kept = stored(friend)
+
+    imported = import_bundle(friend, export_channel(sender, "UC-wright", tmp_path / "second.seek").path, name="Paul")
+
+    now = stored(friend)
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [channel] = (await client.get("/api/channels")).json()
+        titles = sorted(await list_videos(client, channel["id"]))
+        found = sorted(result["youtube_video_id"] for result in await search(client, "sharpen with something fine"))
+    assert format_import(imported).splitlines() == [
+        "Imported Paul Wright: 1 Videos added, 1 already indexed, 1 left out.",
+        "  Shorter than the 900 second minimum: 1",
+        "It was already in the Library, and keeps its name and settings.",
+        "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
+        "Next, start a Sync to pick up the Videos published since: seek sync --channel UC-wright",
+    ]
+    assert titles == ["Chisels", "Saws"]
+    assert found == ["v-chisels", "v-saws"]
+    # What the first Bundle brought is as it was, row for row.
+    assert all(set(kept[table]) <= set(now[table]) for table in kept)
 
 
 async def sound_bundle(sender: Config, transcripts: FakeTranscriptSource, tmp_path: Path) -> Path:
@@ -801,7 +1236,7 @@ async def test_a_channel_whose_name_joins_an_emoji_imports_and_is_listed_under_t
     async with running(app_on(friend, FakeTranscriptSource())) as client:
         [channel] = (await client.get("/api/channels")).json()
     assert channel["name"] == name
-    assert format_import(imported).splitlines()[0] == f"Imported {name}: 1 Videos added, searchable now."
+    assert format_import(imported).splitlines()[0] == f"Imported {name}: 1 Videos added, 0 already indexed, 0 left out."
 
 
 async def test_an_avatar_that_youtube_does_not_serve_is_dropped_and_the_bundle_still_imports(
