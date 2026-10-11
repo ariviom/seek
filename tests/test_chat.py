@@ -27,7 +27,7 @@ from seek.app import create_app
 from seek.chat import citation_links
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
-from seek.mcp_server import GROUNDED_ADVISOR, RESOURCE_ADVISOR
+from seek.mcp_server import GROUNDED_ADVISOR, RESOURCE_ADVISOR, UNTRUSTED_CONTENT
 from seek.ports import ChatDone, ChatEvent, ChatFailed, ChatRequest, TextDelta, ToolCall, ToolResult
 
 
@@ -256,8 +256,8 @@ async def test_a_chat_with_a_playlist_sees_only_its_videos_whoever_made_them(
     ]
     [request] = engine.requests
     assert sorted(request.tool_names) == ["expand", "get_video", "list_channels", "search"]
-    assert GROUNDED_ADVISOR in request.system_prompt
-    assert "the Playlist 'Sharpening picks' (Channels: Rex Krueger, Wood By Wright)" in request.system_prompt
+    assert GROUNDED_ADVISOR in request.system_prompt and UNTRUSTED_CONTENT in request.system_prompt
+    assert "the Playlist 'Sharpening picks' (Channels: 'Rex Krueger', 'Wood By Wright')" in request.system_prompt
     assert "Group" not in request.system_prompt
 
 
@@ -280,11 +280,13 @@ async def test_a_playlist_chat_with_other_resources_is_still_told_it_consults_a_
     [instructions] = seen
     assert instructions is not None
     assert "the Videos in one Playlist the user trusts" in instructions and RESOURCE_ADVISOR in instructions
+    assert UNTRUSTED_CONTENT in instructions
     [request] = engine.requests
     assert (
-        "consulting the Playlist 'Sharpening picks' (Channels: Rex Krueger, Wood By Wright) and public web pages"
+        "consulting the Playlist 'Sharpening picks' (Channels: 'Rex Krueger', 'Wood By Wright') and public web pages"
         in request.system_prompt
     )
+    assert UNTRUSTED_CONTENT in request.system_prompt
 
 
 async def test_links_to_the_groups_videos_are_saved_as_citations_with_their_names(
