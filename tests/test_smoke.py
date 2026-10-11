@@ -722,7 +722,7 @@ async def test_a_playlists_sync_is_named_in_the_syncs_list_and_retried_from_its_
     app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle, secrets=FakeSecrets())
 
     async with serving(app) as base_url:
-        # Seeded through the API: the Library gets its Playlists in a later ticket.
+        # Seeded through the API; the Library's own Add playlist flow has its test below.
         async with httpx.AsyncClient(base_url=base_url) as seed:
             playlist = await add_playlist(seed, "PL-rex", "Sharpening")
             await start_playlist_sync(seed, playlist["id"])
@@ -747,3 +747,110 @@ async def test_a_playlists_sync_is_named_in_the_syncs_list_and_retried_from_its_
             assert video["stage"] == "done"
 
     assert errors == []
+
+
+async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos_with_their_creators(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+) -> None:
+    first = Gate(seconds=30)
+    live = fake_video("v-live", "Live Q&A", failure=VideoUnavailable("Premieres in 3 days", permanent=False))
+    fake_channel(transcripts, "UC-rex").videos += [
+        fake_video("v-hone", "Honing a chisel", before_fetch=first, cues=said("Hone the chisel")),
+        live,
+    ]
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("bench-flat1", "Flattening a Workbench", cues=said("Today we flatten the bench"))
+    )
+    # In an order that is neither creator's nor by date, so only the playlist's own order explains the table.
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Hand tool picks", [("UC-rex", "v-hone"), ("UC-wright", "bench-flat1"), ("UC-rex", "v-live")]
+    )
+    transcripts.playlists["PL-other"] = FakePlaylist("Other picks", [])
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle, secrets=FakeSecrets())
+
+    async with serving(app) as base_url:
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("tab", name="Playlists").click()
+            await library.get_by_role("button", name="Add playlist").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a playlist"))
+            url = add.get_by_label("YouTube playlist URL")
+
+            await url.fill("https://www.youtube.com/playlist?list=PL-gone")
+            await add.get_by_role("button", name="Look up").click()
+            await expect(add).to_contain_text("This playlist doesn't exist or is private.")
+
+            # A link copied from a video playing in the playlist works as well as the playlist's own.
+            await url.fill("https://www.youtube.com/watch?v=v-hone&list=PL-picks")
+            await add.get_by_role("button", name="Look up").click()
+            await expect(add).to_contain_text("Found Hand tool picks · 3 videos")
+            await expect(add.get_by_label("Playlist name")).to_have_value("Hand tool picks")
+            await add.get_by_role("button", name="Add", exact=True).click()
+
+            await expect(main.get_by_role("heading", name="Hand tool picks")).to_be_visible()
+            assert parse_qs(urlsplit(page.url).query) == {"view": ["library"], "tab": ["playlists"], "playlist": ["1"]}
+            # Adding it started nothing: the first Sync is the user's.
+            videos_card = main.locator("section").filter(has=page.get_by_role("heading", name="Videos"))
+            await expect(videos_card).to_contain_text("No videos yet. Sync this playlist to find them.")
+
+            await library.get_by_role("button", name="Add playlist").click()
+            await url.fill("PL-picks")
+            await add.get_by_role("button", name="Look up").click()
+            await add.get_by_role("button", name="Add", exact=True).click()
+            await expect(add).to_contain_text("The playlist 'Hand tool picks' is already added as 'Hand tool picks'")
+            await url.fill("PL-other")
+            await add.get_by_role("button", name="Look up").click()
+            await expect(add).to_contain_text("Found Other picks · 0 videos")
+            await add.get_by_label("Playlist name").fill("hand tool picks")
+            await add.get_by_role("button", name="Add", exact=True).click()
+            await expect(add).to_contain_text("A Playlist named 'Hand tool picks' already exists")
+            await page.keyboard.press("Escape")
+
+            await main.get_by_role("button", name="Sync now").click()
+            await expect(videos_card).to_contain_text("0 of 3 videos", timeout=15_000)
+            first.released.set()
+            await expect(videos_card).to_contain_text("last synced", timeout=15_000)
+
+            # Playlist order, each Video under the creator who made it. Neither creator is in the Library; the one
+            # YouTube offers an avatar for shows it, the other their initials.
+            rows = main.get_by_role("row")
+            await expect(rows).to_have_count(4)
+            await expect(rows.nth(1)).to_contain_text("Honing a chisel")
+            await expect(rows.nth(1)).to_contain_text("Rex Krueger")
+            await expect(rows.nth(1)).to_contain_text("RK")
+            await expect(rows.nth(1).locator("img")).to_have_count(0)
+            await expect(rows.nth(2)).to_contain_text("Flattening a Workbench")
+            await expect(rows.nth(2)).to_contain_text("Wood By Wright")
+            avatar = rows.nth(2).locator("img")
+            await expect(avatar).to_have_attribute("src", WRIGHT_AVATAR)
+            await expect(avatar).to_have_js_property("naturalWidth", 176)
+            await expect(rows.nth(3)).to_contain_text("Live Q&A")
+            await expect(rows.nth(3)).to_contain_text("Premieres in 3 days")
+
+            playlist_row = library.get_by_role("listitem").filter(has_text="Hand tool picks")
+            await expect(playlist_row).to_contain_text("2 videos")
+            await library.get_by_role("tab", name="Channels").click()
+            # Its creators stay out of the Library's Channels.
+            await expect(library).to_contain_text("Add a channel to start")
+            await library.get_by_role("tab", name="Playlists").click()
+
+            live.failure = None
+            await main.get_by_role("button", name="Retry failed videos").click()
+            await expect(rows.nth(3)).to_contain_text("Done", timeout=15_000)
+
+            await page.reload()
+            await expect(main.get_by_role("heading", name="Hand tool picks")).to_be_visible()
+            await expect(library.get_by_role("tab", name="Playlists")).to_have_attribute("aria-selected", "true")
+            await expect(rows).to_have_count(4)
+
+    # The browser logs each refusal the dialog showed, and nothing else went wrong.
+    refused = "Failed to load resource: the server responded with a status of"
+    assert errors == [f"{refused} 422 (Unprocessable Content)", f"{refused} 409 (Conflict)", f"{refused} 409 (Conflict)"]

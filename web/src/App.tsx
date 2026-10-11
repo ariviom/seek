@@ -7,6 +7,7 @@ import {
   type Citation,
   type Group,
   type Health,
+  type Playlist,
   type Scope,
   type Settings,
 } from "@/lib/api";
@@ -70,8 +71,9 @@ function typingIn(target: EventTarget | null): boolean {
 export function App() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
   const [channels, setChannels] = useState<Channel[] | null>(null);
-  const avatars = useMemo(() => avatarsOf(channels), [channels]);
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
+  const avatars = useMemo(() => avatarsOf(channels, playlists), [channels, playlists]);
   const [healthOpen, setHealthOpen] = useState(false);
   const { view, selection, setView, select } = useUrlState();
   const inspector = useInspector();
@@ -175,12 +177,16 @@ export function App() {
   const reloadGroups = useCallback(async () => {
     await api.listGroups().then(groupsLoaded, () => undefined);
   }, [groupsLoaded]);
+  const reloadPlaylists = useCallback(async () => {
+    await api.listPlaylists().then(setPlaylists, () => undefined);
+  }, []);
   useEffect(() => {
     void reloadChannels();
     void reloadGroups();
-  }, [reloadChannels, reloadGroups]);
+    void reloadPlaylists();
+  }, [reloadChannels, reloadGroups, reloadPlaylists]);
 
-  // Channel counts follow Syncs and Video changes, at most one reload a second while they stream in, so they stay
+  // Channel and Playlist counts, and a Playlist's creators, follow Syncs and Video changes, at most one reload a second while they stream in, so they stay
   // fresh whichever view is open.
   const countsTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(countsTimer.current), []);
@@ -190,6 +196,7 @@ export function App() {
     countsTimer.current = window.setTimeout(() => {
       countsTimer.current = undefined;
       void reloadChannels();
+      void reloadPlaylists();
     }, 1000);
   });
 
@@ -216,7 +223,7 @@ export function App() {
   // Sync all is a no-op once every active Channel already has a Sync queued or running.
   const active = channels?.filter((channel) => channel.indexed) ?? [];
   const syncing = active.length > 0 && active.every((channel) => channelSync(syncs, channel.id) !== null);
-  const library = useLibraryDialogs({ select, reloadChannels, reloadGroups });
+  const library = useLibraryDialogs({ select, reloadChannels, reloadGroups, reloadPlaylists });
 
   const search = useSearch(channels, groups);
 
@@ -317,7 +324,7 @@ export function App() {
           onCitations={setChatCitations}
           onEditGroup={(groupId) => {
             changeView("library");
-            select({ group: groupId, channel: undefined, tab: "groups" });
+            select({ group: groupId, channel: undefined, playlist: undefined, tab: "groups" });
           }}
           onOpenSettings={() => changeView("settings")}
         />
@@ -364,11 +371,13 @@ export function App() {
         <LibraryList
           channels={channels}
           groups={groups}
+          playlists={playlists}
           syncs={syncs}
           selection={selection}
           select={select}
           onAddChannel={library.addChannel}
           onNewGroup={library.newGroup}
+          onAddPlaylist={library.addPlaylist}
         />
       ),
       main: (
@@ -376,11 +385,13 @@ export function App() {
           <LibraryMain
             channels={channels}
             groups={groups}
+            playlists={playlists}
             syncs={syncs}
             selection={selection}
             select={select}
             reloadChannels={reloadChannels}
             reloadGroups={reloadGroups}
+            reloadPlaylists={reloadPlaylists}
             onNewChat={newChat}
             onOpenSync={(syncId) => {
               changeView("syncs");

@@ -89,6 +89,22 @@ export type Channel = {
   avatar_url: string | null;
 };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
+// A Channel some of a Playlist's Videos are credited to, in the Library or not.
+export type Creator = { id: number; name: string; avatar_url: string | null };
+export type Playlist = {
+  id: number;
+  youtube_playlist_id: string;
+  name: string;
+  indexed: boolean;
+  check_every_hours: CheckHours | null;
+  indexed_videos: number;
+  failed_videos: number;
+  excluded_videos: number;
+  last_synced_at: string | null;
+  creators: Creator[];
+};
+// `video_count` is the videos a Sync would ingest: those YouTube lists with a creator.
+export type PlaylistProposal = { youtube_playlist_id: string; title: string; video_count: number };
 export type Group = { id: number; name: string; channels: { id: number; name: string }[] };
 
 export type Stage = "discovered" | "transcript_fetched" | "segmented" | "embedded" | "done" | "failed" | "excluded";
@@ -106,6 +122,8 @@ export type Video = {
   language: string | null;
   transcript_source: "youtube_auto" | "youtube_manual" | null;
 };
+// A Video as a Playlist lists it: under the Channel that made it, which may be outside the Library.
+export type PlaylistVideo = Video & { channel_id: number; channel_name: string };
 // What a Sync ingests: exactly one of a Channel and a Playlist.
 type SyncSource = { channel_id: number; playlist_id: null } | { channel_id: null; playlist_id: number };
 export type Sync = SyncSource & {
@@ -295,6 +313,11 @@ export const api = {
   setChannelChecks: (id: number, check_every_hours: CheckHours | null) =>
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { check_every_hours } }),
   deleteChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
+  listPlaylists: () => request<Playlist[]>("playlists"),
+  resolvePlaylist: (playlist: string) =>
+    request<PlaylistProposal>("playlists/resolve", { method: "POST", body: { playlist } }),
+  createPlaylist: (playlist: string, name: string) =>
+    request<Playlist>("playlists", { method: "POST", body: { playlist, name } }),
   listGroups: () => request<Group[]>("groups"),
   createGroup: (name: string) => request<Group>("groups", { method: "POST", body: { name } }),
   renameGroup: (id: number, name: string) =>
@@ -303,6 +326,7 @@ export const api = {
   setGroupMembers: (id: number, channelIds: number[]) =>
     request<Group>(`groups/${id}/members`, { method: "PUT", body: { channel_ids: channelIds } }),
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
+  startPlaylistSync: (playlistId: number) => request<Sync>(`playlists/${playlistId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   retryPlaylistFailed: (playlistId: number) =>
     request<Sync>(`playlists/${playlistId}/retry-failed`, { method: "POST" }),
@@ -311,6 +335,7 @@ export const api = {
   syncAll: () => request<Sync[]>("syncs", { method: "POST" }),
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),
+  listPlaylistVideos: (playlistId: number) => request<PlaylistVideo[]>(`playlists/${playlistId}/videos`),
   search: (body: SearchRequest) => request<SearchResult[]>("search", { method: "POST", body }),
   expand: (segmentId: number) => request<Expansion>(`segments/${segmentId}/expand`),
   // Reads geometry already stored; it never makes Seek fetch anything from YouTube.

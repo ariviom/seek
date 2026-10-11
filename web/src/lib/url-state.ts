@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type View = "chats" | "search" | "library" | "syncs" | "settings";
+export type LibraryTab = "channels" | "groups" | "playlists";
 export type Selection = {
   conversation?: number;
   channel?: number;
   group?: number;
+  playlist?: number;
   sync?: number;
-  tab?: "channels" | "groups";
+  tab?: LibraryTab;
 };
 
 const views: View[] = ["chats", "search", "library", "syncs", "settings"];
-const ids = ["conversation", "channel", "group", "sync"] as const;
+const ids = ["conversation", "channel", "group", "playlist", "sync"] as const;
 
 function readView(params: URLSearchParams): View {
   const value = params.get("view");
@@ -25,11 +27,11 @@ function readSelection(params: URLSearchParams): Selection {
     if (params.get(key) !== null && Number.isInteger(value) && value > 0) selection[key] = value;
   }
   const tab = params.get("tab");
-  if (tab === "channels" || tab === "groups") selection.tab = tab;
+  if (tab === "channels" || tab === "groups" || tab === "playlists") selection.tab = tab;
   return selection;
 }
 
-const keys = ["conversation", "channel", "group", "sync", "tab"] as const;
+const keys = [...ids, "tab"] as const;
 
 function query(view: View, selection: Selection): string {
   const params = new URLSearchParams();

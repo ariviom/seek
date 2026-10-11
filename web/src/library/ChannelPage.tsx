@@ -180,7 +180,7 @@ export function ChannelPage({
 
         {videosOpen && (
           <section className="rounded-lg border bg-card p-4">
-            <VideosTable channelId={channel.id} />
+            <VideosTable source={{ kind: "channel", id: channel.id }} />
           </section>
         )}
 

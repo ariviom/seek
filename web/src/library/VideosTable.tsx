@@ -1,5 +1,7 @@
 import { useCallback, useState } from "react";
-import { api, errorText, type Video } from "@/lib/api";
+import { api, errorText, type PlaylistVideo, type Video } from "@/lib/api";
+import { Avatar } from "@/components/Avatar";
+import { useChannelAvatars } from "@/lib/channel-avatars";
 import { useLiveList, type Reaction, type ServerEvent } from "@/lib/events";
 import { formatDuration, stageLabels } from "@/lib/format";
 import { stageFill } from "@/syncs/StageRule";
@@ -19,14 +21,23 @@ function newestFirst(a: Video, b: Video): number {
   return b.id - a.id;
 }
 
-export function VideosTable({ channelId }: { channelId: number }) {
-  const load = useCallback(() => api.listVideos(channelId), [channelId]);
-  const react = (event: ServerEvent): Reaction<Video> => {
-    if (event.type === "videos" && event.channel_id === channelId) return "reload";
-    if (event.type !== "video" || event.channel_id !== channelId) return null;
+// A Channel's Videos, newest first, or a Playlist's in the playlist's order, each under its creator.
+export function VideosTable({ source }: { source: { kind: "channel" | "playlist"; id: number } }) {
+  const { kind, id } = source;
+  const load = useCallback(
+    (): Promise<(Video | PlaylistVideo)[]> => (kind === "channel" ? api.listVideos(id) : api.listPlaylistVideos(id)),
+    [kind, id],
+  );
+  const react = (event: ServerEvent): Reaction<Video | PlaylistVideo> => {
+    if (event.type !== "video" && event.type !== "videos") return null;
+    // A Video event carries neither its creator nor its place in the playlist, so a Playlist's table reloads.
+    if (kind === "playlist") return event.playlist_id === id ? "reload" : null;
+    if (event.channel_id !== id) return null;
+    if (event.type === "videos") return "reload";
     return (videos) => [event.video, ...videos.filter((v) => v.id !== event.video.id)].sort(newestFirst);
   };
   const { items: videos, error } = useLiveList(load, react);
+  const avatarOf = useChannelAvatars();
   const [shown, setShown] = useState<Shown>("all");
   // The Video being retried, and why the last retry failed. The Video and its Sync arrive as events.
   const [retrying, setRetrying] = useState<number | null>(null);
@@ -47,7 +58,7 @@ export function VideosTable({ channelId }: { channelId: number }) {
   if (error !== null) return <p className="text-sm text-destructive">Could not load videos: {errorText(error)}</p>;
   if (videos === null) return <p className="text-sm text-muted-foreground">Loading videos…</p>;
   if (videos.length === 0) {
-    return <p className="text-sm text-muted-foreground">No videos yet. Sync this channel to find them.</p>;
+    return <p className="text-sm text-muted-foreground">No videos yet. Sync this {kind} to find them.</p>;
   }
 
   const listed = shown === "all" ? videos : videos.filter((video) => video.stage === shown);
@@ -78,6 +89,7 @@ export function VideosTable({ channelId }: { channelId: number }) {
             <thead className="sticky top-0 bg-card text-muted-foreground">
               <tr>
                 <th className="py-1.5 pr-3 font-medium">Video</th>
+                {kind === "playlist" && <th className="py-1.5 pr-3 font-medium">Creator</th>}
                 <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Published</th>
                 <th className="py-1.5 pr-3 text-right font-medium">Length</th>
                 <th className="py-1.5 font-medium">Stage</th>
@@ -96,6 +108,14 @@ export function VideosTable({ channelId }: { channelId: number }) {
                       {video.title}
                     </a>
                   </td>
+                  {"channel_name" in video && (
+                    <td className="py-1.5 pr-3">
+                      <span className="flex items-center gap-1.5">
+                        <Avatar name={video.channel_name} src={avatarOf(video.channel_id)} size="xs" />
+                        {video.channel_name}
+                      </span>
+                    </td>
+                  )}
                   <td className="py-1.5 pr-3 whitespace-nowrap text-muted-foreground tabular-nums">
                     {video.published_on ?? ""}
                   </td>
@@ -123,7 +143,8 @@ export function VideosTable({ channelId }: { channelId: number }) {
                         {video.stage === "failed" && video.permanent_failure === false && " (retried on the next sync)"}
                       </span>
                     )}
-                    {video.stage === "failed" && (
+                    {/* A Video's own retry needs its Channel in the Library; a Playlist retries its failures together. */}
+                    {video.stage === "failed" && kind === "channel" && (
                       <Button
                         variant="ghost"
                         size="xs"

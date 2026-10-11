@@ -29,7 +29,15 @@ export function isRunning(sync: Sync): boolean {
 // The Sync a Channel has running, else the one it has queued, if any. A Sync queued behind a running one (a retry
 // or the timer) carries only the counts it was queued with, so the running one is the one to show.
 export function channelSync(syncs: Sync[] | null, channelId: number): Sync | null {
-  const own = syncs?.filter((sync) => sync.channel_id === channelId) ?? [];
+  return current(syncs?.filter((sync) => sync.channel_id === channelId));
+}
+
+// Likewise for a Playlist.
+export function playlistSync(syncs: Sync[] | null, playlistId: number): Sync | null {
+  return current(syncs?.filter((sync) => sync.playlist_id === playlistId));
+}
+
+function current(own: Sync[] = []): Sync | null {
   return own.find((sync) => sync.status === "running") ?? own.find((sync) => sync.status === "queued") ?? null;
 }
 
