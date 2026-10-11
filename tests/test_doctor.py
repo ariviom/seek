@@ -404,6 +404,8 @@ def test_secrets_only_the_installed_service_knows_are_redacted_too(tmp_path: Pat
         config,
         {
             "PATH": "/nonexistent",
+            # Without it the unit's settings are read from the config file in the home of whoever runs the tests.
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
             "SEEK_YOUTUBE_EXTRACTOR_ARGS": f'po_token = ["web+{UNIT_TOKEN}"]',
             "SEEK_YOUTUBE_COOKIE_FILE": str(unit_cookie),
         },
