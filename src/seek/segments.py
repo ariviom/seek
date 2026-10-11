@@ -11,6 +11,7 @@ from seek import videos
 from seek.db import transaction
 from seek.ports import Chapter, Cue
 from seek.segmentation import segment
+from seek.videos import StageOutcome
 
 
 def passage_context(video_title: str, chapter_title: str | None) -> str:
@@ -23,15 +24,16 @@ def passage_text(context: str, text: str) -> str:
     return f"{context}\n{text}"
 
 
-def record_segments(conn: sqlite3.Connection, video_id: int) -> bool:
+def record_segments(conn: sqlite3.Connection, video_id: int) -> StageOutcome:
     """Cuts the Video's Transcript into Segments, replacing any it had, and advances the stage.
 
-    Replacing a Segment also removes its FTS5 row and its vector. False if the Video is gone.
+    Replacing a Segment also removes its FTS5 row and its vector. Nothing is written for a Video that is gone or
+    has been excluded meanwhile.
     """
     with transaction(conn):
+        if (outcome := videos.standing(conn, video_id)) != "advanced":
+            return outcome
         video = conn.execute("SELECT title, chapters FROM videos WHERE id = ?", (video_id,)).fetchone()
-        if video is None:
-            return False
         transcript = conn.execute("SELECT cues FROM transcripts WHERE video_id = ?", (video_id,)).fetchone()
         if transcript is None:
             raise RuntimeError("The Video has no Transcript to segment")
@@ -56,7 +58,8 @@ def record_segments(conn: sqlite3.Connection, video_id: int) -> bool:
                 for s in segment(cues, chapters)
             ],
         )
-        return videos.complete_stage(conn, video_id, "segmented")
+        videos.complete_stage(conn, video_id, "segmented")
+        return outcome
 
 
 def segment_texts(conn: sqlite3.Connection, video_id: int) -> list[tuple[int, str]]:
@@ -67,14 +70,15 @@ def segment_texts(conn: sqlite3.Connection, video_id: int) -> list[tuple[int, st
 
 def record_embeddings(
     conn: sqlite3.Connection, video_id: int, vectors: Sequence[tuple[int, Sequence[float]]]
-) -> bool:
+) -> StageOutcome:
     """Stores a vector for each of the Video's Segments, replacing any they had, and advances the stage.
 
-    False if the Video is gone. Raises if the vectors aren't for exactly the Video's current Segments.
+    Nothing is written for a Video that is gone or has been excluded meanwhile. Raises if the vectors aren't for
+    exactly the Video's current Segments.
     """
     with transaction(conn):
-        if conn.execute("SELECT 1 FROM videos WHERE id = ?", (video_id,)).fetchone() is None:
-            return False
+        if (outcome := videos.standing(conn, video_id)) != "advanced":
+            return outcome
         segment_ids = [r["id"] for r in conn.execute("SELECT id FROM segments WHERE video_id = ?", (video_id,))]
         if sorted(segment_id for segment_id, _ in vectors) != sorted(segment_ids):
             raise RuntimeError("The Video's Segments changed while it was being embedded")
@@ -84,4 +88,5 @@ def record_embeddings(
             "INSERT INTO segment_vectors (segment_id, video_id, embedding) VALUES (?, ?, ?)",
             [(segment_id, video_id, sqlite_vec.serialize_float32(list(vector))) for segment_id, vector in vectors],
         )
-        return videos.complete_stage(conn, video_id, "embedded")
+        videos.complete_stage(conn, video_id, "embedded")
+        return outcome

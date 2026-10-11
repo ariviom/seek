@@ -48,8 +48,10 @@ class PlaylistEntry:
 @dataclass(frozen=True)
 class PlaylistListing:
     title: str
-    # In the playlist's order.
+    # In the playlist's order, without the videos YouTube lists with no creator (private or deleted ones).
     entries: Sequence[PlaylistEntry]
+    # Every video the playlist lists, in its order, with a creator or not.
+    video_ids: Sequence[str]
 
 
 @dataclass(frozen=True)
@@ -218,8 +220,8 @@ class TranscriptSource(Protocol):
     def list_playlist(self, playlist_id: str) -> PlaylistListing:
         """The playlist's title and its videos in order, whoever made them.
 
-        Entries without a creator (private or deleted videos) are left out. Raises PlaylistNotFound for a playlist
-        that is missing or private.
+        A video listed without a creator (a private or deleted one) is left out of the entries, but its id is
+        still among the listing's. Raises PlaylistNotFound for a playlist that is missing or private.
         """
         ...
 

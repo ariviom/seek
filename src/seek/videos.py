@@ -14,7 +14,7 @@ from seek.channels import ChannelFilters
 from seek.ports import (
     ChannelInfo,
     Chapter,
-    PlaylistEntry,
+    PlaylistListing,
     SourceUnavailable,
     Transcript,
     VideoDetails,
@@ -368,7 +368,7 @@ def record_playlist_discovery(
     conn: sqlite3.Connection,
     sync_id: int,
     playlist_id: int,
-    entries: Sequence[PlaylistEntry],
+    listing: PlaylistListing,
     avatars: Mapping[str, str | None],
     rules: ExclusionRules,
 ) -> int | None:
@@ -378,8 +378,12 @@ def record_playlist_discovery(
     one a Playlist includes, which lifts an exclusion by its Channel's filters. The Playlist stops including a
     Video the listing no longer has.
 
-    `entries` is a listing that completed: one that failed must not get here, since every Video it lacks leaves
-    the Playlist. YouTube can also answer with no entries and no error, so an empty listing for a Playlist that
+    A video YouTube lists without its creator (a private or deleted one) has no entry, only its id. Nothing new
+    is recorded for it, but a Video the Playlist already includes stays while its id is listed: it was not taken
+    out of the playlist, and its Transcript may be impossible to fetch again.
+
+    `listing` is one that completed: one that failed must not get here, since every Video it lacks leaves the
+    Playlist. YouTube can also answer with nothing listed and no error, so an empty listing for a Playlist that
     has Videos raises SourceUnavailable and nothing is removed.
 
     `avatars` holds the avatar of each creator that may be new, by YouTube channel id. Returns how many Videos
@@ -388,13 +392,22 @@ def record_playlist_discovery(
     with transaction(conn):
         if not _sync_exists(conn, sync_id, Source("playlist", playlist_id)):
             return None
-        members = conn.execute("SELECT video_id FROM playlist_videos WHERE playlist_id = ?", (playlist_id,))
-        included = {row["video_id"] for row in members}
-        if included and not entries:
+        members = conn.execute(
+            """
+            SELECT playlist_videos.video_id, videos.youtube_video_id
+            FROM playlist_videos JOIN videos ON videos.id = playlist_videos.video_id
+            WHERE playlist_videos.playlist_id = ?
+            """,
+            (playlist_id,),
+        )
+        included = {row["youtube_video_id"]: row["video_id"] for row in members}
+        if included and not listing.video_ids:
             raise SourceUnavailable(EMPTY_LISTING)
+        # Each video's place among everything the playlist lists, with a creator or not.
+        place = {video_id: position for position, video_id in enumerate(listing.video_ids)}
         in_listing: set[int] = set()
         discovered_at = now_iso()
-        for position, entry in enumerate(entries):
+        for entry in listing.entries:
             row = conn.execute(
                 """
                 SELECT id, duration_seconds, pipeline_stage, excluded_reason FROM videos
@@ -427,17 +440,26 @@ def record_playlist_discovery(
                 INSERT INTO playlist_videos (playlist_id, video_id, position) VALUES (?, ?, ?)
                 ON CONFLICT (playlist_id, video_id) DO UPDATE SET position = excluded.position
                 """,
-                (playlist_id, row["id"], position),
+                (playlist_id, row["id"], place[entry.video_id]),
             )
             in_listing.add(row["id"])
+        # A Video listed without its creator keeps its membership, and follows the listing's order as the rest do.
+        conn.executemany(
+            "UPDATE playlist_videos SET position = ? WHERE playlist_id = ? AND video_id = ?",
+            [
+                (place[youtube_video_id], playlist_id, video_id)
+                for youtube_video_id, video_id in included.items()
+                if youtube_video_id in place and video_id not in in_listing
+            ],
+        )
         # Worked out before any delete, since the memberships are what say which Videos to settle.
-        removed = included - in_listing
+        removed = {video_id for youtube_video_id, video_id in included.items() if youtube_video_id not in place}
         conn.execute(
             "DELETE FROM playlist_videos WHERE playlist_id = ? AND video_id IN (SELECT value FROM json_each(?))",
             (playlist_id, json.dumps(sorted(removed))),
         )
         apply_keep_rule(conn, removed, rules.min_duration_seconds)
-        return len(in_listing - included)
+        return len(in_listing - set(included.values()))
 
 
 def apply_keep_rule(conn: sqlite3.Connection, video_ids: Collection[int], min_duration_seconds: int) -> None:
@@ -686,10 +708,23 @@ def complete_stage(conn: sqlite3.Connection, video_id: int, stage: PipelineStage
     return cursor.rowcount == 1
 
 
-def record_done(conn: sqlite3.Connection, video_id: int) -> bool:
-    """Marks the Video done; False if the Video is gone."""
+def standing(conn: sqlite3.Connection, video_id: int) -> StageOutcome:
+    """Within a transaction, before a stage's writes: "advanced" when the Sync may go on with the Video, "gone"
+    when it was deleted meanwhile, and "stopped" when it has been excluded since the Sync took it up, as deleting
+    a Playlist or a Channel does at once. Excluding it removed its Segments and stepped it back, so a stage
+    written now would leave it done with nothing indexed."""
+    row = conn.execute("SELECT excluded_reason FROM videos WHERE id = ?", (video_id,)).fetchone()
+    if row is None:
+        return "gone"
+    return "advanced" if row["excluded_reason"] is None else "stopped"
+
+
+def record_done(conn: sqlite3.Connection, video_id: int) -> StageOutcome:
+    """Marks the Video done, unless it is gone or has been excluded meanwhile."""
     with transaction(conn):
-        return complete_stage(conn, video_id, "done")
+        if (outcome := standing(conn, video_id)) == "advanced":
+            complete_stage(conn, video_id, "done")
+        return outcome
 
 
 def record_failure(

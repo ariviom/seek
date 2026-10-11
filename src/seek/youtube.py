@@ -431,8 +431,10 @@ def playlist_id(text: str) -> str:
 def playlist_listing(info: Mapping[str, Any]) -> PlaylistListing:
     """A flat playlist extraction's title and entries, in its order.
 
-    An entry without a creator's channel id is a video YouTube hides (private or deleted), and is left out.
+    An entry without a creator's channel id is a video YouTube hides (private or deleted): it is left out of the
+    entries, and only its id is kept, which says the playlist still lists it.
     """
+    listed = [entry for entry in info.get("entries") or [] if entry.get("id")]
     return PlaylistListing(
         title=info.get("title") or info["id"],
         entries=[
@@ -443,9 +445,10 @@ def playlist_listing(info: Mapping[str, Any]) -> PlaylistListing:
                 channel_id=entry["channel_id"],
                 channel_name=entry.get("channel") or entry["channel_id"],
             )
-            for entry in info.get("entries") or []
-            if entry.get("id") and entry.get("channel_id")
+            for entry in listed
+            if entry.get("channel_id")
         ],
+        video_ids=[entry["id"] for entry in listed],
     )
 
 

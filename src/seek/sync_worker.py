@@ -221,8 +221,9 @@ class SyncWorker:
         """Records the Channel's listing and judges its Videos by the rules; None if the Sync is gone."""
         playlist_video_ids = None
         if sync.filters.playlist_id is not None:
-            playlist = await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id)
-            playlist_video_ids = {entry.video_id for entry in playlist.entries}
+            filter_listing = await asyncio.to_thread(self._transcripts.list_playlist, sync.filters.playlist_id)
+            # Every id the playlist lists: the filter asks only whether a video is in it, not who made it.
+            playlist_video_ids = set(filter_listing.video_ids)
         # A listing may stop at the Videos already known once a Sync has completed, unless the most-recent
         # filter needs the whole order or a retry wants everything looked at again.
         known: set[str] = set()
@@ -259,7 +260,7 @@ class SyncWorker:
         creators_before = await self._database.run(lambda conn: videos.creators(conn, sync.source))
         new_videos = await self._database.run(
             lambda conn: videos.record_playlist_discovery(
-                conn, sync.id, sync.source.id, listing.entries, avatars, rules
+                conn, sync.id, sync.source.id, listing, avatars, rules
             )
         )
         return None if new_videos is None else _Discovery(new_videos, creators_before=creators_before)
@@ -331,12 +332,12 @@ class SyncWorker:
         if stage == "transcript_fetched":
             return await self._fetch_transcript(rules, video)
         try:
+            # Each of these leaves alone a Video that was excluded while the Sync was part-way through it.
             if stage == "segmented":
-                advanced = await self._database.run(lambda conn: segments.record_segments(conn, video.id))
-            elif stage == "embedded":
-                advanced = await self._embed(video)
-            else:
-                advanced = await self._database.run(lambda conn: videos.record_done(conn, video.id))
+                return await self._database.run(lambda conn: segments.record_segments(conn, video.id))
+            if stage == "embedded":
+                return await self._embed(video)
+            return await self._database.run(lambda conn: videos.record_done(conn, video.id))
         except GpuOutOfMemory as e:
             # Another program holds the GPU for now. Fetching needs none of it, so the Sync goes on and this
             # Video, transcript kept, waits for Retry failed videos.
@@ -350,7 +351,6 @@ class SyncWorker:
             log.exception("Stage %s failed for Video %s", stage, video.youtube_video_id)
             failure = VideoUnavailable(f"Unexpected error: {e}", permanent=False)
             return await self._record_failure(rules, video, stage, failure)
-        return "advanced" if advanced else "gone"
 
     async def _record_failure(
         self, rules: ExclusionRules, video: PendingVideo, attempted: PipelineStage, failure: VideoUnavailable
@@ -360,8 +360,7 @@ class SyncWorker:
         )
         return "stopped" if recorded else "gone"
 
-    async def _embed(self, video: PendingVideo) -> bool:
-        """False if the Video is gone."""
+    async def _embed(self, video: PendingVideo) -> StageOutcome:
         texts = await self._database.run(lambda conn: segments.segment_texts(conn, video.id))
         # A Video with no spoken text has no Segments; the model isn't needed for it.
         vectors = await asyncio.to_thread(self._embedder.embed_passages, [text for _, text in texts]) if texts else []

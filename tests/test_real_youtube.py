@@ -63,6 +63,9 @@ def test_a_public_playlist_lists_each_videos_creator_and_length_and_a_missing_on
     # The flat listing carries every entry's creator and length, so a Sync credits and judges a Video unfetched.
     assert all(re.fullmatch(r"UC[\w-]{22}", entry.channel_id) and entry.channel_name for entry in listing.entries)
     assert all(isinstance(entry.duration_seconds, int) for entry in listing.entries)
+    # A hidden video has no entry, but its id is still listed, which is what keeps it in a Playlist.
+    assert "fIc_VEQ7Vo0" in listing.video_ids
+    assert "fIc_VEQ7Vo0" not in {entry.video_id for entry in listing.entries}
     assert "doesn't exist or is private" in str(missing.value)
 
 

@@ -494,7 +494,7 @@ def playlist_extraction() -> dict[str, Any]:
     }
 
 
-def test_a_playlist_listing_keeps_its_order_and_each_creator_and_skips_entries_without_one() -> None:
+def test_a_playlist_listing_keeps_its_order_and_each_creator_and_only_the_id_of_an_entry_without_one() -> None:
     assert playlist_listing(playlist_extraction()) == PlaylistListing(
         title="Google Search Stories",
         entries=[
@@ -505,6 +505,7 @@ def test_a_playlist_listing_keeps_its_order_and_each_creator_and_skips_entries_w
                 "0VH1Lim8gL8", "Deep Learning State of the Art (2020)", 5261, "UCSHZKyawb77ixDdsGog4iWA", "Lex Fridman"
             ),
         ],
+        video_ids=["GvgqDSnpRQM", "fIc_VEQ7Vo0", "0VH1Lim8gL8"],
     )
 
 

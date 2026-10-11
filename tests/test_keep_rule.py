@@ -25,7 +25,7 @@ from harness import (
 )
 
 from seek.config import Config
-from seek.fakes import FakePlaylist, FakeTranscriptSource
+from seek.fakes import FakeEmbedder, FakePlaylist, FakeTranscriptSource
 from seek.ports import VideoUnavailable
 
 ROWS = ("videos", "transcripts", "segments", "segments_fts_docsize", "segment_vectors")
@@ -395,3 +395,53 @@ async def test_a_playlist_deleted_while_a_channels_sync_fetches_its_video_leaves
         "Saws": ("excluded", "Published before 2024-01-01, outside the Channel's filters"),
     }
     assert await found(client) == {"v-mid"}
+
+
+async def test_a_playlist_deleted_while_a_channels_sync_has_its_video_part_way_leaves_the_video_excluded_not_done(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, embedder: FakeEmbedder
+) -> None:
+    gate = Gate()
+    mid = fake_video(
+        "v-mid",
+        "Irons",
+        published_on=date(2024, 6, 1),
+        cues=said("Sharpen the iron on a fine stone"),
+        failure=VideoUnavailable("YouTube refused the captions", permanent=False),
+    )
+    fake_channel(transcripts, "UC-wright").videos += [
+        mid,
+        fake_video("v-old", "Saws", published_on=date(2020, 1, 1), cues=said("Sharpen the saw on a fine stone")),
+    ]
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-wright", "v-old")])
+    wright = await add_channel(client, "@woodbywright")
+    await set_filters(client, wright, published_after="2024-01-01")
+    # The Channel's Sync could not fetch the irons, so its next one takes them up first, ahead of the saws.
+    await sync(client, wright)
+    playlist = await add_playlist(client, "PL-picks")
+    # The Playlist's Sync cut the saws into Segments and stopped short of embedding them.
+    embedder.unavailable = "The GPU is out of memory"
+    await start_playlist_sync(client, playlist["id"])
+    await wait_for_syncs(client)
+    embedder.unavailable = None
+    mid.failure, mid.before_fetch = None, gate
+
+    await start_sync(client, wright["id"])
+    await gate.wait_entered()
+    saws_part_way = stages(await list_videos(client, wright["id"]))["Saws"]
+    deleted = await client.delete(f"/api/playlists/{playlist['id']}")
+    gate.released.set()
+    finished, *_ = await wait_for_syncs(client)
+    left = await list_videos(client, wright["id"])
+    # Widening the filters lifts the exclusion, and the Channel's next Sync is what indexes the saws.
+    await set_filters(client, wright)
+    await sync(client, wright)
+
+    assert saws_part_way == "segmented"
+    assert deleted.status_code == 204
+    assert (finished["source_name"], finished["status"]) == ("Wood By Wright", "done")
+    assert {title: (v["stage"], v["reason"]) for title, v in left.items()} == {
+        "Irons": ("done", None),
+        "Saws": ("excluded", "Published before 2024-01-01, outside the Channel's filters"),
+    }
+    assert stages(await list_videos(client, wright["id"])) == {"Irons": "done", "Saws": "done"}
+    assert await found(client) == {"v-mid", "v-old"}

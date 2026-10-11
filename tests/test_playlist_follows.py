@@ -126,6 +126,53 @@ async def test_a_video_removed_from_one_playlist_stays_while_another_playlist_in
     assert fetched(transcripts).count("v-knives") == 1
 
 
+async def test_a_video_youtube_lists_without_its_creator_stays_until_the_playlist_stops_listing_it(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    _, playlist = await sharpening_picks(client, transcripts)
+    entries = transcripts.playlists["PL-picks"].entries
+
+    # Rex Krueger made the knives private: the playlist still lists them, now last, but not whose they are. It
+    # also lists a video Seek never saw a creator for.
+    entries[:] = [(None, "v-never-seen"), ("UC-wright", "v-chisels"), (None, "v-knives")]
+    hidden = await resync(client, playlist)
+    videos = await list_playlist_videos(client, playlist["id"])
+    still_found = await found(client, playlist=playlist["id"])
+    entries.remove((None, "v-knives"))
+    gone = await resync(client, playlist)
+
+    assert (hidden["status"], hidden["new_videos"]) == ("done", 0)
+    assert [(v["youtube_video_id"], v["channel_name"], v["stage"]) for v in videos] == [
+        ("v-chisels", "Wood By Wright", "done"),
+        ("v-knives", "Rex Krueger", "done"),
+    ]
+    assert still_found == {"v-knives", "v-chisels"}
+    assert fetched(transcripts).count("v-knives") == 1
+    assert gone["status"] == "done"
+    assert [v["youtube_video_id"] for v in await list_playlist_videos(client, playlist["id"])] == ["v-chisels"]
+    assert await found(client) == {"v-chisels", "v-saws"}
+    [listed] = (await client.get("/api/playlists")).json()
+    assert [c["name"] for c in listed["creators"]] == ["Wood By Wright"]
+
+
+async def test_a_playlist_whose_every_video_is_listed_without_its_creator_keeps_them_all(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Sharpen the knife on a fine stone"))
+    )
+    transcripts.playlists["PL-knives"] = FakePlaylist("Knives", [("UC-rex", "v-knives")])
+    playlist = await add_playlist(client, "PL-knives")
+    await sync_playlist(client, playlist)
+
+    transcripts.playlists["PL-knives"].entries[:] = [(None, "v-knives")]
+    synced = await resync(client, playlist)
+
+    assert (synced["status"], synced["error"]) == ("done", None)
+    assert [v["youtube_video_id"] for v in await list_playlist_videos(client, playlist["id"])] == ["v-knives"]
+    assert await found(client, playlist=playlist["id"]) == {"v-knives"}
+
+
 def stored(config: Config) -> dict[str, int]:
     """Rows per table of everything kept for a Video, and how many Channels there are, in the Library or not."""
     others = {table: query(config, f"SELECT count(*) FROM {table}")[0][0] for table in ("storyboards", "channels")}

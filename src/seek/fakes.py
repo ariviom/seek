@@ -81,8 +81,9 @@ class FakeChannel:
 @dataclass
 class FakePlaylist:
     title: str
-    # Each entry as (YouTube channel id, video id), in order, naming a Video of one of the source's channels.
-    entries: list[tuple[str, str]]
+    # Each entry as (YouTube channel id, video id), in order, naming a Video of one of the source's channels. A
+    # channel id of None is a video YouTube lists without its creator, as it does a private or deleted one.
+    entries: list[tuple[str | None, str]]
 
 
 @dataclass
@@ -138,13 +139,15 @@ class FakeTranscriptSource:
         playlist = self.playlists[playlist_id]
         entries = []
         for channel_id, video_id in playlist.entries:
+            if channel_id is None:
+                continue
             [channel] = [c for c in self.channels if c.info.channel_id == channel_id]
             [video] = [v for v in channel.all_videos if v.listing.video_id == video_id]
             listing = video.listing
             entries.append(
                 PlaylistEntry(video_id, listing.title, listing.duration_seconds, channel_id, channel.info.name)
             )
-        return PlaylistListing(playlist.title, entries)
+        return PlaylistListing(playlist.title, entries, [video_id for _, video_id in playlist.entries])
 
     def fetch_video(self, video_id: str) -> tuple[VideoDetails, Transcript]:
         for channel in self.channels:

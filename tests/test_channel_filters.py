@@ -167,6 +167,22 @@ async def test_a_playlist_filter_keeps_only_the_channels_videos_in_that_playlist
     assert stages(await list_videos(client, channel_id)) == stages(videos)
 
 
+async def test_a_playlist_filter_keeps_a_video_the_playlist_lists_without_its_creator(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [fake_video("v-dovetails", "Dovetails"), fake_video("v-vlog", "Shop vlog")]
+    # Some listings name no creator for a video; the filter only asks whether the playlist lists it.
+    transcripts.playlists["PL-joinery"] = FakePlaylist("Joinery", [(None, "v-dovetails")])
+    channel = await add_channel(client, "@woodbywright", "Wood By Wright")
+    channel_id = channel["id"]
+
+    await set_filters(client, channel_id, playlist_id="PL-joinery")
+    finished = await sync(client, channel_id)
+
+    assert finished["status"] == "done"
+    assert stages(await list_videos(client, channel_id)) == {"Dovetails": "done", "Shop vlog": "excluded"}
+
+
 async def test_most_recent_n_keeps_the_newest_eligible_videos_in_listing_order(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource
 ) -> None:

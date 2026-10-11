@@ -16,3 +16,9 @@ Status: breakdown approved by Drew on 2026-10-10. Spec: `docs/specs/0004-playlis
 | 10 | Playlists in the CLI | 03 | done |
 
 Each ticket adds its own migration, so land them one at a time in number order, even where the blocking edges would allow parallel work.
+
+## Review fixes
+
+**2026-10-10.** The whole-branch review found three ways to lose or strand indexed Videos: a video YouTube lists without its creator (private or deleted) counted as removed from a Playlist, and from a Channel's playlist filter (07's reading of the Sources port); and a Video excluded inline by a Playlist or Channel delete while a Sync was part-way through it ended done with no Segments (09's uncovered case).
+A `PlaylistListing` now carries `video_ids`, every id listed, beside its creator-bearing `entries`: a membership stays while its id is listed, `position` is the place in the full listing, and the playlist filter goes by the ids. The stage writes after the fetch return a `StageOutcome` and stop at an excluded Video (`videos.standing`).
+A second commit holds the review's smaller findings (copy, names, duplications, tests moved onto public surfaces, the Playlist table's reload).
