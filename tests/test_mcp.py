@@ -88,8 +88,8 @@ async def test_mcp_clients_see_the_tools_and_grounded_advisor_guidance(served: S
     assert instructions is not None
     for text in [instructions, *(tool.description or "" for tool in tools)]:
         assert [phrase for phrase in guidance if phrase not in text.lower()] == []
-    # What the tools return is its publishers' text, never instructions to the client's model.
-    assert UNTRUSTED_CONTENT in instructions
+        # What the tools return is its publishers' text, never instructions to the client's model.
+        assert UNTRUSTED_CONTENT in text
 
 
 @pytest.mark.parametrize("reranker_unavailable", [False, True])
