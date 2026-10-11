@@ -75,6 +75,7 @@ export function LibraryMain({
         refresh={reloadPlaylists}
         onNewChat={onNewChat}
         onOpenSync={onOpenSync}
+        onRemoved={() => select({ playlist: undefined })}
       />
     );
   }

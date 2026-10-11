@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { api, type CheckHours, type Playlist, type Scope, type Stage, type Sync } from "@/lib/api";
 import { AvatarStack } from "@/components/Avatar";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,15 +47,18 @@ export function PlaylistPage({
   refresh,
   onNewChat,
   onOpenSync,
+  onRemoved,
 }: {
   playlist: Playlist;
   syncs: Sync[] | null;
   refresh: () => Promise<void>;
   onNewChat: (scope: Scope) => void;
   onOpenSync: (syncId: number) => void;
+  onRemoved: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const { act, busy } = useChanges(refresh, setError);
+  const [removeOpen, setRemoveOpen] = useState(false);
 
   const running = playlistSync(syncs, playlist.id);
   const now = useNow(running === null ? 0 : 10);
@@ -176,12 +180,32 @@ export function PlaylistPage({
             >
               {playlist.indexed ? "Pause playlist" : "Resume playlist"}
             </Button>
+            <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setRemoveOpen(true)}>
+              Remove playlist
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">
             A paused playlist isn’t synced and doesn’t answer; what’s ingested stays.
           </p>
         </div>
       </fieldset>
+
+      <ConfirmDialog
+        title="Remove playlist"
+        actionLabel="Remove playlist"
+        open={removeOpen}
+        busy={busy}
+        onOpenChange={setRemoveOpen}
+        onConfirm={async () => {
+          if (await act(() => api.deletePlaylist(playlist.id))) {
+            setRemoveOpen(false);
+            onRemoved();
+          }
+        }}
+      >
+        Remove {playlist.name}? Its videos go too, except those a channel in the Library or another playlist
+        includes. Its chats stay readable.
+      </ConfirmDialog>
     </div>
   );
 }

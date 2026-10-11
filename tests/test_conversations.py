@@ -277,6 +277,59 @@ async def test_conversations_and_their_citations_outlive_their_channel_and_group
     )
 
 
+async def test_a_deleted_playlists_conversations_keep_their_citations_and_are_read_only(
+    client: httpx.AsyncClient, engine: FakeChatEngine, transcripts: FakeTranscriptSource
+) -> None:
+    _, picks = await sharpening_picks(client, transcripts)
+    conversation = await start_playlist_conversation(client, picks["id"])
+    # Rex Krueger is outside the Library, so the cited Video goes with the Playlist.
+    engine.script = [TextDelta("Hone it: https://www.youtube.com/watch?v=v-knives&t=0s"), ChatDone("session-1")]
+    [cited] = done_message(await send(client, conversation["id"], "How fine a stone?"))["citations"]
+
+    deleted = await client.delete(f"/api/playlists/{picks['id']}")
+
+    assert deleted.status_code == 204
+    reopened = await get_conversation(client, conversation["id"])
+    assert reopened["messages"][1]["citations"] == [cited]
+    assert (cited["channel_name"], cited["video_title"]) == ("Rex Krueger", "Knives")
+    removed = {"kind": "playlist", "id": None, "name": "Sharpening picks"}
+    assert reopened["scope"] == removed
+    assert [c["scope"] for c in await list_conversations(client)] == [removed]
+    assert await list_conversations(client, playlist_id=picks["id"]) == []
+    orphaned = await send(client, conversation["id"], "More?")
+    assert (orphaned.status_code, orphaned.json()) == (
+        409,
+        {"detail": "The Playlist 'Sharpening picks' was deleted, so this Conversation is read-only"},
+    )
+
+
+async def test_a_channels_conversations_stay_read_only_when_it_leaves_the_library_and_when_it_is_added_again(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    wright, _ = await sharpening_picks(client, transcripts)
+    old = await start_channel_conversation(client, wright["id"])
+    await send(client, old["id"], "Which stone?")
+    removed = {"kind": "channel", "id": None, "name": "Wood By Wright"}
+
+    # A Playlist includes the chisels, so the Channel is taken out of the Library, not deleted.
+    await client.delete(f"/api/channels/{wright['id']}")
+    outside = (await get_conversation(client, old["id"]))["scope"], (await send(client, old["id"], "More?")).status_code
+    readded = await add_channel(client, "@woodbywright", "Paul Wright")
+    new = await start_channel_conversation(client, readded["id"])
+
+    assert outside == (removed, 409)
+    # The same Channel is back, which is exactly why its old Conversations must not find it again.
+    assert readded["id"] == wright["id"]
+    assert (await get_conversation(client, old["id"]))["scope"] == removed
+    orphaned = await send(client, old["id"], "More?")
+    assert (orphaned.status_code, orphaned.json()) == (
+        409,
+        {"detail": "The Channel 'Wood By Wright' was deleted, so this Conversation is read-only"},
+    )
+    assert [c["id"] for c in await list_conversations(client, channel_id=readded["id"])] == [new["id"]]
+    assert (await send(client, new["id"], "Which stone?")).status_code == 200
+
+
 async def test_a_group_conversation_stays_open_when_a_member_channel_goes(
     client: httpx.AsyncClient, transcripts: FakeTranscriptSource
 ) -> None:

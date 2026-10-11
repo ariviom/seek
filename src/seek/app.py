@@ -223,8 +223,12 @@ def create_app(
             "chat": {"active": active, "engines": engines},
         }
 
-    app.include_router(channels_router(database, transcripts, events), prefix="/api")
-    app.include_router(playlists_router(database, transcripts, events), prefix="/api")
+    app.include_router(
+        channels_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
+    )
+    app.include_router(
+        playlists_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
+    )
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")

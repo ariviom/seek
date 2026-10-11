@@ -150,8 +150,8 @@ class SyncWorker:
                 return
 
     async def _run_sync(self, sync: ClaimedSync) -> None:
-        # Returning without finishing is deliberate in two cases: the Channel or Playlist was deleted (its Sync went
-        # with it), or the lease was lost (the next holder requeues the Sync).
+        # Returning without finishing is deliberate in two cases: the Sync is gone (its Channel or Playlist was
+        # deleted, or its Channel left the Library), or the lease was lost (the next holder requeues the Sync).
         rules = ExclusionRules(self._min_duration_seconds, sync.filters)
         self._throttled_videos = 0
         self._queue = None

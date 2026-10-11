@@ -237,6 +237,34 @@ async def test_renaming_or_removing_channels_asks_clients_to_reload_syncs(
     assert [renamed, detached, deleted] == [[reload], [reload], [reload]]
 
 
+async def test_deleting_a_playlist_or_a_channel_one_draws_on_reloads_syncs_and_the_pages_listing_what_stays(
+    config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos += [fake_video("v-chisels", "Chisels"), fake_video("v-saws", "Saws")]
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Picks", [("UC-rex", "v-knives"), ("UC-wright", "v-chisels")])
+    transcripts.playlists["PL-chisels"] = FakePlaylist("Chisels", [("UC-wright", "v-chisels")])
+    app = make_app(config, transcripts, tmp_path)
+
+    async with running(app) as client, event_stream(app) as stream:
+        wright = (await add_channel(client, "@woodbywright"))["id"]
+        picks = (await add_playlist(client, "PL-picks"))["id"]
+        chisels = (await add_playlist(client, "PL-chisels"))["id"]
+        for source in (f"playlists/{picks}", f"playlists/{chisels}", f"channels/{wright}"):
+            await client.post(f"/api/{source}/syncs")
+            await stream.until(sync_status("done"))
+        await client.delete(f"/api/playlists/{picks}")
+        playlist_deleted = await stream.until(lambda e: e["type"] == "videos")
+        await client.delete(f"/api/channels/{wright}")
+        channel_deleted = await stream.until(lambda e: e["type"] == "videos")
+
+    # Rex Krueger went with Picks, so only Wood By Wright's Videos are still listed anywhere: on the Channel's
+    # own page until it leaves the Library, and in the other Playlist.
+    still_listed = {"type": "videos", "channel_id": wright, "playlist_ids": [chisels]}
+    assert playlist_deleted == [{"type": "syncs"}, still_listed]
+    assert channel_deleted == [{"type": "syncs"}, still_listed]
+
+
 async def test_a_running_sync_names_the_video_it_is_fetching(
     config: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:

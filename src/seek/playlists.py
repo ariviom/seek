@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import EllipsisType
 
+from seek import videos
 from seek.channels import CheckHours
 from seek.db import transaction
 from seek.errors import Conflict, NotFound
 from seek.groups import ChannelSummary, channel_summaries
 from seek.ports import PlaylistInfo
 from seek.scope import Scope
+from seek.videos import Listed, Source
 
 
 @dataclass(frozen=True)
@@ -180,3 +182,23 @@ def update_playlist(
             conn.execute("UPDATE playlists SET check_every_hours = ? WHERE id = ?", (check_every_hours, playlist_id))
         [playlist] = _select(conn, playlist_id)
         return playlist
+
+
+def delete_playlist(conn: sqlite3.Connection, playlist_id: int, min_duration_seconds: int) -> list[Listed]:
+    """Removes the Playlist and its Syncs; its Conversations stay readable. Each of its Videos then stays only
+    while a Library Channel or another Playlist includes it (see videos.apply_keep_rule).
+
+    Returns where its creators' remaining Videos are listed, for the pages that list them to reload.
+    """
+    source = Source("playlist", playlist_id)
+    with transaction(conn):
+        # Read before the delete: the memberships go with the Playlist, and they are what say which Videos to settle.
+        video_ids = [
+            row["video_id"]
+            for row in conn.execute("SELECT video_id FROM playlist_videos WHERE playlist_id = ?", (playlist_id,))
+        ]
+        creators = videos.creators(conn, source)
+        if conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,)).rowcount == 0:
+            raise NotFound(f"Playlist {playlist_id} not found")
+        videos.apply_keep_rule(conn, video_ids, min_duration_seconds)
+        return videos.listed_by_creator(conn, source, creators)

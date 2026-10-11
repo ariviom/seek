@@ -935,6 +935,28 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
             await expect(main.get_by_role("button", name="New chat")).to_be_enabled()
             await expect(videos_card).to_contain_text("Next check around ")
 
+            # Removed from its page, it goes with its Videos, which nothing else in the Library includes. Its chat
+            # stays to read, filed under Removed, and can't be continued.
+            await main.get_by_role("button", name="Remove playlist").click()
+            confirm = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Remove playlist"))
+            await expect(confirm).to_contain_text("Remove Edge picks?")
+            await confirm.get_by_role("button", name="Remove playlist").click()
+            await expect(main).to_contain_text("Pick a channel, group, or playlist")
+            await expect(library).to_contain_text("No playlists yet")
+            await expect(page).not_to_have_url(re.compile(r"playlist="))
+            assert parse_qs(urlsplit(page.url).query) == {"view": ["library"], "tab": ["playlists"]}
+            async with httpx.AsyncClient(base_url=base_url) as client:
+                still_found = (await client.post("api/search", json={"query": "flatten the bench"})).json()
+            assert still_found == []
+            await sections.get_by_role("button", name="Chats").click()
+            await expect(chats.get_by_role("button", name=re.compile(r"^Removed"))).to_be_visible()
+            await expect(chats.get_by_role("button", name=re.compile(r"^Edge picks"))).to_have_count(0)
+            await chats.get_by_role("button").filter(has_text="which plane?").click()
+            await expect(main).to_contain_text(
+                "The playlist Edge picks was removed, so this chat can be read but not continued."
+            )
+            await expect(main.get_by_role("list", name="Conversation")).to_contain_text("A jack plane")
+
     # The browser logs each refusal the dialog showed, and nothing else went wrong.
     refused = "Failed to load resource: the server responded with a status of"
     assert errors == [f"{refused} 422 (Unprocessable Content)", f"{refused} 409 (Conflict)", f"{refused} 409 (Conflict)"]

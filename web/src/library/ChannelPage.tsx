@@ -223,7 +223,8 @@ export function ChannelPage({
           }
         }}
       >
-        Remove {channel.name}, everything ingested from it, and its group memberships? Its chats stay readable.
+        Remove {channel.name}, everything ingested from it, and its group memberships? Videos a playlist includes
+        stay. Its chats stay readable.
       </ConfirmDialog>
     </div>
   );

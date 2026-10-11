@@ -50,7 +50,9 @@ class PlaylistUpdate(BaseModel):
         return value
 
 
-def playlists_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
+def playlists_router(
+    database: Database, transcripts: TranscriptSource, events: Events, min_duration_seconds: int
+) -> APIRouter:
     router = APIRouter()
 
     async def resolve(playlist: str) -> PlaylistInfo:
@@ -83,5 +85,14 @@ def playlists_router(database: Database, transcripts: TranscriptSource, events: 
         if body.name is not None:
             events.syncs()
         return playlist
+
+    @router.delete("/playlists/{playlist_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_playlist(playlist_id: int) -> None:
+        remaining = await database.run(
+            lambda conn: playlists.delete_playlist(conn, playlist_id, min_duration_seconds)
+        )
+        events.syncs()
+        for listed in remaining:
+            events.videos(listed)
 
     return router

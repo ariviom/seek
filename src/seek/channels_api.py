@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, field_validator, model_validator
 
-from seek import channels
+from seek import channels, videos
 from seek.channels import Channel, ChannelFilters, CheckHours
 from seek.db import Database
 from seek.events import Events
@@ -73,7 +73,9 @@ class ChannelUpdate(BaseModel):
         return value
 
 
-def channels_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
+def channels_router(
+    database: Database, transcripts: TranscriptSource, events: Events, min_duration_seconds: int
+) -> APIRouter:
     router = APIRouter()
 
     async def resolve(channel: str) -> ChannelInfo:
@@ -108,7 +110,9 @@ def channels_router(database: Database, transcripts: TranscriptSource, events: E
 
     @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_channel(channel_id: int) -> None:
-        await database.run(lambda conn: channels.delete_channel(conn, channel_id))
+        remaining = await database.run(lambda conn: videos.delete_channel(conn, channel_id, min_duration_seconds))
         events.syncs()
+        for listed in remaining:
+            events.videos(listed)
 
     return router

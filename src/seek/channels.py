@@ -98,16 +98,36 @@ def list_channels(conn: sqlite3.Connection) -> list[Channel]:
 
 
 def create_channel(conn: sqlite3.Connection, info: ChannelInfo, name: str | None = None) -> Channel:
-    """Adds the Channel under the given name, or else its display name on YouTube."""
+    """Adds the Channel under the given name, or else its display name on YouTube.
+
+    A creator known outside the Library, crediting Videos that Playlists include, is brought into it as that same
+    Channel, so those Videos are kept. It starts as a new Channel does: Active, unfiltered, checked daily, and
+    not synced until the user starts its first Sync.
+    """
     with transaction(conn):
         # Checked up front rather than via the UNIQUE constraint so the error can name the Channel.
-        existing = conn.execute("SELECT name FROM channels WHERE youtube_channel_id = ?", (info.channel_id,)).fetchone()
-        if existing is not None:
-            raise Conflict(f"The Channel {info.name!r} is already added as {existing['name']!r}")
-        (channel_id,) = conn.execute(
-            "INSERT INTO channels (youtube_channel_id, name, avatar_url) VALUES (?, ?, ?) RETURNING id",
-            (info.channel_id, name or info.name, info.avatar_url),
+        existing = conn.execute(
+            "SELECT id, name, in_library FROM channels WHERE youtube_channel_id = ?", (info.channel_id,)
         ).fetchone()
+        if existing is None:
+            (channel_id,) = conn.execute(
+                "INSERT INTO channels (youtube_channel_id, name, avatar_url) VALUES (?, ?, ?) RETURNING id",
+                (info.channel_id, name or info.name, info.avatar_url),
+            ).fetchone()
+        elif existing["in_library"]:
+            raise Conflict(f"The Channel {info.name!r} is already added as {existing['name']!r}")
+        else:
+            channel_id = existing["id"]
+            # The values the columns default to for a Channel inserted above.
+            conn.execute(
+                """
+                UPDATE channels SET in_library = 1, name = ?, avatar_url = coalesce(?, avatar_url), indexed = 1,
+                                    check_every_hours = 24, published_after = NULL, published_before = NULL,
+                                    playlist_id = NULL, most_recent = NULL
+                WHERE id = ?
+                """,
+                (name or info.name, info.avatar_url, channel_id),
+            )
         return _get_channel(conn, channel_id)
 
 
@@ -175,8 +195,18 @@ def update_channel(
         return _get_channel(conn, channel_id)
 
 
-def delete_channel(conn: sqlite3.Connection, channel_id: int) -> None:
-    """Removes the Channel, everything ingested from it, and its Group memberships; its Conversations stay readable."""
-    with transaction(conn):
-        if conn.execute("DELETE FROM channels WHERE id = ? AND in_library = 1", (channel_id,)).rowcount == 0:
-            raise NotFound(f"Channel {channel_id} not found")
+def leave_library(conn: sqlite3.Connection, channel_id: int) -> None:
+    """Within a transaction: takes the Channel out of the Library, where it stays only to credit the Videos that
+    Playlists include. Its filters are cleared, and its Group memberships and Syncs removed. Its Conversations
+    lose it as their scope, so they stay read-only even if the Channel is added again."""
+    conn.execute(
+        """
+        UPDATE channels SET in_library = 0, published_after = NULL, published_before = NULL, playlist_id = NULL,
+                            most_recent = NULL
+        WHERE id = ?
+        """,
+        (channel_id,),
+    )
+    conn.execute("DELETE FROM group_channels WHERE channel_id = ?", (channel_id,))
+    conn.execute("DELETE FROM syncs WHERE channel_id = ?", (channel_id,))
+    conn.execute("UPDATE conversations SET channel_id = NULL WHERE channel_id = ?", (channel_id,))

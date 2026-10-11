@@ -487,6 +487,33 @@ def apply_keep_rule(conn: sqlite3.Connection, video_ids: Collection[int], min_du
     )
 
 
+def delete_channel(conn: sqlite3.Connection, channel_id: int, min_duration_seconds: int) -> list[Listed]:
+    """Removes the Channel from the Library; its Conversations stay readable.
+
+    A Channel with no Video in any Playlist is deleted, with everything ingested from it and its Group
+    memberships. One a Playlist still draws on is taken out of the Library instead: the Videos Playlists include
+    stay, credited as before, and the keep rule deletes the rest.
+
+    Returns where the Videos that stay are listed, for the pages that list them to reload.
+    """
+    with transaction(conn):
+        _require_channel(conn, channel_id)
+        # Read before anything is deleted, as apply_keep_rule asks.
+        rows = conn.execute(
+            """
+            SELECT id, EXISTS (SELECT 1 FROM playlist_videos WHERE playlist_videos.video_id = videos.id) AS included
+            FROM videos WHERE channel_id = ?
+            """,
+            (channel_id,),
+        ).fetchall()
+        if not any(row["included"] for row in rows):
+            conn.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+            return []
+        channels.leave_library(conn, channel_id)
+        apply_keep_rule(conn, [row["id"] for row in rows], min_duration_seconds)
+        return listed_by_creator(conn, Source("channel", channel_id))
+
+
 def _sync_exists(conn: sqlite3.Connection, sync_id: int, source: Source) -> bool:
     # A Sync goes with its Channel or Playlist, so this is how either is found to have been deleted meanwhile.
     found = conn.execute(f"SELECT 1 FROM syncs WHERE id = ? AND {source.column} = ?", (sync_id, source.id))
