@@ -265,5 +265,5 @@ async def test_seek_list_shows_playlists_when_they_are_all_that_was_added(
 async def test_seek_list_with_nothing_added_says_so(config: Config) -> None:
     report = await list_all(replace(config, port=free_port()))
 
-    assert format_list(report) == "No Channels yet."
+    assert format_list(report) == "Nothing in the Library yet."
     assert not config.database_path.exists()

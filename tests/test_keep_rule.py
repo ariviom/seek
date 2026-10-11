@@ -190,9 +190,9 @@ async def test_a_deleted_channel_a_playlist_draws_on_leaves_the_library_with_onl
     [group] = (await client.get("/api/groups")).json()
     assert group["channels"] == []
     assert [s["source_name"] for s in (await client.get("/api/syncs")).json()] == ["Sharpening picks"]
-    filters = "published_after, published_before, playlist_id, most_recent"
-    left = query(config, f"SELECT name, in_library, {filters} FROM channels WHERE id = ?", (wright["id"],))
-    assert [tuple(row) for row in left] == [("Wood By Wright", 0, None, None, None, None)]
+    cleared = "check_every_hours, published_after, published_before, playlist_id, most_recent"
+    left = query(config, f"SELECT name, in_library, {cleared} FROM channels WHERE id = ?", (wright["id"],))
+    assert [tuple(row) for row in left] == [("Wood By Wright", 0, None, None, None, None, None)]
 
 
 async def test_a_deleted_channel_no_playlist_draws_on_goes_with_everything_ingested_from_it(

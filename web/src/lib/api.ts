@@ -344,7 +344,7 @@ export const api = {
   retryPlaylistFailed: (playlistId: number) =>
     request<Sync>(`playlists/${playlistId}/retry-failed`, { method: "POST" }),
   retryVideo: (videoId: number) => request<Sync>(`videos/${videoId}/retry`, { method: "POST" }),
-  // Queues a Sync for every active Channel.
+  // Queues a Sync for every active Channel and every active Playlist.
   syncAll: () => request<Sync[]>("syncs", { method: "POST" }),
   listSyncs: () => request<Sync[]>("syncs"),
   listVideos: (channelId: number) => request<Video[]>(`channels/${channelId}/videos`),

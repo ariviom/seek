@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from seek.db import transaction
 from seek.errors import Conflict, NotFound
-from seek.scope import CHANNEL_IN_SCOPE, VIDEO_IN_SCOPE, Scope, scope_params
+from seek.scope import ACTIVE_LIBRARY_CHANNEL, CHANNEL_IN_SCOPE, VIDEO_IN_SCOPE, Scope, scope_params
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ def channel_summaries(conn: sqlite3.Connection, scope: Scope | None = None) -> l
         SELECT channels.id, channels.name,
                (SELECT count(*) FROM videos WHERE videos.channel_id = channels.id AND {VIDEO_IN_SCOPE}) AS video_count
         FROM channels
-        WHERE (:scope_kind IS NOT NULL OR (channels.indexed = 1 AND channels.in_library = 1)) AND {CHANNEL_IN_SCOPE}
+        WHERE (:scope_kind IS NOT NULL OR {ACTIVE_LIBRARY_CHANNEL}) AND {CHANNEL_IN_SCOPE}
         ORDER BY channels.name COLLATE NOCASE, channels.id
         """,
         scope_params(scope),

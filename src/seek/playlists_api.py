@@ -2,13 +2,12 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, status
-from pydantic import BaseModel, StrictBool, StringConstraints, field_validator
+from pydantic import BaseModel, StrictBool, StringConstraints
 
 from seek import playlists
-from seek.channels import CheckHours
-from seek.channels_api import Name
 from seek.db import Database
 from seek.events import Events
+from seek.fields import CheckEvery, Name
 from seek.playlists import Playlist
 from seek.ports import PlaylistInfo, TranscriptSource
 
@@ -39,15 +38,7 @@ class PlaylistUpdate(BaseModel):
     name: Name | None = None
     indexed: StrictBool | None = None
     # Null turns checks off, so only a field left out is unchanged.
-    check_every_hours: CheckHours | None = None
-
-    @field_validator("check_every_hours", mode="before")
-    @classmethod
-    def whole_hours(cls, value: object) -> object:
-        # A Literal of ints would also take 24.0.
-        if value is not None and type(value) is not int:
-            raise ValueError("Check every 6, 24 or 168 hours, or null for off")
-        return value
+    check_every_hours: CheckEvery = None
 
 
 def playlists_router(

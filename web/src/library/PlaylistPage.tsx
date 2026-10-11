@@ -8,10 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChanges } from "@/lib/changes";
-import { formatWhen } from "@/lib/format";
+import { checkLabels, formatWhen } from "@/lib/format";
 import { playlistSync, syncProgress, useNow } from "@/lib/sync-status";
 import { StageRule } from "@/syncs/StageRule";
-import { checkLabels } from "./ChannelPage";
 import { RenameForm } from "./RenameForm";
 import { VideosTable } from "./VideosTable";
 

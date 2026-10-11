@@ -13,7 +13,6 @@ from harness import (
     fake_video,
     fetched,
     list_videos,
-    query,
     running,
     start_sync,
     take_out_of_library,
@@ -376,13 +375,19 @@ async def test_a_channel_outside_the_library_is_never_synced_and_its_videos_are_
     ]
     all_queued = await client.post("/api/syncs")
     await wait_for_syncs(client)
+    # Added again, the Channel is back in the Library, which lists its Videos as they were left.
+    back = await add_channel(client, "@rexkrueger")
+    still_failed = (await list_videos(client, back["id"]))["Rex video"]
 
     assert [r.status_code for r in refused] == [404, 404, 404, 404]
     assert [s["source_name"] for s in all_queued.json()] == ["Wood By Wright"]
     assert fetched(transcripts).count("v-rex") == 1
     # Neither retry cleared the failure before being refused.
-    [still_failed] = query(config, "SELECT failure_stage FROM videos WHERE id = ?", (failed["id"],))
-    assert still_failed["failure_stage"] == "transcript_fetched"
+    assert (still_failed["id"], still_failed["stage"], still_failed["failure_stage"]) == (
+        failed["id"],
+        "failed",
+        "transcript_fetched",
+    )
 
 
 async def test_a_channel_deleted_mid_sync_is_skipped_without_leaving_rows(

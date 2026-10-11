@@ -91,8 +91,9 @@ async def test_a_playlist_sync_ingests_each_video_credited_to_its_creator_who_st
     # The creators credit the Videos without joining the Library, and are never checked on their own.
     assert (await client.get("/api/channels")).json() == []
     assert (await client.get(f"/api/channels/{rex['id']}/videos")).status_code == 404
-    creators = query(config, "SELECT name, in_library, check_every_hours FROM channels ORDER BY name")
-    assert [tuple(row) for row in creators] == [("Rex Krueger", 0, None), ("Wood By Wright", 0, None)]
+    # No surface shows a creator's check setting.
+    creators = query(config, "SELECT name, check_every_hours FROM channels ORDER BY name")
+    assert [tuple(row) for row in creators] == [("Rex Krueger", None), ("Wood By Wright", None)]
     # Each new creator's avatar is looked up once, at the Sync's pace.
     assert transcripts.paced_resolves == ["UC-wright", "UC-rex"]
 
@@ -131,7 +132,7 @@ async def test_a_playlist_sync_skips_videos_under_the_minimum_length_and_records
 
 
 async def test_a_video_shared_with_a_library_channel_is_one_video_that_either_sync_can_advance(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
 ) -> None:
     sharpening(transcripts)
     wright = await add_channel(client, "@woodbywright", "Paul Wright")
@@ -174,7 +175,12 @@ async def test_a_video_shared_with_a_library_channel_is_one_video_that_either_sy
         wright["id"],
         "Paul Wright",
     )
-    assert query(config, "SELECT count(*) FROM videos")[0][0] == 4
+    # One Video each, whichever Sync reached it first: the first Playlist lists the Channel's own two.
+    picks = await list_playlist_videos(client, playlist["id"])
+    assert [v["id"] for v in picks if v["channel_id"] == wright["id"]] == [
+        channel_videos["Sharpening chisels"]["id"],
+        channel_videos["Plane irons"]["id"],
+    ]
     # The Channel was known, so only Rex's avatar needed looking up, and it stays in the Library under its name.
     assert transcripts.paced_resolves == ["UC-rex"]
     assert [(c["name"], c["indexed_videos"]) for c in (await client.get("/api/channels")).json()] == [("Paul Wright", 3)]

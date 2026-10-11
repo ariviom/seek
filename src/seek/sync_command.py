@@ -115,13 +115,13 @@ def _hand_off(url: str, channel: str | None, playlist: str | None, reindex: bool
     try:
         if channel is not None:
             listed = TypeAdapter(list[Channel]).validate_json(request(f"{url}api/channels"))
-            source = f"channels/{find_channel(listed, channel).id}"
+            path = f"channels/{find_channel(listed, channel).id}"
         elif playlist is not None:
             added = TypeAdapter(list[Playlist]).validate_json(request(f"{url}api/playlists"))
-            source = f"playlists/{find_playlist(added, playlist).id}"
+            path = f"playlists/{find_playlist(added, playlist).id}"
         else:
             return TypeAdapter(list[Sync]).validate_json(request(f"{url}api/syncs", "POST", options))
-        return [TypeAdapter(Sync).validate_json(request(f"{url}api/{source}/syncs", "POST", options))]
+        return [TypeAdapter(Sync).validate_json(request(f"{url}api/{path}/syncs", "POST", options))]
     except ValidationError as e:
         # e.g. this upgraded seek ran against the server from before the upgrade.
         raise SyncCommandError(

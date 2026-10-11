@@ -66,7 +66,7 @@ export function useSearch(channels: Channel[] | null, groups: Group[] | null, pl
           ? chosenIds.length === 1
             ? (channels?.find((c) => c.id === chosenIds[0])?.name ?? "1 channel")
             : `${chosenIds.length} channels`
-          : "every channel");
+          : "Everything");
       setOutcome({
         id: ++searches.current,
         query: query.trim(),

@@ -7,12 +7,12 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints, field_validator, model_validator
 
 from seek import channels, videos
-from seek.channels import Channel, ChannelFilters, CheckHours
+from seek.channels import Channel, ChannelFilters
 from seek.db import Database
 from seek.events import Events
+from seek.fields import CheckEvery, Name
 from seek.ports import ChannelInfo, TranscriptSource
 
-type Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 # A YouTube channel URL, @handle, or channel id.
 type ChannelInput = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
@@ -62,15 +62,7 @@ class ChannelUpdate(BaseModel):
     indexed: StrictBool | None = None
     filters: FiltersBody | None = None
     # Null turns checks off, so only a field left out is unchanged.
-    check_every_hours: CheckHours | None = None
-
-    @field_validator("check_every_hours", mode="before")
-    @classmethod
-    def whole_hours(cls, value: object) -> object:
-        # A Literal of ints would also take 24.0.
-        if value is not None and type(value) is not int:
-            raise ValueError("Check every 6, 24 or 168 hours, or null for off")
-        return value
+    check_every_hours: CheckEvery = None
 
 
 def channels_router(

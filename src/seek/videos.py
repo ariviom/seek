@@ -117,12 +117,14 @@ def creators(conn: sqlite3.Connection, source: Source) -> set[int]:
     return {row["channel_id"] for row in rows}
 
 
-def listed_by_creator(conn: sqlite3.Connection, source: Source, also: Collection[int] = ()) -> list[Listed]:
+def listed_by_creator(
+    conn: sqlite3.Connection, source: Source, also_channel_ids: Collection[int] = ()
+) -> list[Listed]:
     """Where the source's Videos are listed, a creator at a time: each Channel one of them is credited to, with
     every Playlist that includes any of that Channel's Videos.
 
-    `also` names Channels to list as well, such as the creators of Videos a Playlist has just dropped. A Channel
-    that is gone is left out.
+    `also_channel_ids` names Channels to list as well, such as the creators of Videos a Playlist has just dropped.
+    A Channel that is gone is left out.
     """
     rows = conn.execute(
         """
@@ -133,7 +135,7 @@ def listed_by_creator(conn: sqlite3.Connection, source: Source, also: Collection
         WHERE channels.id IN (SELECT value FROM json_each(?))
         ORDER BY channels.id, playlist_videos.playlist_id
         """,
-        (json.dumps(sorted({*creators(conn, source), *also})),),
+        (json.dumps(sorted({*creators(conn, source), *also_channel_ids})),),
     )
     playlists: dict[int, list[int]] = {}
     for row in rows:

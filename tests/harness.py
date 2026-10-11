@@ -340,7 +340,8 @@ def query(config: Config, sql: str, params: Sequence[object] = ()) -> list[sqlit
 
 
 def take_out_of_library(config: Config, channel: Json) -> None:
-    """Leaves the Channel as one that only credits a Playlist's Videos, written directly until Playlists can."""
+    """Leaves the Channel as one outside the Library, written directly so a test of what refuses such a Channel
+    needs no Playlist to put it there."""
     conn = db.connect(config.database_path)
     try:
         conn.execute("UPDATE channels SET in_library = 0 WHERE id = ?", (channel["id"],))

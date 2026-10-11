@@ -158,7 +158,7 @@ def _model_state(model: ModelStatus) -> str:
 
 def format_list(report: ListReport) -> str:
     if not report.channels and not report.groups and not report.playlists:
-        return "No Channels yet."
+        return "Nothing in the Library yet."
     lines = ["Channels:" if report.channels else "Channels: none"]
     for c in report.channels:
         paused = "" if c.indexed else ", paused"

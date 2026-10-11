@@ -197,12 +197,12 @@ def update_channel(
 
 def leave_library(conn: sqlite3.Connection, channel_id: int) -> None:
     """Within a transaction: takes the Channel out of the Library, where it stays only to credit the Videos that
-    Playlists include. Its filters are cleared, and its Group memberships and Syncs removed. Its Conversations
-    lose it as their scope, so they stay read-only even if the Channel is added again."""
+    Playlists include. Its filters and its checks are cleared, and its Group memberships and Syncs removed. Its
+    Conversations lose it as their scope, so they stay read-only even if the Channel is added again."""
     conn.execute(
         """
-        UPDATE channels SET in_library = 0, published_after = NULL, published_before = NULL, playlist_id = NULL,
-                            most_recent = NULL
+        UPDATE channels SET in_library = 0, check_every_hours = NULL, published_after = NULL,
+                            published_before = NULL, playlist_id = NULL, most_recent = NULL
         WHERE id = ?
         """,
         (channel_id,),

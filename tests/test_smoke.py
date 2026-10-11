@@ -875,7 +875,7 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
             await expect(ask).to_be_visible()
             await search.get_by_role("button", name="Everything").click()
             await search.get_by_role("button", name="Search", exact=True).click()
-            await expect(main).to_contain_text("in every channel for “flatten the bench”")
+            await expect(main).to_contain_text("in Everything for “flatten the bench”")
             await expect(result).to_contain_text("Wood By Wright")
 
             # Wood By Wright isn't in the Library, so asking about its Video opens a chat in the Playlist that

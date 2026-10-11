@@ -37,3 +37,6 @@ export const stageLabels: Record<Stage, string> = {
   failed: "Failed",
   excluded: "Excluded",
 };
+
+// How often a Channel or a Playlist is checked, by the Select value that picks it.
+export const checkLabels: Record<string, string> = { "6": "Every 6 hours", "24": "Daily", "168": "Weekly", off: "Off" };

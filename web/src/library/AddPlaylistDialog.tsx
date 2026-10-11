@@ -76,7 +76,7 @@ export function AddPlaylistDialog({
           <DialogTitle>Add a playlist</DialogTitle>
           <DialogDescription>
             Seek fetches and indexes every video in the playlist, each credited to the creator who made it. The
-            creators aren’t added to your channels.
+            creators aren’t added to your Library.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={proposal === null ? lookUp : add} className="grid gap-3">

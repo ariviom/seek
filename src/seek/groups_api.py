@@ -3,7 +3,7 @@ from pydantic import BaseModel, StrictInt
 
 from seek import groups
 from seek.db import Database
-from seek.channels_api import Name
+from seek.fields import Name
 from seek.groups import Group
 
 

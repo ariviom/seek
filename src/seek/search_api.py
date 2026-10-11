@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, StrictInt, StringConstraints, model_valid
 
 from seek import sources
 from seek.db import Database
-from seek.channels_api import Name
+from seek.fields import Name
 from seek.search import CANDIDATES, PreferRecent, Search, SearchResult
 from seek.sources import DEFAULT_EXPAND_SECONDS, MAX_EXPAND_SECONDS, Expansion
 

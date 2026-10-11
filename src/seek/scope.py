@@ -16,7 +16,8 @@ class Scope:
 # The glossary term for each kind, for messages.
 SCOPE_NOUN: dict[ScopeKind, str] = {"group": "Group", "channel": "Channel", "playlist": "Playlist"}
 
-_ACTIVE_LIBRARY_CHANNEL = "(channels.indexed = 1 AND channels.in_library = 1)"
+# Matches a row of the channels table when the Channel is in the Library and indexed.
+ACTIVE_LIBRARY_CHANNEL = "(channels.indexed = 1 AND channels.in_library = 1)"
 
 # The indexed Playlists that include a row of the videos table.
 _ACTIVE_PLAYLISTS = """
@@ -31,9 +32,9 @@ _ACTIVE_PLAYLISTS = """
 VIDEO_IN_SCOPE = f"""(
     videos.pipeline_stage = 'done' AND videos.excluded_reason IS NULL
     AND (
-        (:scope_kind IS NULL AND ({_ACTIVE_LIBRARY_CHANNEL} OR EXISTS (SELECT 1 {_ACTIVE_PLAYLISTS})))
-        OR (:scope_kind = 'channel' AND {_ACTIVE_LIBRARY_CHANNEL} AND videos.channel_id = :scope_id)
-        OR (:scope_kind = 'group' AND {_ACTIVE_LIBRARY_CHANNEL}
+        (:scope_kind IS NULL AND ({ACTIVE_LIBRARY_CHANNEL} OR EXISTS (SELECT 1 {_ACTIVE_PLAYLISTS})))
+        OR (:scope_kind = 'channel' AND {ACTIVE_LIBRARY_CHANNEL} AND videos.channel_id = :scope_id)
+        OR (:scope_kind = 'group' AND {ACTIVE_LIBRARY_CHANNEL}
             AND videos.channel_id IN (SELECT channel_id FROM group_channels WHERE group_id = :scope_id))
         OR (:scope_kind = 'playlist' AND EXISTS (SELECT 1 {_ACTIVE_PLAYLISTS} AND playlists.id = :scope_id))
     )

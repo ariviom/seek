@@ -265,10 +265,12 @@ class SyncWorker:
         )
         return None if new_videos is None else _Discovery(new_videos, creators_before=creators_before)
 
-    async def _videos_changed(self, sync: ClaimedSync, also: Collection[int] = ()) -> None:
-        """Publishes that the source's Videos may have changed, to every page that lists any of them; `also` names
-        further Channels whose Videos did."""
-        for listed in await self._database.run(lambda conn: videos.listed_by_creator(conn, sync.source, also)):
+    async def _videos_changed(self, sync: ClaimedSync, also_channel_ids: Collection[int] = ()) -> None:
+        """Publishes that the source's Videos may have changed, to every page that lists any of them;
+        `also_channel_ids` names further Channels whose Videos did."""
+        for listed in await self._database.run(
+            lambda conn: videos.listed_by_creator(conn, sync.source, also_channel_ids)
+        ):
             self._events.videos(listed)
 
     def _avatar(self, youtube_channel_id: str) -> str | None:

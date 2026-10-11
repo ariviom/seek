@@ -30,8 +30,13 @@ export function VideosTable({ source }: { source: { kind: "channel" | "playlist"
   );
   const react = (event: ServerEvent): Reaction<Video | PlaylistVideo> => {
     if (event.type !== "video" && event.type !== "videos") return null;
-    // A Video event carries neither its creator's name nor its place in the playlist, so a Playlist's table reloads.
-    if (kind === "playlist") return event.playlist_ids.includes(id) ? "reload" : null;
+    if (kind === "playlist") {
+      if (!event.playlist_ids.includes(id)) return null;
+      if (event.type === "videos") return "reload";
+      // A Video event carries neither its creator's name nor its place in the playlist, so the row keeps its own.
+      // A Video new to the Playlist isn't listed yet; it comes with the reload that follows the playlist's listing.
+      return (videos) => videos.map((video) => (video.id === event.video.id ? { ...video, ...event.video } : video));
+    }
     if (event.channel_id !== id) return null;
     if (event.type === "videos") return "reload";
     return (videos) => [event.video, ...videos.filter((v) => v.id !== event.video.id)].sort(newestFirst);
