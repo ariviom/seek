@@ -39,6 +39,10 @@ A run of the ingestion pipeline for one Channel or one Playlist. Discovers new V
 **Pipeline stage**
 Where a Video sits in ingestion: discovered, transcript fetched, segmented, embedded, done, or failed with a reason. Failed Videos can be retried. A Video can also be excluded with a reason (too short, or outside the Channel's filters); excluded Videos are not processed and are not failures.
 
+**Bundle**
+A `.seek` file holding one Channel's or one Playlist's indexed Videos, with their Transcripts and Segments, for handing to another Seek. Exported from one Library and imported into another.
+_Avoid_: export (as a noun), pack, archive, backup
+
 **Conversation**
 A saved chat thread scoped to exactly one Group, one Channel, or one Playlist; a Channel alone works like a group of one. It may
 also keep read-only access to a selected local project, the public web, or both. Resumable.
@@ -67,6 +71,7 @@ also keep read-only access to a selected local project, the public web, or both.
 - A Channel outside the Library is never a scope: it is not offered in pickers and is not a Conversation's scope. Adding it through the usual flow brings it into the Library, keeping its indexed Videos.
 - Deleting a Channel whose Videos a Playlist includes takes it out of the Library; those Videos stay.
 - A deleted Group, Channel, or Playlist leaves its Conversations readable but not continuable.
+- An imported Bundle becomes an ordinary Channel or Playlist in the Library, and never replaces a Video that has finished indexing there.
 - "Seek" is the product's name and nothing else.
 - Shorts and very short Videos are excluded from ingestion by default.
 - The tool has one user. Identity, when accessed remotely, is established outside the tool.
