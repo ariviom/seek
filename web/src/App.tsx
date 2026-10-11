@@ -15,7 +15,7 @@ import { ChannelAvatars, avatarsOf } from "@/lib/channel-avatars";
 import { useLiveUpdatesStopped, useServerEvents } from "@/lib/events";
 import { useMediaQuery } from "@/lib/media";
 import { usePlayback } from "@/lib/playback";
-import { channelSync } from "@/lib/sync-status";
+import { channelSync, playlistSync } from "@/lib/sync-status";
 import { useUrlState, type View } from "@/lib/url-state";
 import { ThumbnailsToggle } from "@/components/Frames";
 import { Badge } from "@/components/ui/badge";
@@ -118,15 +118,22 @@ export function App() {
     // A deleted or renamed Group changes how its Conversations are listed.
     setConversationsVersion((v) => v + 1);
   }, []);
-  // Likewise a renamed or removed Channel; the list reloads with every Sync's counts, so only its names are watched.
-  const channelNames = channels?.map((c) => `${c.id}:${c.name}`).join("\n");
-  const seenChannelNames = useRef<string | undefined>(undefined);
+  // Likewise a renamed or removed Channel or Playlist; the lists reload with every Sync's counts, so only their
+  // names are watched.
+  const scopeNames =
+    channels === null || playlists === null
+      ? undefined
+      : [
+          ...channels.map((c) => `channel:${c.id}:${c.name}`),
+          ...playlists.map((p) => `playlist:${p.id}:${p.name}`),
+        ].join("\n");
+  const seenScopeNames = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (seenChannelNames.current !== undefined && channelNames !== seenChannelNames.current) {
+    if (seenScopeNames.current !== undefined && scopeNames !== seenScopeNames.current) {
       setConversationsVersion((v) => v + 1);
     }
-    seenChannelNames.current = channelNames;
-  }, [channelNames]);
+    seenScopeNames.current = scopeNames;
+  }, [scopeNames]);
   // The newest model statuses from the event stream, and how many have arrived, so a Health response that was
   // already in flight can't undo them.
   const latestModels = useRef<Health["models"] | null>(null);
@@ -220,9 +227,12 @@ export function App() {
   const liveUpdatesStopped = useLiveUpdatesStopped();
   const { items: syncs, error: syncsError } = useSyncs();
   const syncAll = useSyncAll();
-  // Sync all is a no-op once every active Channel already has a Sync queued or running.
-  const active = channels?.filter((channel) => channel.indexed) ?? [];
-  const syncing = active.length > 0 && active.every((channel) => channelSync(syncs, channel.id) !== null);
+  // Sync all is a no-op once every active Channel and Playlist already has a Sync queued or running.
+  const active = [
+    ...(channels ?? []).filter((c) => c.indexed).map((c) => channelSync(syncs, c.id)),
+    ...(playlists ?? []).filter((p) => p.indexed).map((p) => playlistSync(syncs, p.id)),
+  ];
+  const syncing = active.length > 0 && active.every((sync) => sync !== null);
   const library = useLibraryDialogs({ select, reloadChannels, reloadGroups, reloadPlaylists });
 
   const search = useSearch(channels, groups, playlists);

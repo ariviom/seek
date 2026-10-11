@@ -909,6 +909,32 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
             await main.get_by_role("button", name="New chat").click()
             await expect(main.get_by_role("heading", name="New chat in Hand tool picks")).to_be_visible()
 
+            # Its page renames it, on its chats too, and says when it is next checked.
+            sections = page.get_by_role("navigation", name="Sections")
+            await sections.get_by_role("button", name="Library").click()
+            await main.get_by_role("button", name="Rename").click()
+            await main.get_by_label("Playlist name").fill("Edge picks")
+            await main.get_by_role("button", name="Save").click()
+            await expect(main.get_by_role("heading", name="Edge picks")).to_be_visible()
+            await expect(main.get_by_role("combobox", name="Check for changes")).to_have_text("Daily")
+            await expect(videos_card).to_contain_text("Next check around ")
+            await sections.get_by_role("button", name="Chats").click()
+            await expect(chats.get_by_role("button", name=re.compile(r"^Edge picks"))).to_be_visible()
+            await expect(chats.get_by_role("button", name=re.compile(r"^Hand tool picks"))).to_have_count(0)
+
+            # Paused, it isn't checked and can't start a chat, until it is resumed.
+            await sections.get_by_role("button", name="Library").click()
+            await main.get_by_role("button", name="Pause playlist").click()
+            await expect(videos_card).to_contain_text("Paused playlists aren’t checked.")
+            await expect(main.get_by_text("Paused", exact=True)).to_be_visible()
+            await expect(main.get_by_role("button", name="New chat")).to_be_disabled()
+            async with httpx.AsyncClient(base_url=base_url) as client:
+                [listed] = (await client.get("api/playlists")).json()
+            assert (listed["name"], listed["indexed"]) == ("Edge picks", False)
+            await main.get_by_role("button", name="Resume playlist").click()
+            await expect(main.get_by_role("button", name="New chat")).to_be_enabled()
+            await expect(videos_card).to_contain_text("Next check around ")
+
     # The browser logs each refusal the dialog showed, and nothing else went wrong.
     refused = "Failed to load resource: the server responded with a status of"
     assert errors == [f"{refused} 422 (Unprocessable Content)", f"{refused} 409 (Conflict)", f"{refused} 409 (Conflict)"]

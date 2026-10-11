@@ -109,14 +109,19 @@ def enqueue(conn: sqlite3.Connection, source: Source, reindex: bool = False) -> 
 
 
 def enqueue_all(conn: sqlite3.Connection, reindex: bool = False) -> list[Sync]:
-    """Queues a Sync for every indexed Channel in the Library, as enqueue does for one."""
+    """Queues a Sync for every indexed Channel in the Library and then every indexed Playlist, as enqueue does for
+    one."""
     with transaction(conn):
-        rows = conn.execute("SELECT id FROM channels WHERE indexed = 1 AND in_library = 1 ORDER BY id")
-        channel_ids = [row["id"] for row in rows]
-        return [
-            _enqueue(conn, Source("channel", channel_id), retry_failed=False, reindex=reindex)
-            for channel_id in channel_ids
-        ]
+        rows = conn.execute(
+            """
+            SELECT 'channel' AS kind, id FROM channels WHERE indexed = 1 AND in_library = 1
+            UNION ALL
+            SELECT 'playlist', id FROM playlists WHERE indexed = 1
+            ORDER BY 1, 2
+            """
+        )
+        sources = [Source(row["kind"], row["id"]) for row in rows]
+        return [_enqueue(conn, source, retry_failed=False, reindex=reindex) for source in sources]
 
 
 def retry_failed(conn: sqlite3.Connection, source: Source) -> Sync:
@@ -180,29 +185,37 @@ def _enqueue(conn: sqlite3.Connection, source: Source, retry_failed: bool, reind
 def is_due(
     indexed: bool, check_every_hours: int | None, open_sync: bool, last_queued_at: datetime | None, now: datetime
 ) -> bool:
-    """Whether the Channel's automatic check should queue a Sync now: it is Active with checks on, has no Sync
-    queued or running, and its latest Sync was queued longer ago than its interval. A Channel never synced isn't
-    checked: its first Sync, which ingests its whole catalogue, stays the user's to start once its Filters are set."""
+    """Whether the automatic check of a Channel or Playlist should queue a Sync now: it is Active with checks on,
+    has no Sync queued or running, and its latest Sync was queued longer ago than its interval. One never synced
+    isn't checked: its first Sync, which ingests everything it lists, stays the user's to start (for a Channel,
+    once its Filters are set)."""
     if not indexed or check_every_hours is None or open_sync or last_queued_at is None:
         return False
     return now - last_queued_at > timedelta(hours=check_every_hours)
 
 
 def enqueue_due(conn: sqlite3.Connection, now: datetime) -> list[Sync]:
-    """Queues a Sync, as enqueue does, for every Channel in the Library whose automatic check is due."""
+    """Queues a Sync, as enqueue does, for every Library Channel and every Playlist whose automatic check is due."""
     with transaction(conn):
         rows = conn.execute(
             """
-            SELECT channels.id, channels.indexed, channels.check_every_hours,
+            SELECT 'channel' AS kind, channels.id, channels.indexed, channels.check_every_hours,
                    EXISTS (SELECT 1 FROM syncs WHERE syncs.channel_id = channels.id
                              AND syncs.status IN ('queued', 'running')) AS open_sync,
                    (SELECT queued_at FROM syncs WHERE syncs.channel_id = channels.id ORDER BY syncs.id DESC LIMIT 1)
                      AS last_queued_at
-            FROM channels WHERE channels.in_library = 1 ORDER BY channels.id
+            FROM channels WHERE channels.in_library = 1
+            UNION ALL
+            SELECT 'playlist', playlists.id, playlists.indexed, playlists.check_every_hours,
+                   EXISTS (SELECT 1 FROM syncs WHERE syncs.playlist_id = playlists.id
+                             AND syncs.status IN ('queued', 'running')),
+                   (SELECT queued_at FROM syncs WHERE syncs.playlist_id = playlists.id ORDER BY syncs.id DESC LIMIT 1)
+            FROM playlists
+            ORDER BY 1, 2
             """
         ).fetchall()
         return [
-            _enqueue(conn, Source("channel", row["id"]), retry_failed=False)
+            _enqueue(conn, Source(row["kind"], row["id"]), retry_failed=False)
             for row in rows
             if is_due(
                 bool(row["indexed"]),

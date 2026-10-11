@@ -319,6 +319,7 @@ async def test_a_playlist_is_resolved_from_its_url_and_added_under_its_youtube_t
         "failed_videos": 0,
         "excluded_videos": 0,
         "last_synced_at": None,
+        "next_check_at": None,
         "creators": [],
     }
     assert listed.json() == [added]
@@ -372,3 +373,69 @@ async def test_a_missing_or_private_playlist_is_refused_with_how_to_give_seek_ac
     assert "youtube_cookies_from_browser" in resolved.json()["detail"]
     assert unreachable.status_code == 503
     assert (await client.get("/api/playlists")).json() == []
+
+
+async def test_a_playlist_is_renamed_paused_and_given_a_check_interval_each_leaving_the_rest_unchanged(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    sharpening(transcripts)
+    added = await add_playlist(client, "PL-sharpening")
+    url = f"/api/playlists/{added['id']}"
+
+    renamed = await client.patch(url, json={"name": "  My edges  "})
+    weekly = await client.patch(url, json={"check_every_hours": 168})
+    paused = await client.patch(url, json={"indexed": False})
+    off = await client.patch(url, json={"check_every_hours": None})
+    resumed = await client.patch(url, json={"indexed": True})
+
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json() == added | {"name": "My edges"}
+    assert weekly.json() == added | {"name": "My edges", "check_every_hours": 168}
+    # Pausing keeps the interval; only null turns checks off.
+    assert paused.json() == added | {"name": "My edges", "check_every_hours": 168, "indexed": False}
+    assert off.json() == added | {"name": "My edges", "check_every_hours": None, "indexed": False}
+    assert resumed.json() == added | {"name": "My edges", "check_every_hours": None}
+    assert (await client.get("/api/playlists")).json() == [resumed.json()]
+
+
+async def test_sync_all_covers_active_playlists_beside_the_librarys_channels_and_leaves_paused_ones(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    sharpening(transcripts)
+    transcripts.playlists["PL-joinery"] = FakePlaylist("Joinery", [("UC-rex", "v-knives")])
+    wright = await add_channel(client, "@woodbywright")
+    active = await add_playlist(client, "PL-sharpening")
+    paused = await add_playlist(client, "PL-joinery")
+    await client.patch(f"/api/playlists/{paused['id']}", json={"indexed": False})
+
+    response = await client.post("/api/syncs")
+    finished = await wait_for_syncs(client)
+
+    assert response.status_code == 202, response.text
+    assert [(s["channel_id"], s["playlist_id"]) for s in response.json()] == [(wright["id"], None), (None, active["id"])]
+    assert [(s["source_name"], s["status"]) for s in finished] == [("Sharpening", "done"), ("Wood By Wright", "done")]
+    assert [len(await list_playlist_videos(client, p["id"])) for p in (active, paused)] == [3, 0]
+
+
+async def test_a_playlist_cant_take_another_playlists_name_a_blank_one_or_an_odd_check_interval(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    sharpening(transcripts)
+    transcripts.playlists["PL-joinery"] = FakePlaylist("Joinery", [])
+    edges = await add_playlist(client, "PL-sharpening", "Edges")
+    await add_playlist(client, "PL-joinery")
+    url = f"/api/playlists/{edges['id']}"
+
+    taken = await client.patch(url, json={"name": "joinery"})
+    own_name = await client.patch(url, json={"name": "EDGES"})
+    refused = [
+        (await client.patch(url, json=body)).status_code
+        for body in ({"name": "  "}, {"indexed": "no"}, {"check_every_hours": 12}, {"check_every_hours": 24.0})
+    ]
+    unknown = await client.patch("/api/playlists/999", json={"name": "Anything"})
+
+    assert (taken.status_code, taken.json()) == (409, {"detail": "A Playlist named 'Joinery' already exists"})
+    assert (own_name.status_code, own_name.json()["name"]) == (200, "EDGES")
+    assert refused == [422] * 4
+    assert (unknown.status_code, unknown.json()) == (404, {"detail": "Playlist 999 not found"})
+    assert [p["name"] for p in (await client.get("/api/playlists")).json()] == ["EDGES", "Joinery"]

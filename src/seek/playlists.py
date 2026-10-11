@@ -3,10 +3,12 @@ blocking; run them through Database.run."""
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from types import EllipsisType
 
 from seek.channels import CheckHours
 from seek.db import transaction
-from seek.errors import Conflict
+from seek.errors import Conflict, NotFound
 from seek.groups import ChannelSummary, channel_summaries
 from seek.ports import PlaylistInfo
 from seek.scope import Scope
@@ -34,6 +36,9 @@ class Playlist:
     failed_videos: int
     excluded_videos: int
     last_synced_at: str | None
+    # When the automatic check next queues a Sync: an interval after the latest Sync was queued. None while no
+    # check is coming: Paused, checks off, or never synced.
+    next_check_at: str | None
     creators: list[Creator]
 
 
@@ -54,7 +59,9 @@ def _select(conn: sqlite3.Connection, playlist_id: int | None = None) -> list[Pl
                   AND videos.failure_stage IS NOT NULL) AS failed_videos,
                (SELECT count(*) {_INCLUDED} AND videos.excluded_reason IS NOT NULL) AS excluded_videos,
                (SELECT max(finished_at) FROM syncs WHERE syncs.playlist_id = playlists.id AND syncs.status = 'done')
-                 AS last_synced_at
+                 AS last_synced_at,
+               (SELECT queued_at FROM syncs WHERE syncs.playlist_id = playlists.id ORDER BY syncs.id DESC LIMIT 1)
+                 AS last_queued_at
         FROM playlists
         WHERE ?1 IS NULL OR playlists.id = ?1
         ORDER BY playlists.name COLLATE NOCASE, playlists.id
@@ -86,10 +93,18 @@ def _select(conn: sqlite3.Connection, playlist_id: int | None = None) -> list[Pl
             failed_videos=row["failed_videos"],
             excluded_videos=row["excluded_videos"],
             last_synced_at=row["last_synced_at"],
+            next_check_at=_next_check(row),
             creators=creators[row["id"]],
         )
         for row in rows
     ]
+
+
+def _next_check(row: sqlite3.Row) -> str | None:
+    if not row["indexed"] or row["check_every_hours"] is None or row["last_queued_at"] is None:
+        return None
+    due = datetime.fromisoformat(row["last_queued_at"]) + timedelta(hours=row["check_every_hours"])
+    return due.isoformat(timespec="seconds")
 
 
 def list_playlists(conn: sqlite3.Connection) -> list[Playlist]:
@@ -134,5 +149,34 @@ def create_playlist(conn: sqlite3.Connection, info: PlaylistInfo, name: str | No
         (playlist_id,) = conn.execute(
             "INSERT INTO playlists (youtube_playlist_id, name) VALUES (?, ?) RETURNING id", (info.playlist_id, name)
         ).fetchone()
+        [playlist] = _select(conn, playlist_id)
+        return playlist
+
+
+def update_playlist(
+    conn: sqlite3.Connection,
+    playlist_id: int,
+    name: str | None = None,
+    indexed: bool | None = None,
+    check_every_hours: CheckHours | None | EllipsisType = ...,
+) -> Playlist:
+    """Changes whichever of the name, indexed, and the check interval are given (None turns checks off, so leaving
+    it unchanged is ...)."""
+    with transaction(conn):
+        if conn.execute("SELECT 1 FROM playlists WHERE id = ?", (playlist_id,)).fetchone() is None:
+            raise NotFound(f"Playlist {playlist_id} not found")
+        if name is not None:
+            taken = conn.execute(
+                "SELECT name FROM playlists WHERE name = ? COLLATE NOCASE AND id != ?", (name, playlist_id)
+            ).fetchone()
+            if taken is not None:
+                raise Conflict(f"A Playlist named {taken['name']!r} already exists")
+            conn.execute("UPDATE playlists SET name = ? WHERE id = ?", (name, playlist_id))
+            # A Conversation keeps its Playlist's name for when the Playlist is gone.
+            conn.execute("UPDATE conversations SET scope_name = ? WHERE playlist_id = ?", (name, playlist_id))
+        if indexed is not None:
+            conn.execute("UPDATE playlists SET indexed = ? WHERE id = ?", (indexed, playlist_id))
+        if check_every_hours is not ...:
+            conn.execute("UPDATE playlists SET check_every_hours = ? WHERE id = ?", (check_every_hours, playlist_id))
         [playlist] = _select(conn, playlist_id)
         return playlist

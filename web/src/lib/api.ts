@@ -101,6 +101,8 @@ export type Playlist = {
   failed_videos: number;
   excluded_videos: number;
   last_synced_at: string | null;
+  // When the server next checks it: null while Paused, with checks off, or before its first Sync.
+  next_check_at: string | null;
   creators: Creator[];
 };
 // `video_count` is the videos a Sync would ingest: those YouTube lists with a creator.
@@ -330,6 +332,12 @@ export const api = {
   setGroupMembers: (id: number, channelIds: number[]) =>
     request<Group>(`groups/${id}/members`, { method: "PUT", body: { channel_ids: channelIds } }),
   startSync: (channelId: number) => request<Sync>(`channels/${channelId}/syncs`, { method: "POST" }),
+  renamePlaylist: (id: number, name: string) =>
+    request<Playlist>(`playlists/${id}`, { method: "PATCH", body: { name } }),
+  setPlaylistIndexed: (id: number, indexed: boolean) =>
+    request<Playlist>(`playlists/${id}`, { method: "PATCH", body: { indexed } }),
+  setPlaylistChecks: (id: number, check_every_hours: CheckHours | null) =>
+    request<Playlist>(`playlists/${id}`, { method: "PATCH", body: { check_every_hours } }),
   startPlaylistSync: (playlistId: number) => request<Sync>(`playlists/${playlistId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   retryPlaylistFailed: (playlistId: number) =>

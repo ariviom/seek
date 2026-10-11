@@ -348,13 +348,9 @@ def take_out_of_library(config: Config, channel: Json) -> None:
         conn.close()
 
 
-def pause_playlist(config: Config, playlist: Json) -> None:
-    """Pauses the Playlist, written directly until the API can."""
-    conn = db.connect(config.database_path)
-    try:
-        conn.execute("UPDATE playlists SET indexed = 0 WHERE id = ?", (playlist["id"],))
-    finally:
-        conn.close()
+async def pause_playlist(client: httpx.AsyncClient, playlist: Json) -> None:
+    response = await client.patch(f"/api/playlists/{playlist['id']}", json={"indexed": False})
+    assert response.status_code == 200, response.text
 
 
 def row_counts(config: Config) -> dict[str, int]:

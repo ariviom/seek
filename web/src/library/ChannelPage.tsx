@@ -31,7 +31,7 @@ function channelCounts(channel: Channel, syncs: Sync[] | null): Record<Stage, nu
   };
 }
 
-const checkLabels: Record<string, string> = { "6": "Every 6 hours", "24": "Daily", "168": "Weekly", off: "Off" };
+export const checkLabels: Record<string, string> = { "6": "Every 6 hours", "24": "Daily", "168": "Weekly", off: "Off" };
 
 // The server checks again once the latest Sync was queued longer ago than the interval; the list holds the newest
 // Syncs, and a Channel whose latest has dropped off it is judged by when it last synced. One never synced waits

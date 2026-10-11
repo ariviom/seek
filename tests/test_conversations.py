@@ -132,7 +132,7 @@ async def test_a_conversation_starts_with_a_channel_that_is_indexed_or_a_group_w
 
 
 async def test_a_conversation_starts_with_a_playlist_that_is_active_and_has_videos_and_is_listed_by_it(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
 ) -> None:
     wright, picks = await sharpening_picks(client, transcripts)
     transcripts.playlists["PL-later"] = FakePlaylist("Watch later", [("UC-rex", "v-knives")])
@@ -140,7 +140,7 @@ async def test_a_conversation_starts_with_a_playlist_that_is_active_and_has_vide
     never_synced = await add_playlist(client, "PL-later")
     paused = await add_playlist(client, "PL-paused")
     await sync_playlist(client, paused)
-    pause_playlist(config, paused)
+    await pause_playlist(client, paused)
     with_wright = await start_channel_conversation(client, wright["id"])
 
     started = await start_playlist_conversation(client, picks["id"], model="haiku")
@@ -173,6 +173,23 @@ async def test_a_conversation_starts_with_a_playlist_that_is_active_and_has_vide
     assert [c["id"] for c in await list_conversations(client, channel_id=wright["id"])] == [with_wright["id"]]
     assert two_filters.status_code == 422
     assert (await get_conversation(client, started["id"]))["scope"] == started["scope"]
+
+
+async def test_renaming_a_playlist_renames_it_on_its_conversations_and_no_others(
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
+) -> None:
+    wright, picks = await sharpening_picks(client, transcripts)
+    with_wright = await start_channel_conversation(client, wright["id"])
+    with_picks = await start_playlist_conversation(client, picks["id"])
+
+    await client.patch(f"/api/playlists/{picks['id']}", json={"name": "Edges"})
+
+    renamed = {"kind": "playlist", "id": picks["id"], "name": "Edges"}
+    assert {c["id"]: c["scope"] for c in await list_conversations(client)} == {
+        with_picks["id"]: renamed,
+        with_wright["id"]: with_wright["scope"],
+    }
+    assert (await get_conversation(client, with_picks["id"]))["scope"] == renamed
 
 
 async def test_a_conversation_cannot_start_with_a_channel_outside_the_library(

@@ -183,7 +183,7 @@ async def test_a_playlist_is_searched_by_id_or_name_and_everything_includes_its_
 
 
 async def test_pausing_a_channel_or_a_playlist_affects_only_what_was_paused(
-    client: httpx.AsyncClient, transcripts: FakeTranscriptSource, config: Config
+    client: httpx.AsyncClient, transcripts: FakeTranscriptSource
 ) -> None:
     wright, playlist = await sharpening_picks(client, transcripts)
 
@@ -196,7 +196,7 @@ async def test_pausing_a_channel_or_a_playlist_affects_only_what_was_paused(
     assert await found(channels=[wright["id"]]) == set()
 
     await client.patch(f"/api/channels/{wright['id']}", json={"indexed": True})
-    pause_playlist(config, playlist)
+    await pause_playlist(client, playlist)
     paused = await search(client, "sharpen on a fine stone")
     assert {r["youtube_video_id"]: r["playlist_ids"] for r in paused} == {"v-chisels": [], "v-saws": []}
     assert await found(playlist=playlist["id"]) == await found(playlist="Sharpening picks") == set()

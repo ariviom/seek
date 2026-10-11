@@ -192,7 +192,7 @@ async def test_list_groups_and_list_channels_show_channels_with_their_searchable
 
 
 async def test_a_playlist_is_listed_searched_and_read_over_mcp_while_it_is_active(
-    served: Served, transcripts: FakeTranscriptSource, config: Config
+    served: Served, transcripts: FakeTranscriptSource
 ) -> None:
     client, app = served
     fake_channel(transcripts, "UC-wright").videos += [
@@ -217,7 +217,7 @@ async def test_a_playlist_is_listed_searched_and_read_over_mcp_while_it_is_activ
     empty = await add_playlist(client, "PL-empty")
     for playlist in (picks, paused):
         await sync_playlist(client, playlist)
-    pause_playlist(config, paused)
+    await pause_playlist(client, paused)
     [wright_id] = [c["id"] for c in (await client.get("/api/playlists")).json()[2]["creators"] if c["id"] != rex["id"]]
 
     listed = await call(app, "list_playlists")
@@ -254,7 +254,7 @@ async def test_a_playlist_is_listed_searched_and_read_over_mcp_while_it_is_activ
     assert (await call(app, "expand", segment_id=knives["segment_id"]))["video_id"] == knives["video_id"]
     assert (await call(app, "get_video", video_id=knives["video_id"]))["channel_name"] == "Rex Krueger"
 
-    pause_playlist(config, picks)
+    await pause_playlist(client, picks)
 
     assert await call(app, "list_playlists") == {
         "result": [{"id": empty["id"], "name": "Empty picks", "video_count": 0, "creators": []}]

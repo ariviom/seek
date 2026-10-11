@@ -2,11 +2,13 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, status
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, StrictBool, StringConstraints, field_validator
 
 from seek import playlists
+from seek.channels import CheckHours
 from seek.channels_api import Name
 from seek.db import Database
+from seek.events import Events
 from seek.playlists import Playlist
 from seek.ports import PlaylistInfo, TranscriptSource
 
@@ -31,7 +33,24 @@ class NewPlaylist(BaseModel):
     name: Name | None = None
 
 
-def playlists_router(database: Database, transcripts: TranscriptSource) -> APIRouter:
+class PlaylistUpdate(BaseModel):
+    """Fields left out are unchanged."""
+
+    name: Name | None = None
+    indexed: StrictBool | None = None
+    # Null turns checks off, so only a field left out is unchanged.
+    check_every_hours: CheckHours | None = None
+
+    @field_validator("check_every_hours", mode="before")
+    @classmethod
+    def whole_hours(cls, value: object) -> object:
+        # A Literal of ints would also take 24.0.
+        if value is not None and type(value) is not int:
+            raise ValueError("Check every 6, 24 or 168 hours, or null for off")
+        return value
+
+
+def playlists_router(database: Database, transcripts: TranscriptSource, events: Events) -> APIRouter:
     router = APIRouter()
 
     async def resolve(playlist: str) -> PlaylistInfo:
@@ -53,5 +72,16 @@ def playlists_router(database: Database, transcripts: TranscriptSource) -> APIRo
         # Resolved again server-side (usually from the proposal's playlist id) rather than trusting the client.
         info = await resolve(body.playlist)
         return await database.run(lambda conn: playlists.create_playlist(conn, info, body.name))
+
+    @router.patch("/playlists/{playlist_id}")
+    async def update_playlist(playlist_id: int, body: PlaylistUpdate) -> Playlist:
+        check_every_hours = body.check_every_hours if "check_every_hours" in body.model_fields_set else ...
+        playlist = await database.run(
+            lambda conn: playlists.update_playlist(conn, playlist_id, body.name, body.indexed, check_every_hours)
+        )
+        # Syncs show their Playlist's name.
+        if body.name is not None:
+            events.syncs()
+        return playlist
 
     return router

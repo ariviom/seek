@@ -264,7 +264,7 @@ async def test_a_playlists_videos_have_frames_whatever_their_creators_while_the_
 
     report = backfill_storyboards(config, None, transcripts)
     shown = (await client.post("/api/frames", json=moments)).json()
-    pause_playlist(config, playlist)
+    await pause_playlist(client, playlist)
 
     assert report == BackfillReport(stored=2, absent=0, failed=0, remaining=0)
     assert [frames["video_id"] for frames in shown] == [video["id"] for video in videos]

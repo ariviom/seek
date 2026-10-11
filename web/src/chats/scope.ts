@@ -49,7 +49,7 @@ export function liveScope(
       members: playlist.creators.map((creator) => ({ ...creator, videos: null })),
       videos: playlist.indexed_videos,
       unavailable: !playlist.indexed
-        ? "This playlist is paused, so it can’t answer."
+        ? "This playlist is paused, so it can’t answer. Resume it on its page."
         : playlist.creators.length === 0
           ? "This playlist has no videos yet, so nothing can answer. Sync it on its page."
           : null,

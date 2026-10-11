@@ -1,13 +1,17 @@
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
-import { api, type Playlist, type Scope, type Stage, type Sync } from "@/lib/api";
+import { api, type CheckHours, type Playlist, type Scope, type Stage, type Sync } from "@/lib/api";
 import { AvatarStack } from "@/components/Avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChanges } from "@/lib/changes";
 import { formatWhen } from "@/lib/format";
 import { playlistSync, syncProgress, useNow } from "@/lib/sync-status";
 import { StageRule } from "@/syncs/StageRule";
+import { checkLabels } from "./ChannelPage";
+import { RenameForm } from "./RenameForm";
 import { VideosTable } from "./VideosTable";
 
 // As for a Channel: mid-sync the running Sync's counts, else the newest Sync's, else the record's own three.
@@ -24,6 +28,16 @@ function playlistCounts(playlist: Playlist, syncs: Sync[] | null): Record<Stage,
     failed: playlist.failed_videos,
     excluded: playlist.excluded_videos,
   };
+}
+
+// The server says when the next check is; one never synced waits for its first Sync, which the user starts.
+function nextCheck(playlist: Playlist, now: number): string | null {
+  if (!playlist.indexed) return "Paused playlists aren’t checked.";
+  if (playlist.check_every_hours === null) return null;
+  if (playlist.next_check_at === null) return "Checks start after its first sync.";
+  return new Date(playlist.next_check_at).getTime() <= now
+    ? "Next check soon."
+    : `Next check around ${formatWhen(playlist.next_check_at)}.`;
 }
 
 export function PlaylistPage({
@@ -44,6 +58,7 @@ export function PlaylistPage({
 
   const running = playlistSync(syncs, playlist.id);
   const now = useNow(running === null ? 0 : 10);
+  const checkNote = nextCheck(playlist, now);
 
   return (
     <div className="space-y-5">
@@ -77,13 +92,16 @@ export function PlaylistPage({
               : `Videos by ${playlist.creators.map((c) => c.name).join(", ")}`}
           </p>
         </div>
-        <Button
-          size="sm"
-          disabled={!playlist.indexed || playlist.creators.length === 0}
-          onClick={() => onNewChat({ kind: "playlist", id: playlist.id })}
-        >
-          New chat
-        </Button>
+        <div className="flex items-center gap-2">
+          {!playlist.indexed && <Badge variant="outline">Paused</Badge>}
+          <Button
+            size="sm"
+            disabled={!playlist.indexed || playlist.creators.length === 0}
+            onClick={() => onNewChat({ kind: "playlist", id: playlist.id })}
+          >
+            New chat
+          </Button>
+        </div>
       </div>
 
       <fieldset disabled={busy} className="min-w-0 space-y-5">
@@ -111,6 +129,31 @@ export function PlaylistPage({
               Retry failed videos
             </Button>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span id="playlist-checks" className="text-xs text-muted-foreground">
+              Check for changes
+            </span>
+            <Select
+              value={playlist.check_every_hours === null ? "off" : String(playlist.check_every_hours)}
+              onValueChange={(value) =>
+                void act(() =>
+                  api.setPlaylistChecks(playlist.id, value === "off" ? null : (Number(value) as CheckHours)),
+                )
+              }
+            >
+              <SelectTrigger size="sm" className="w-36" aria-labelledby="playlist-checks">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(checkLabels).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {checkNote !== null && <span className="text-xs text-muted-foreground">{checkNote}</span>}
+          </div>
           <div className="mt-4">
             <StageRule counts={playlistCounts(playlist, syncs)} detailed />
           </div>
@@ -118,6 +161,26 @@ export function PlaylistPage({
             <VideosTable source={{ kind: "playlist", id: playlist.id }} />
           </div>
         </section>
+
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <RenameForm
+              label="Playlist name"
+              name={playlist.name}
+              onRename={(name) => act(() => api.renamePlaylist(playlist.id, name))}
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void act(() => api.setPlaylistIndexed(playlist.id, !playlist.indexed))}
+            >
+              {playlist.indexed ? "Pause playlist" : "Resume playlist"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A paused playlist isn’t synced and doesn’t answer; what’s ingested stays.
+          </p>
+        </div>
       </fieldset>
     </div>
   );

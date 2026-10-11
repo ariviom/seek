@@ -1,4 +1,4 @@
-"""The server's automatic checks of each Channel for new Videos."""
+"""The server's automatic checks of each Channel for new Videos and each Playlist for changes."""
 
 import asyncio
 import logging
@@ -23,7 +23,7 @@ async def run_checks(
     every_seconds: float,
     now: Callable[[], datetime] = utc_now,
 ) -> None:
-    """Queues a normal Sync for each due Channel at start and then every every_seconds, until cancelled.
+    """Queues a normal Sync for each due Channel and Playlist at start and then every every_seconds, until cancelled.
 
     Only queues: the worker runs them as it runs any other, so its backoff after throttling applies unchanged.
     """
@@ -31,7 +31,7 @@ async def run_checks(
         try:
             queued = await database.run(lambda conn: syncs.enqueue_due(conn, now()))
         except Exception:
-            log.exception("Checking Channels for new Videos failed; trying again at the next check")
+            log.exception("Checking Channels and Playlists failed; trying again at the next check")
         else:
             for sync in queued:
                 events.sync(sync)
