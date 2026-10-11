@@ -214,7 +214,8 @@ seek sync --channel "Wood By Wright"      # one Channel, by its YouTube name or 
 seek sync --playlist "Sharpening picks"   # one Playlist, by its name or YouTube playlist id
 ```
 
-Channels and Playlists are added in the web UI; the command line only Syncs what the Library already has.
+Channels and Playlists are added in the web UI, or imported from a Bundle with
+[`seek import`](#sharing-a-channel-or-playlist); `seek sync` only Syncs what the Library already has.
 
 When the server is running, `seek sync` queues the Syncs there and returns; their progress and any failures show in
 the web UI. When it isn't, `seek sync` loads the embedding model and runs the Syncs itself, returning when they finish
