@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 import uvicorn
-from harness import add_channel, add_playlist, fake_channel, fake_video, serving, wait_for_syncs
+from harness import add_channel, add_playlist, fake_channel, fake_video, running, serving, sync, wait_for_syncs
 
 from seek import cli
 from seek.app import create_app
@@ -177,6 +177,53 @@ def test_a_playlist_cannot_be_named_alongside_everything_or_a_channel(
 
     assert error.value.code == 2
     assert "not allowed with argument --playlist" in capsys.readouterr().err
+
+
+async def test_export_and_import_carry_a_channel_between_data_directories_and_refusals_exit_with_one_sentence(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    transcripts: FakeTranscriptSource,
+) -> None:
+    # The commands open the knowledge base with the configured embedding model, here the fake one's.
+    monkeypatch.setenv("SEEK_EMBEDDING_MODEL", FakeEmbedder.model_name)
+    monkeypatch.setenv("SEEK_EMBEDDING_DIMENSION", str(FakeEmbedder.dimension))
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-wright", "Wright video"))
+    app = create_app(
+        Config(data_dir=isolated_home / "sender"), transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(),
+        static_dir=isolated_home / "none",
+    )
+    async with running(app) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    bundle = isolated_home / "wright.seek"
+
+    def run(data_dir: str, *args: str) -> str:
+        monkeypatch.setenv("SEEK_DATA_DIR", str(isolated_home / data_dir))
+        command(monkeypatch, "linux", *args)
+        cli.main()
+        return capsys.readouterr().out
+
+    exported = run("sender", "export", "--channel", "wood by wright", str(isolated_home / "wright"))
+    imported = run("friend", "import", str(bundle))
+    with pytest.raises(SystemExit) as unknown:
+        run("sender", "export", "--channel", "Paul Sellers", str(isolated_home / "sellers"))
+    with pytest.raises(SystemExit) as again:
+        run("friend", "import", str(bundle))
+
+    assert exported.splitlines()[0].startswith(f"Exported Wood By Wright to {bundle}: 1 Videos, 1 Segments, ")
+    assert imported.splitlines()[0] == "Imported Wood By Wright: 1 Videos added, searchable now."
+    # A string as the exit code: printed to stderr, and the process exits 1.
+    assert unknown.value.code == "seek: No Channel named 'Paul Sellers'; give a Channel's name or its YouTube channel id"
+    assert str(again.value.code).startswith("seek: This knowledge base already has the Channel 'Wood By Wright'")
+    assert sorted(file.name for file in isolated_home.iterdir() if file.is_file()) == ["wright.seek"]
+
+
+def test_export_needs_a_channel(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    command(monkeypatch, "linux", "export", "wright.seek")
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "the following arguments are required: --channel" in capsys.readouterr().err
 
 
 def test_startup_preserves_existing_config_and_database(

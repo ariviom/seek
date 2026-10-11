@@ -97,12 +97,14 @@ def list_channels(conn: sqlite3.Connection) -> list[Channel]:
     return [_channel(row) for row in rows]
 
 
-def create_channel(conn: sqlite3.Connection, info: ChannelInfo, name: str | None = None) -> Channel:
+def create_channel(
+    conn: sqlite3.Connection, info: ChannelInfo, name: str | None = None, filters: ChannelFilters | None = None
+) -> Channel:
     """Adds the Channel under the given name, or else its display name on YouTube.
 
     A creator known outside the Library, crediting Videos that Playlists include, is brought into it as that same
-    Channel, so those Videos are kept. It starts as a new Channel does: Active, unfiltered, checked daily, and
-    not synced until the user starts its first Sync.
+    Channel, so those Videos are kept. It starts as a new Channel does: Active, checked daily, not synced until the
+    user starts its first Sync, and unfiltered unless filters are given, as a Bundle's are.
     """
     with transaction(conn):
         # Checked up front rather than via the UNIQUE constraint so the error can name the Channel.
@@ -128,7 +130,22 @@ def create_channel(conn: sqlite3.Connection, info: ChannelInfo, name: str | None
                 """,
                 (name or info.name, info.avatar_url, channel_id),
             )
+        if filters is not None:
+            _set_filters(conn, channel_id, filters)
         return _get_channel(conn, channel_id)
+
+
+def _set_filters(conn: sqlite3.Connection, channel_id: int, filters: ChannelFilters) -> None:
+    conn.execute(
+        "UPDATE channels SET published_after = ?, published_before = ?, playlist_id = ?, most_recent = ? WHERE id = ?",
+        (
+            filters.published_after and filters.published_after.isoformat(),
+            filters.published_before and filters.published_before.isoformat(),
+            filters.playlist_id,
+            filters.most_recent,
+            channel_id,
+        ),
+    )
 
 
 def youtube_channel_ids(conn: sqlite3.Connection) -> set[str]:
@@ -177,19 +194,7 @@ def update_channel(
         if indexed is not None:
             conn.execute("UPDATE channels SET indexed = ? WHERE id = ?", (indexed, channel_id))
         if filters is not None:
-            conn.execute(
-                """
-                UPDATE channels SET published_after = ?, published_before = ?, playlist_id = ?, most_recent = ?
-                WHERE id = ?
-                """,
-                (
-                    filters.published_after and filters.published_after.isoformat(),
-                    filters.published_before and filters.published_before.isoformat(),
-                    filters.playlist_id,
-                    filters.most_recent,
-                    channel_id,
-                ),
-            )
+            _set_filters(conn, channel_id, filters)
         if check_every_hours is not ...:
             conn.execute("UPDATE channels SET check_every_hours = ? WHERE id = ?", (check_every_hours, channel_id))
         return _get_channel(conn, channel_id)

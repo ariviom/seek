@@ -5,6 +5,7 @@ import httpx
 import pytest
 from harness import (
     Json,
+    Synonyms,
     add_channel,
     add_group,
     fake_channel,
@@ -12,6 +13,7 @@ from harness import (
     pause_playlist,
     running,
     said,
+    search,
     sharpening_picks,
     start_sync,
     sync,
@@ -22,13 +24,6 @@ from seek.app import create_app
 from seek.config import Config
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakeReranker, FakeTranscriptSource
 from seek.ports import Chapter, Cue
-
-
-async def search(client: httpx.AsyncClient, query: str, **scope: object) -> list[Json]:
-    response = await client.post("/api/search", json={"query": query, **scope})
-    assert response.status_code == 200, response.text
-    results: list[Json] = response.json()
-    return results
 
 
 @pytest.mark.parametrize("reranker_unavailable", [False, True])
@@ -314,13 +309,6 @@ async def test_videos_still_in_the_pipeline_are_not_searchable(
 
     assert (stopped["status"], stopped["stage_counts"]["segmented"]) == ("failed", 1)
     assert [r["youtube_video_id"] for r in results] == ["v-done"]
-
-
-class Synonyms(FakeEmbedder):
-    """Embeds "hone" as "sharpen": a paraphrase the vector search finds and the lexical search can't."""
-
-    def _embed(self, text: str) -> list[float]:
-        return super()._embed(text.replace("hone", "sharpen"))
 
 
 async def test_a_small_channel_in_a_large_corpus_still_gets_vector_hits_and_at_most_50_are_reranked(

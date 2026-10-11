@@ -15,7 +15,7 @@ from mcp import Client
 
 from seek import db
 from seek.config import Config
-from seek.fakes import FakeChannel, FakePlaylist, FakeTranscriptSource, FakeVideo
+from seek.fakes import FakeChannel, FakeEmbedder, FakePlaylist, FakeTranscriptSource, FakeVideo
 from seek.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
@@ -312,6 +312,20 @@ async def list_videos(client: httpx.AsyncClient, channel_id: int) -> dict[str, J
     response = await client.get(f"/api/channels/{channel_id}/videos")
     assert response.status_code == 200, response.text
     return {v["title"]: v for v in response.json()}
+
+
+async def search(client: httpx.AsyncClient, query: str, **scope: object) -> list[Json]:
+    response = await client.post("/api/search", json={"query": query, **scope})
+    assert response.status_code == 200, response.text
+    results: list[Json] = response.json()
+    return results
+
+
+class Synonyms(FakeEmbedder):
+    """Embeds "hone" as "sharpen": a paraphrase the vector search finds and the lexical search can't."""
+
+    def _embed(self, text: str) -> list[float]:
+        return super()._embed(text.replace("hone", "sharpen"))
 
 
 def fetched(transcripts: FakeTranscriptSource) -> list[str]:
