@@ -132,12 +132,16 @@ _TEXT_LENGTH = 20_000
 _CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 # The whitespace other than a space, which a Sync collapses out of every caption, so nothing said holds any.
 _LINE_BREAKS = re.compile(r"[\t\n\x0b\x0c\r\x1c-\x1f\x85\u2028\u2029]")
+# No text of a Bundle holds one: YouTube gives none, and C code that reads text stops at the first.
+_NUL = "\x00"
 # Bidi embeddings, overrides, and isolates, which reorder the line a name is printed on. Other format characters
 # stay: YouTube's names join emoji with one.
 _REORDERING = re.compile(r"[\u202a-\u202e\u2066-\u2069]")
 # Where YouTube serves a channel's avatar from. The whole prefix is matched, so nothing later in the URL can name
 # another server.
 _AVATAR_HOSTS = ("https://yt3.ggpht.com/", "https://yt3.googleusercontent.com/")
+# Several times the longest avatar URL YouTube gives, which run to a couple of hundred characters.
+_AVATAR_LENGTH = 2_000
 # What a Sync accepts of a Transcript: YouTube's captions, in English.
 _SOURCES = ("youtube_auto", "youtube_manual")
 _LANGUAGE = "en"
@@ -471,7 +475,8 @@ def import_bundle(
 
     Import runs beside a server, and holds the Sync lease from before its first write until it ends: it is
     refused while a Sync is running, and a Sync queued meanwhile waits for it. Should another process take the
-    lease, it stops before its next Video. No record of progress is kept: running the import again repeats the
+    lease, or the knowledge base be too busy for it to be renewed, it stops before its next Video and says which.
+    No record of progress is kept: running the import again repeats the
     merge, which is how an interrupted one resumes. `progress` is called after each of the Bundle's Videos is
     committed, filled in or not, with how many are behind it and how many the Bundle holds.
 
@@ -508,7 +513,7 @@ def import_bundle(
             _contents(bundle, youtube_video_id, dimension)
         _open_knowledge_base(config)
         # The lease is taken once the whole Bundle has been checked and before the entry, which is the first write.
-        with closing(db.connect(config.database_path)) as conn, _sync_lease(config, conn) as lease_held:
+        with closing(db.connect(config.database_path)) as conn, _sync_lease(config, conn) as lease_lost:
             entry: Channel | Playlist
             arrived: ChannelFilters | None = None
             if kind == "channel":
@@ -529,12 +534,12 @@ def import_bundle(
             added_videos = already_indexed = 0
             left_out: Counter[str] = Counter()
             for youtube_video_id, video in videos.items():
-                if not lease_held():
+                if (lost := lease_lost()) is not None:
                     # Whoever has the lease now may be writing these Videos; what is committed stays.
                     behind = added_videos + already_indexed + left_out.total()
                     raise SyncCommandError(
-                        f"Another seek process took over running Syncs after {behind} of {len(videos)} Videos; "
-                        "run the import again to carry on where it stopped"
+                        f"{lost} after {behind} of {len(videos)} Videos; run the import again to carry on where it "
+                        "stopped"
                     )
                 # Read again rather than kept since the check: a Channel's vectors run to a hundred megabytes.
                 transcript, segments = _contents(bundle, youtube_video_id, dimension)
@@ -572,19 +577,27 @@ def import_bundle(
     )
 
 
+# How import says it lost the Sync lease, each the start of a sentence that ends with how far it had got.
+_LEASE_TAKEN = "Another seek process took over running Syncs"
+_LEASE_NOT_RENEWED = "The knowledge base was too busy for the import to keep its hold on Syncs"
+
+
 @contextmanager
-def _sync_lease(config: Config, conn: sqlite3.Connection) -> Iterator[Callable[[], bool]]:
+def _sync_lease(config: Config, conn: sqlite3.Connection) -> Iterator[Callable[[], str | None]]:
     """Holds the Sync lease as the worker does, so that import is the one process writing Videos, and gives it up
     however the block ends. Refuses while a Sync holds it.
 
-    Yields a check of whether the lease is still held, to make before each Video. A background thread renews the
-    lease at the worker's cadence meanwhile, since one Video, or whoever is told of the progress, may take longer
-    than the lease lasts.
+    Yields a check to make before each Video: None while the lease is held, or else how it was lost, to another
+    process or to a knowledge base too busy for it to be renewed. A background thread renews the lease at the
+    worker's cadence meanwhile, since one Video, or whoever is told of the progress, may take longer than the
+    lease lasts.
     """
     holder = uuid.uuid4().hex
+    # Read when called, here and below, not once at import: the lease test shortens it.
     if not syncs.acquire_lease(conn, holder, sync_worker.LEASE_SECONDS):
         raise SyncCommandError("A Sync is running; run the import again when it has finished")
-    lost, ended = threading.Event(), threading.Event()
+    lost: list[str] = []
+    ended = threading.Event()
 
     def renew() -> None:
         # On a connection of its own: a SQLite connection stays with the thread that opened it.
@@ -593,26 +606,36 @@ def _sync_lease(config: Config, conn: sqlite3.Connection) -> Iterator[Callable[[
                 try:
                     renewed = syncs.renew_lease(own, holder, sync_worker.LEASE_SECONDS)
                 except sqlite3.Error:
-                    renewed = False
+                    # Another write outlasted the busy timeout. The lease may have run out by the next try.
+                    lost.append(_LEASE_NOT_RENEWED)
+                    return
                 if not renewed:
-                    lost.set()
+                    lost.append(_LEASE_TAKEN)
                     return
 
-    def held() -> bool:
+    def how_lost() -> str | None:
+        if lost:
+            return lost[0]
         # Renewed here too, so a lease another process took is found out now, not a quarter of a lease later.
-        return not lost.is_set() and syncs.renew_lease(conn, holder, sync_worker.LEASE_SECONDS)
+        try:
+            return None if syncs.renew_lease(conn, holder, sync_worker.LEASE_SECONDS) else _LEASE_TAKEN
+        except sqlite3.OperationalError:
+            return _LEASE_NOT_RENEWED
 
     renewing = threading.Thread(target=renew, daemon=True)
     renewing.start()
     try:
-        yield held
+        yield how_lost
     finally:
-        ended.set()
-        renewing.join()
-        # Only this holder's lease goes, never one another process took. A release that fails must not replace
-        # whatever ended the import; the lease expires on its own.
-        with suppress(sqlite3.Error):
-            syncs.release_lease(conn, holder)
+        try:
+            ended.set()
+            renewing.join()
+        finally:
+            # Even when a second Ctrl+C ends the wait for the thread. Only this holder's lease goes, never one
+            # another process took. A release that fails must not replace whatever ended the import; the lease
+            # expires on its own.
+            with suppress(sqlite3.Error):
+                syncs.release_lease(conn, holder)
 
 
 def _create_playlist(conn: sqlite3.Connection, listed: PlaylistInfo, name: str | None) -> Playlist:
@@ -766,7 +789,7 @@ def _meta(bundle: _Bundle) -> sqlite3.Row:
             f"{bundle.path} was made by a newer Seek (Bundle format {version}, this build reads {FORMAT_VERSION}); "
             "upgrade Seek"
         )
-    if version != FORMAT_VERSION or "meta" not in plain:
+    if version != FORMAT_VERSION:
         raise bundle.not_a_bundle()
     (meta,) = bundle.rows("SELECT embedding_model, embedding_dimension, kind FROM meta")
     # The model's name and dimension are quoted in a refusal, so they must be fit to print.
@@ -789,7 +812,7 @@ def _is_text(value: object) -> bool:
 
 def _is_said(value: object) -> bool:
     """Whether the value is text as a Sync stores what was said: on one line."""
-    return isinstance(value, str) and _is_text(value) and _LINE_BREAKS.search(value) is None
+    return _is_text(value) and _LINE_BREAKS.search(cast(str, value)) is None
 
 
 def _is_title(value: object) -> bool:
@@ -817,10 +840,14 @@ def _iso_date(value: object) -> date | None:
 
 
 def _is_timestamp(value: object) -> bool:
+    # A NUL is refused apart: Python reads a timestamp up to one and takes no notice of what follows it.
+    if not isinstance(value, str) or _NUL in value:
+        return False
     try:
-        return isinstance(value, str) and datetime.fromisoformat(value) is not None
+        datetime.fromisoformat(value)
     except ValueError:
         return False
+    return True
 
 
 def _is_seconds(value: object) -> bool:
@@ -858,8 +885,13 @@ def _channel(bundle: _Bundle) -> tuple[ChannelInfo, ChannelFilters]:
 
 def _avatar(value: object) -> str | None:
     """The avatar, when YouTube serves it. Any other is dropped: the Library page would load it from whatever
-    server the Bundle's maker chose. The Channel shows initials until a Sync's listing supplies one."""
-    return value if isinstance(value, str) and value.startswith(_AVATAR_HOSTS) else None
+    server the Bundle's maker chose. So is one no URL of YouTube's could be: too long, or holding whitespace or a
+    control character. The Channel shows initials until a Sync's listing supplies one."""
+    if not (isinstance(value, str) and value.startswith(_AVATAR_HOSTS) and len(value) <= _AVATAR_LENGTH):
+        return None
+    if _CONTROLS.search(value) is not None or any(character.isspace() for character in value):
+        return None
+    return value
 
 
 def _playlist(bundle: _Bundle) -> PlaylistInfo:
@@ -953,9 +985,14 @@ def _videos(bundle: _Bundle, creators: Collection[str], uncredited: str) -> dict
         # A title may be empty, which is what a Sync stores for a chapter YouTube gave none.
         if not all(_is_text(chapter.title) for chapter in chapters):
             raise bundle.damaged(f"{video} has a chapter whose title is too long")
+        if any(_NUL in text for text in (row["description"], *(chapter.title for chapter in chapters))):
+            raise bundle.damaged(f"{video} has a description or a chapter title that holds a NUL character")
         if row["language"] != _LANGUAGE:
             raise bundle.damaged(f"{video} is not in English, and only English is ingested")
         videos[youtube_video_id] = {**dict(row), "chapters": _as_stored(chapters)}
+    if not videos:
+        # Export refuses to write one, so no Bundle of Seek's making is empty.
+        raise bundle.damaged("it holds no Videos")
     return videos
 
 
@@ -994,6 +1031,8 @@ def _contents(
         raise bundle.damaged(f"{transcript} does not give each of its lines a start, an end, and its text")
     if not all(_is_said(line.text) for line in lines):
         raise bundle.damaged(f"{transcript} has a line that is too long or not on one line")
+    if any(_NUL in line.text for line in lines):
+        raise bundle.damaged(f"{transcript} has a line that holds a NUL character")
     if not _is_timestamp(found["fetched_at"]):
         raise bundle.damaged(f"{transcript} was fetched at a time that is not a timestamp")
     rows = bundle.rows(
@@ -1005,6 +1044,9 @@ def _contents(
     )
     if [row["ordinal"] for row in rows] != list(range(len(rows))):
         raise bundle.damaged(f"the Segments of the Video {youtube_video_id} are not numbered in order without gaps")
+    # Segments are cut from the Transcript's lines. One with none is what blank captions leave, and has no Segments.
+    if rows and not lines:
+        raise bundle.damaged(f"{transcript} has no lines, though the Video has Segments")
     segment = f"a Segment of the Video {youtube_video_id}"
     segments = []
     for row in rows:
@@ -1013,12 +1055,13 @@ def _contents(
             raise bundle.damaged(f"{segment} has a start or an end that is not a number of seconds")
         # What was said, the context it is indexed under, and its chapter's title when it has one.
         if not (
-            isinstance(text, str)
-            and _is_said(text)
+            _is_said(text)
             and _is_text(row["context"])
             and (row["chapter_title"] is None or _is_text(row["chapter_title"]))
         ):
             raise bundle.damaged(f"{segment} has text that is too long or not on one line")
+        if any(_NUL in value for value in (text, row["context"], row["chapter_title"] or "")):
+            raise bundle.damaged(f"{segment} has text that holds a NUL character")
         cues = _json(_SEGMENT_CUES, row["cues"])
         # A Segment has a line at least, and search slices its text at each one's offset.
         if not cues or not all(0 <= cue.offset <= len(text) for cue in cues):

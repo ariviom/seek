@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,7 +18,7 @@ import uvicorn
 from seek.api_chat import ApiEngine
 from seek.app import create_app
 from seek.backfill_command import backfill_storyboards
-from seek.bundles import export_channel, export_playlist, format_export, format_import, import_bundle
+from seek.bundles import ExportReport, export_channel, export_playlist, format_export, format_import, import_bundle
 from seek.claude_chat import ClaudeChatEngine
 from seek.config import HOST, Config, ConfigError, config_dir, data_dir, ensure_directories, load_config
 from seek.credentials import Credentials
@@ -165,15 +165,11 @@ def backfill(channel: str | None, playlist: str | None) -> None:
         sys.exit(1)
 
 
-def export(channel: str | None, playlist: str | None, file: Path) -> None:
+def export(write: Callable[[Config, str, Path], ExportReport], entry: str, file: Path) -> None:
+    """Writes the Channel or the Playlist to a Bundle, with whichever of the two export functions is given."""
     config = _config()
     try:
-        if playlist is not None:
-            report = export_playlist(config, playlist, file)
-        else:
-            assert channel is not None
-            report = export_channel(config, channel, file)
-        print(format_export(report))
+        print(format_export(write(config, entry, file)))
     except SyncCommandError as e:
         sys.exit(f"seek: {e}")
 
@@ -188,6 +184,9 @@ def import_(file: Path, name: str | None) -> None:
         print(format_import(import_bundle(_config(), file, name, progress)))
     except (SyncCommandError, Conflict) as e:
         sys.exit(f"seek: {e}")
+    except KeyboardInterrupt:
+        # Every Video behind the import is committed, and the lease given up.
+        sys.exit("seek: The import was interrupted; run it again to carry on where it stopped")
 
 
 def show_status() -> None:
@@ -331,7 +330,11 @@ def main() -> None:
     elif args.command == "backfill-storyboards":
         backfill(args.channel, args.playlist)
     elif args.command == "export":
-        export(args.channel, args.playlist, args.file)
+        # The parser requires exactly one of the two.
+        if args.channel is not None:
+            export(export_channel, args.channel, args.file)
+        else:
+            export(export_playlist, args.playlist, args.file)
     elif args.command == "import":
         import_(args.file, args.name)
     elif args.command == "status":

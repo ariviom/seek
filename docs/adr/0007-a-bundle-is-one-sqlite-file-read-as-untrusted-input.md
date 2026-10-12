@@ -5,13 +5,13 @@ Status: accepted, 2026-10-11
 ## Context
 Indexing a Channel takes hours of fetching and embedding, and the only thing that could be handed to a friend was the
 whole `seek.db`. Spec 0005 adds the **Bundle**: one Channel's or one Playlist's indexed Videos in a `.seek` file,
-exported from one Library and imported into another. It is the content-carrying pack `docs/product/desktop-mvp.md` §4
+exported from one Library and imported into another. It is the content-carrying "pack" `docs/product/desktop-mvp.md` §4
 reserved, shipped early for hand-to-hand sharing, so the file comes from someone else and import has to treat it so.
 
 ## Decision
 A Bundle is one SQLite database in plain tables: no FTS5 index and no sqlite-vec table, a rollback journal, Seek's
-`application_id` in the header, one meta record (format version 1, embedding model and dimension, kind), and nothing
-keyed by a local id. Vectors are the knowledge base's own bytes.
+`application_id` in the header, one meta record (format version 1, the Seek version that wrote it, embedding model
+and dimension, kind, export time), and nothing keyed by a local id. Vectors are the knowledge base's own bytes.
 
 Import reads it as untrusted input. The file is opened read-only on a connection of its own, never attached to the
 knowledge base's, with no extension loaded and `trusted_schema` off. Every table it reads must be an ordinary table.
@@ -46,10 +46,10 @@ serialisation. Avatars are kept only on YouTube's avatar hosts.
 - **Import is the first command to write beside a running server**, which ADR 0002 named as a reason to revisit the
   single-file store. The answer is the Sync lease and the busy timeout, not a new store. Import takes the lease after
   the whole Bundle is validated and before its first write, renews it from a background thread at the worker's
-  cadence and again before each Video, and releases it however it ends. Each Video is one transaction, so the
-  server's writes wait for one Video at most. The lease keeps a Sync and an import apart; it does not cover the
-  server's other writes (adding or deleting a Channel, a chat), which interleave between Videos as they do with a
-  Sync.
+  cadence and again before each Video, stops before its next Video when a renewal fails, and releases it however it
+  ends. Each Video is one transaction, so the server's writes wait for one Video at most. The lease keeps a Sync and
+  an import apart; it does not cover the server's other writes (adding or deleting a Channel, a chat), which
+  interleave between Videos as they do with a Sync.
 - A Bundle imports only into a knowledge base with the same embedding model, and its Transcripts are never re-cut:
   the Segments arrive as they were, since the vectors were made for them. `seek reindex` re-cuts from the Transcripts
   it carried if the passage shape changes.

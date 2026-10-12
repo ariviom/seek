@@ -45,6 +45,17 @@ def command(monkeypatch: pytest.MonkeyPatch, platform: str, *args: str) -> None:
     monkeypatch.setattr(cli, "sys", SimpleNamespace(**(vars(sys) | {"platform": platform})))
 
 
+def run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], data_dir: Path, *args: str
+) -> tuple[str, str]:
+    """Runs the command against the data directory; returns what it printed on stdout and on stderr."""
+    monkeypatch.setenv("SEEK_DATA_DIR", str(data_dir))
+    command(monkeypatch, "linux", *args)
+    cli.main()
+    captured = capsys.readouterr()
+    return captured.out, captured.err
+
+
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
 def test_service_installation_off_linux_points_to_foreground_before_reading_config_or_running_systemd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
@@ -204,26 +215,16 @@ async def test_export_and_import_carry_a_channel_between_data_directories_and_re
     async with running(app) as client:
         await sync(client, await add_channel(client, "@woodbywright"))
     bundle = isolated_home / "wright.seek"
+    sender, friend = isolated_home / "sender", isolated_home / "friend"
 
-    on_stderr: list[str] = []
-
-    def run(data_dir: str, *args: str) -> str:
-        monkeypatch.setenv("SEEK_DATA_DIR", str(isolated_home / data_dir))
-        command(monkeypatch, "linux", *args)
-        cli.main()
-        captured = capsys.readouterr()
-        on_stderr.append(captured.err)
-        return captured.out
-
-    exported = run("sender", "export", "--channel", "wood by wright", str(isolated_home / "wright"))
-    imported = run("friend", "import", "--name", "Paul Wright", str(bundle))
-    progress = on_stderr[-1]
+    exported, _ = run(monkeypatch, capsys, sender, "export", "--channel", "wood by wright", str(isolated_home / "wright"))
+    imported, progress = run(monkeypatch, capsys, friend, "import", "--name", "Paul Wright", str(bundle))
     # The name is for a Channel import creates; this one is in the Library by now.
-    again = run("friend", "import", str(bundle), "--name", "Wright")
+    again, _ = run(monkeypatch, capsys, friend, "import", str(bundle), "--name", "Wright")
     with pytest.raises(SystemExit) as unknown:
-        run("sender", "export", "--channel", "Paul Sellers", str(isolated_home / "sellers"))
+        run(monkeypatch, capsys, sender, "export", "--channel", "Paul Sellers", str(isolated_home / "sellers"))
     with pytest.raises(SystemExit) as missing:
-        run("friend", "import", str(isolated_home / "nowhere.seek"))
+        run(monkeypatch, capsys, friend, "import", str(isolated_home / "nowhere.seek"))
 
     assert exported.splitlines()[0].startswith(f"Exported Wood By Wright to {bundle}: 1 Videos, 1 Segments, ")
     assert imported.splitlines()[0] == "Imported Paul Wright: 1 Videos added, 0 already indexed, 0 left out."
@@ -259,17 +260,12 @@ async def test_export_and_import_carry_a_playlist_and_a_name_already_taken_is_re
             if data_dir == "sender":
                 await sync_playlist(client, added)
     bundle = isolated_home / "picks.seek"
+    sender, friend = isolated_home / "sender", isolated_home / "friend"
 
-    def run(data_dir: str, *args: str) -> str:
-        monkeypatch.setenv("SEEK_DATA_DIR", str(isolated_home / data_dir))
-        command(monkeypatch, "linux", *args)
-        cli.main()
-        return capsys.readouterr().out
-
-    exported = run("sender", "export", "--playlist", "PL-picks", str(bundle))
+    exported, _ = run(monkeypatch, capsys, sender, "export", "--playlist", "PL-picks", str(bundle))
     with pytest.raises(SystemExit) as taken:
-        run("friend", "import", str(bundle))
-    imported = run("friend", "import", str(bundle), "--name", "Rex's picks")
+        run(monkeypatch, capsys, friend, "import", str(bundle))
+    imported, _ = run(monkeypatch, capsys, friend, "import", str(bundle), "--name", "Rex's picks")
 
     assert exported.splitlines()[0].startswith(f"Exported Sharpening Picks to {bundle}: 1 Videos, 1 Segments, ")
     assert taken.value.code == (
@@ -280,6 +276,21 @@ async def test_export_and_import_carry_a_playlist_and_a_name_already_taken_is_re
         "The Bundle's text came from whoever made the file, and is only as trustworthy as they are.",
         "Next, start a Sync to pick up the Videos added to the playlist since: seek sync --playlist PL-picks",
     ]
+
+
+def test_an_import_interrupted_from_the_keyboard_exits_with_one_sentence_saying_to_run_it_again(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def interrupted(*args: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "import_bundle", interrupted)
+
+    with pytest.raises(SystemExit) as stopped:
+        run(monkeypatch, capsys, isolated_home / "friend", "import", str(isolated_home / "wright.seek"))
+
+    # A string as the exit code: printed to stderr, and the process exits 1.
+    assert stopped.value.code == "seek: The import was interrupted; run it again to carry on where it stopped"
 
 
 @pytest.mark.parametrize(

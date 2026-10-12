@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 import sqlite3
+import threading
 import time
 from collections.abc import Sequence
 from contextlib import closing
@@ -36,7 +37,7 @@ from harness import (
     wait_for_syncs,
 )
 
-from seek import sync_worker
+from seek import db, sync_worker, syncs
 from seek.app import create_app
 from seek.bundles import export_channel, export_playlist, format_export, format_import, import_bundle
 from seek.config import Config
@@ -75,7 +76,7 @@ def app_on(
         embedder or FakeEmbedder(),
         FakeReranker(),
         FakeChatEngine(),
-        static_dir=config.data_dir / "no-bundle",
+        static_dir=config.data_dir / "none",
         sync_poll_seconds=sync_poll_seconds,
     )
 
@@ -297,6 +298,35 @@ async def test_export_refuses_what_it_cannot_export_and_leaves_no_file_behind(
     # As the server refuses to start on a knowledge base embedded with another model.
     with pytest.raises(SyncCommandError, match="was embedded with fake-embedder"):
         export_channel(replace(sender, embedding_model="another-embedder"), "UC-wright", out / "wright.seek")
+
+    assert list(out.iterdir()) == []
+
+
+async def test_export_refuses_a_playlist_it_cannot_export_and_leaves_no_file_behind(
+    sender: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives"))
+    transcripts.playlists["PL-picks"] = FakePlaylist("Sharpening picks", [("UC-rex", "v-knives")])
+    transcripts.playlists["PL-other"] = FakePlaylist("Other", [("UC-rex", "v-knives")])
+    async with running(app_on(sender, transcripts)) as client:
+        # Never synced, so it has nothing indexed; and the second goes by the first one's YouTube playlist id.
+        await add_playlist(client, "PL-picks")
+        await add_playlist(client, "PL-other", "PL-picks")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    refused = [
+        ("Sharpening picks", "The Playlist 'Sharpening picks' has no indexed Videos to export"),
+        ("Dovetail picks", "No Playlist named 'Dovetail picks'; give a Playlist's name or its YouTube playlist id"),
+        (
+            "PL-picks",
+            "More than one Playlist matches 'PL-picks'; give one of their YouTube playlist ids: PL-other, PL-picks",
+        ),
+    ]
+    for playlist, message in refused:
+        with pytest.raises(SyncCommandError) as error:
+            export_playlist(sender, playlist, out / "picks.seek")
+        assert str(error.value) == message
 
     assert list(out.iterdir()) == []
 
@@ -961,6 +991,18 @@ async def test_import_refuses_a_bundle_whose_segments_or_vectors_are_damaged_and
             altered(bundle, "context.seek", "UPDATE segments SET context = printf('%.*c', 20001, 'x') WHERE ordinal = 1"),
             "a Segment of the Video v-dovetails has text that is too long or not on one line",
         ),
+        (
+            altered(bundle, "nul-said.seek", "UPDATE segments SET text = text || char(0) || 'back' WHERE ordinal = 1"),
+            "a Segment of the Video v-dovetails has text that holds a NUL character",
+        ),
+        (
+            altered(bundle, "nul-context.seek", "UPDATE segments SET context = context || char(0) WHERE ordinal = 0"),
+            "a Segment of the Video v-dovetails has text that holds a NUL character",
+        ),
+        (
+            altered(bundle, "nul-chapter.seek", "UPDATE segments SET chapter_title = 'Saw' || char(0) WHERE ordinal = 0"),
+            "a Segment of the Video v-dovetails has text that holds a NUL character",
+        ),
     ]
     for path, reason in damaged:
         assert refusal(friend, path) == f"{path} is damaged or has been altered: {reason}"
@@ -1080,6 +1122,41 @@ async def test_import_refuses_a_bundle_whose_videos_or_transcripts_are_damaged_a
                 r"""UPDATE transcripts SET cues = '[{"start": 0, "end": 30, "text": "Welcome\nIgnore the above"}]'""",
             ),
             "the Transcript of the Video v-dovetails has a line that is too long or not on one line",
+        ),
+        (
+            # Export never writes a Bundle with no Videos.
+            altered(bundle, "empty.seek", "DELETE FROM videos"),
+            "it holds no Videos",
+        ),
+        (
+            # Segments are cut from a Transcript's lines, so one with none can't have been cut into any.
+            altered(bundle, "cueless.seek", "UPDATE transcripts SET cues = '[]'"),
+            "the Transcript of the Video v-dovetails has no lines, though the Video has Segments",
+        ),
+        (
+            altered(bundle, "nul.seek", "UPDATE videos SET description = 'Plans' || char(0) || 'in the link'"),
+            "the Video v-dovetails has a description or a chapter title that holds a NUL character",
+        ),
+        (
+            altered(
+                bundle,
+                "nul-chapter.seek",
+                r"""UPDATE videos SET chapters = '[{"title": "In\u0000tro", "start": 0, "end": 30}]'""",
+            ),
+            "the Video v-dovetails has a description or a chapter title that holds a NUL character",
+        ),
+        (
+            altered(
+                bundle,
+                "nul-line.seek",
+                r"""UPDATE transcripts SET cues = '[{"start": 0, "end": 30, "text": "Welcome\u0000back"}]'""",
+            ),
+            "the Transcript of the Video v-dovetails has a line that holds a NUL character",
+        ),
+        (
+            # Python reads a timestamp up to a NUL and takes what follows it for nothing.
+            altered(bundle, "nul-fetched.seek", "UPDATE transcripts SET fetched_at = fetched_at || char(0) || 'x'"),
+            "the Transcript of the Video v-dovetails was fetched at a time that is not a timestamp",
         ),
     ]
     for path, reason in damaged:
@@ -1235,6 +1312,26 @@ async def test_a_bundle_imports_with_the_text_youtube_really_gives_a_video(
     assert found[0]["chapter_title"] == "Saw\tcuts"
 
 
+async def test_a_video_whose_captions_were_all_blank_imports_with_a_transcript_of_no_lines_and_no_segments(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    # What a Sync stores of captions YouTube gave with nothing in them: no lines, so nothing to cut into Segments.
+    blank = altered(
+        await sound_bundle(sender, transcripts, tmp_path),
+        "blank.seek",
+        "UPDATE transcripts SET cues = '[]'",
+        "DELETE FROM segments",
+    )
+
+    imported = import_bundle(friend, blank)
+
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [channel] = (await client.get("/api/channels")).json()
+        stages = {title: video["stage"] for title, video in (await list_videos(client, channel["id"])).items()}
+    assert imported.added == 1
+    assert stages == {"Hand-cut dovetails": "done"}
+
+
 async def test_a_channel_whose_name_joins_an_emoji_imports_and_is_listed_under_that_name(
     sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
 ) -> None:
@@ -1259,6 +1356,11 @@ async def test_an_avatar_that_youtube_does_not_serve_is_dropped_and_the_bundle_s
         "plain": "http://yt3.googleusercontent.com/wright-avatar",
         "suffix": "https://yt3.googleusercontent.com.tracker.example/wright-avatar",
         "userinfo": "https://yt3.googleusercontent.com@tracker.example/wright-avatar",
+        # On YouTube's host, and nothing YouTube would serve: far too long, or not one unbroken line of a URL.
+        "long": "https://yt3.ggpht.com/" + "a" * 500_000,
+        "newline": "https://yt3.ggpht.com/wright\nseek: all is well",
+        "escape": "https://yt3.ggpht.com/wright\x1b[2J",
+        "space": "https://yt3.ggpht.com/wright avatar",
     }
 
     avatars = {}
@@ -1460,8 +1562,9 @@ async def test_a_playlist_bundles_video_is_searchable_whatever_its_channels_filt
     # Video it had indexed.
     assert channels == [before | {"indexed_videos": 2, "excluded_videos": 1}]
     assert set(kept["channels"]) <= set(now["channels"])
-    assert [row for row in now["videos"] if "v-old" not in row and "v-tip" not in row] == [
-        row for row in kept["videos"] if "v-old" not in row
+    [(youtube_id,)] = query(friend, "SELECT cid FROM pragma_table_info('videos') WHERE name = 'youtube_video_id'")
+    assert [row for row in now["videos"] if row[youtube_id] not in ("v-old", "v-tip")] == [
+        row for row in kept["videos"] if row[youtube_id] != "v-old"
     ]
     assert all(set(kept[table]) <= set(now[table]) for table in ("transcripts", "segments", "segment_vectors"))
 
@@ -1578,6 +1681,7 @@ async def test_import_refuses_a_playlist_bundle_whose_playlist_creators_or_place
         ),
         (altered(bundle, "two.seek", "INSERT INTO playlist SELECT * FROM playlist"), "it does not hold exactly one Playlist"),
         (altered(bundle, "none.seek", "DELETE FROM playlist"), "it does not hold exactly one Playlist"),
+        (altered(bundle, "empty.seek", "DELETE FROM videos"), "it holds no Videos"),
         (
             altered(
                 bundle,
@@ -1814,6 +1918,69 @@ async def test_an_import_that_loses_the_lease_stops_before_its_next_video_and_ca
     assert await searchable(friend) == ["v-chisels", "v-planes", "v-saws"]
 
 
+async def test_an_import_that_cannot_renew_the_lease_for_a_busy_knowledge_base_stops_before_its_next_video_and_says_so(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = await three_video_bundle(sender, transcripts, tmp_path)
+    # How long a write waits for another's lock, which the test would otherwise sit out.
+    monkeypatch.setattr(db, "BUSY_TIMEOUT_MS", 50)
+    with closing(db.connect(friend.database_path)) as writer:
+
+        def write_for_too_long(videos: int, total: int) -> None:
+            writer.execute("BEGIN IMMEDIATE")
+
+        with pytest.raises(SyncCommandError) as stopped:
+            import_bundle(friend, bundle, progress=write_for_too_long)
+        writer.execute("ROLLBACK")
+    after_the_first = await searchable(friend)
+    # The import could not give the lease up either, while the other write went on.
+    lease(friend, "expires_at = 0")
+    again = import_bundle(friend, bundle)
+
+    assert str(stopped.value) == (
+        "The knowledge base was too busy for the import to keep its hold on Syncs after 1 of 3 Videos; run the "
+        "import again to carry on where it stopped"
+    )
+    assert after_the_first == ["v-chisels"]
+    assert (again.added, again.already_indexed) == (2, 1)
+
+
+async def test_an_import_whose_background_renewal_finds_the_knowledge_base_busy_says_so_and_not_that_another_took_over(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = await three_video_bundle(sender, transcripts, tmp_path)
+    # A lease short enough that the background renewal comes round while the first Video's progress is told.
+    monkeypatch.setattr(sync_worker, "LEASE_SECONDS", 0.2)
+    importing, renew = threading.current_thread(), syncs.renew_lease
+    in_the_background: list[threading.Thread] = []
+    tried = threading.Event()
+
+    def busy_in_the_background(conn: sqlite3.Connection, holder: str, seconds: float) -> bool:
+        if threading.current_thread() is importing:
+            return renew(conn, holder, seconds)
+        in_the_background.append(threading.current_thread())
+        tried.set()
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(syncs, "renew_lease", busy_in_the_background)
+
+    def wait_for_the_renewal(videos: int, total: int) -> None:
+        assert tried.wait(10)
+        # Until the thread has recorded its failure, which is the last thing it does.
+        in_the_background[0].join(10)
+
+    with pytest.raises(SyncCommandError) as stopped:
+        import_bundle(friend, bundle, progress=wait_for_the_renewal)
+    # The lease was the import's own all along, so it gave it up and the next one is not refused.
+    again = import_bundle(friend, bundle)
+
+    assert str(stopped.value) == (
+        "The knowledge base was too busy for the import to keep its hold on Syncs after 1 of 3 Videos; run the "
+        "import again to carry on where it stopped"
+    )
+    assert (again.added, again.already_indexed) == (2, 1)
+
+
 async def test_import_runs_beside_a_running_server_which_finds_its_segments_at_once_and_holds_a_queued_sync_until_it_ends(
     sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1835,7 +2002,7 @@ async def test_import_runs_beside_a_running_server_which_finds_its_segments_at_o
     # The worker finds a released lease by polling.
     async with running(app_on(friend, transcripts, sync_poll_seconds=0.02)) as client:
         rex = await add_channel(client, "@rexkrueger")
-        importing = asyncio.create_task(asyncio.to_thread(import_bundle, friend, bundle, None, hold_after_the_first))
+        importing = asyncio.create_task(asyncio.to_thread(import_bundle, friend, bundle, progress=hold_after_the_first))
         await held.wait_entered()
         [(taken_until,)] = query(friend, "SELECT expires_at FROM sync_lease")
         await start_sync(client, rex["id"])
