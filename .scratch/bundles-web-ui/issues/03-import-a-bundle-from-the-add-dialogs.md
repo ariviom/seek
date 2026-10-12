@@ -1,6 +1,6 @@
 # 03: Import a Bundle from the Add dialogs
 
-**What to build:** In the Add Channel dialog or the Add Playlist dialog I choose "or import a `.seek` file", pick the file, and press Import. Seek imports it, either kind in either dialog, shows me what was added, selects the new entry in my Library, and offers to start a Sync. Its Videos are searchable at once, and every other open page shows the entry without a reload. A file Seek can't use is refused in a sentence about "the file". See Spec 0006 §Two small changes to the Bundle functions, §Routes, §Import, §Telling open pages, §Temporary files, §Web UI: Import, §Security.
+**What to build:** In the Add Channel dialog or the Add Playlist dialog I choose "or import a `.seek` file", pick the file, and press Import. Seek imports it, either kind in either dialog, shows me what was added, selects the new entry in my Library, and offers to start a Sync. Its Videos are searchable at once, and every other open page shows the entry without a reload. A file Seek can't use is refused in a sentence about "the file". See Spec 0006 §Three small changes to the Bundle functions, §Routes, §Import, §Telling open pages, §Temporary files, §Web UI: Import, §Security.
 
 This ticket leaves two things to the next ones: refusing while a Sync or another import is in the way (04), and the size cap, the proxy sentence, and abandoned uploads (05).
 
