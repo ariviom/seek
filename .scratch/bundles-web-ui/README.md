@@ -11,7 +11,7 @@ Status: breakdown approved by Drew on 2026-10-11. Spec: `docs/specs/0006-bundles
 | 05 | Limits and leftovers | 04 | done |
 | 06 | Document Bundles in the web UI | 02, 05 | done |
 
-2026-10-12: all six tickets are done on the integration branch, `t3code/export-shareable-channel-embeddings`. The whole-branch `reviewer` pass is still to come, then landing on `main`.
+2026-10-12: all six tickets are done on the integration branch, `t3code/export-shareable-channel-embeddings`. The whole-branch `reviewer` pass is [review.md](review.md): sixteen of its seventeen findings fixed in `0361119` and one left with its reason (the three ways the web pluralises "Video"), 823 tests passing. Landing on `main` is still to come.
 
 No ticket adds a migration or a dependency. Tickets 02 and 03 are both unblocked once 01 lands, but they share the Bundle routes and the web's API module, so land them one at a time in number order.
 

@@ -46,3 +46,9 @@
 - `import_bundle`'s docstring says a Sync queued meanwhile "waits for it", which is true, and does not say that inside the server it then starts at once.
 
 **Verification.** `uv run pytest -q`: 816 passed, 7 deselected. `uv run mypy`: clean. Nothing under `web/` changed.
+
+### 2026-10-12: a correction, from the whole-branch review (S8)
+
+The first item under "Found in the code and left alone" above is wrong. A Playlist's Bundle all of whose Videos are left out here does publish the Videos-changed event, once for each creator, and other open pages show the Playlist at once.
+
+Import records a row for each such Video before it judges it: credited to its creator, excluded for its length, and included in the Playlist (`bundles.py`, the function that has the Playlist include a Bundle's Video). `videos.listed_by_creator` lists a Playlist's creators from those rows whether or not they are excluded, so it lists both. Run this time, not read: a Bundle of the Playlist "Sharpening", two Videos of two creators, imported into a Seek with a 720 second minimum, reports `added: 0` and `left_out: {"Shorter than the 720 second minimum": 2}`, and the event stream carries `{"type": "videos", "channel_id": …, "playlist_ids": [1]}` for each of the two. The Playlist is listed with no indexed Videos, two excluded, and both creators. There is no gap here to hand on.
