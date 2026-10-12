@@ -94,12 +94,16 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 - The knowledge base's schema does not change, and there is no migration.
 - No new dependency. In particular no multipart parser: the upload is a raw request body.
 
-### Two small changes to the Bundle functions
+### Three small changes to the Bundle functions
 - **How a refusal names the file.** Import's refusals name the Bundle by its path, which for an upload would be a
   temporary path on the server. The import function takes an optional name to use for the Bundle in its refusals,
   defaulting to the path. The server passes "The file", giving "The file is not a Seek Bundle", "The file is damaged
   or has been altered: …", and "The file was embedded with …". The CLI passes nothing, and its sentences are
   unchanged.
+- **Export's refusals likewise.** Three of them name the destination, which for a build is a path in the server's
+  temporary directory. The export functions take the same optional name, and the server passes "the Bundle", so a
+  failed write reads "Could not write the Bundle: …" with the system's reason and no path. Found by the commit
+  security review of ticket 01 and added then.
 - **The Playlist-name refusal is told apart.** It is raised as a kind of its own, still one of the user-facing
   refusals and carrying the name that is taken, so the server can say what to do in the web UI. The CLI still prints
   the `--name` sentence.
@@ -313,8 +317,10 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 - A browser leaving mid-upload or mid-import depends on the HTTP server's handling of a dropped connection, which
   the in-process harness doesn't reproduce. Those two tests use `serving` and a client that drops its connection.
 - Not tested again: the merge rules and validation, which Spec 0005's tests own. Those tests pass unchanged; the
-  two changes to the Bundle functions are observed at seam 1, and the CLI's sentences by the tests that already
-  assert them.
+  changes to the Bundle functions are observed at seam 1, and the CLI's sentences by the tests that already assert
+  them. One exception, taken in ticket 01: the name in export's own refusals is tested on the function, beside
+  Spec 0005's refusal tests, since a write that fails inside a directory the route has just made can't be forced
+  portably through the route.
 - Verification: `uv run pytest -q && uv run mypy`, and the web typecheck and build. A fresh worktree needs
   `pnpm --dir web install --frozen-lockfile` first.
 - Prior art: the Bundle, channels, playlists, sync-events, remote-access, and smoke test modules.
@@ -339,8 +345,8 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   - the temporary directory inside the data directory, cleared at start of what is over an hour old;
   - a 2 GB cap on an upload, fixed, and checked in the page before sending;
   - one import at a time in a server, and the server refusing on a queued Sync as well as a running one;
-  - refusals saying "The file", and the web wording of the Playlist-name refusal, each a small change to the import
-    function;
+  - refusals saying "The file" or "the Bundle", and the web wording of the Playlist-name refusal, each a small
+    change to a Bundle function;
   - an Import button after the file is chosen, where the session said only that there is no name field;
   - the dialog not dismissable while importing;
   - the statuses, which the page never reads.
