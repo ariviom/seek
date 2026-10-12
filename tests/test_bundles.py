@@ -1,4 +1,6 @@
 import asyncio
+import errno
+import os
 import shutil
 import sqlite3
 import threading
@@ -300,6 +302,30 @@ async def test_export_refuses_what_it_cannot_export_and_leaves_no_file_behind(
         export_channel(replace(sender, embedding_model="another-embedder"), "UC-wright", out / "wright.seek")
 
     assert list(out.iterdir()) == []
+
+
+async def test_export_told_what_to_call_the_bundle_keeps_its_path_out_of_every_refusal(
+    sender: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
+    async with running(app_on(sender, transcripts)) as client:
+        await sync(client, await add_channel(client, "@woodbywright"))
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "taken.seek").write_bytes(b"")
+
+    refused = [
+        # The system's own words for a directory that isn't there, without the file it names beside them.
+        (out / "missing" / "wright.seek", f"Could not write the Bundle: {os.strerror(errno.ENOENT)}"),
+        (out, "the Bundle is a directory; give the file to write the Bundle to"),
+        (out / "taken.seek", "the Bundle already exists; export never replaces a file"),
+    ]
+    for path, message in refused:
+        with pytest.raises(SyncCommandError) as error:
+            export_channel(sender, "UC-wright", path, called="the Bundle")
+        assert str(error.value) == message
+
+    assert [file.name for file in out.iterdir()] == ["taken.seek"]
 
 
 async def test_export_refuses_a_playlist_it_cannot_export_and_leaves_no_file_behind(

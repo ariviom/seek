@@ -1,3 +1,5 @@
+import errno
+import os
 import stat
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -296,6 +298,27 @@ async def test_a_channel_with_no_indexed_videos_is_refused_in_the_commands_sente
 
     assert refused.status_code == 422
     assert refused.json() == {"detail": "The Channel 'Wood By Wright' has no indexed Videos to export"}
+    assert held(sender) == []
+
+
+async def test_a_build_the_server_has_nowhere_to_write_is_refused_without_a_path_of_the_servers(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        sender.temporary_dir.chmod(0o500)
+        try:
+            if os.access(sender.temporary_dir, os.W_OK):
+                pytest.skip("The current user/filesystem does not enforce directory write permissions")
+            refused = await client.post(f"/api/channels/{wright['id']}/bundles")
+        finally:
+            sender.temporary_dir.chmod(0o700)
+
+    assert refused.status_code == 422
+    # The system's own words for why, and nothing of where.
+    assert refused.json() == {"detail": f"Could not write the Bundle: {os.strerror(errno.EACCES)}"}
     assert held(sender) == []
 
 

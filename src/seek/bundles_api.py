@@ -22,6 +22,11 @@ from seek.bundles import EXTENSION, ExportReport, export_channel
 from seek.config import Config
 from seek.db import Database
 from seek.errors import NotFound
+from seek.sync_command import SyncCommandError
+
+
+# What a refusal calls a Bundle the server is building: its path there is not for the page that asked to read.
+CALLED = "the Bundle"
 
 
 class TemporaryArea:
@@ -116,7 +121,11 @@ def bundles_router(config: Config, database: Database, area: TemporaryArea) -> A
 
     async def build(export: Callable[[Path], ExportReport]) -> BuiltBundle:
         """Runs the export in a worker thread, since it opens a connection of its own, into a fresh directory."""
-        directory = area.new_directory()
+        try:
+            directory = area.new_directory()
+        except OSError as e:
+            # In export's own words for a Bundle it can't write, and like them without the path.
+            raise SyncCommandError(f"Could not write {CALLED}: {e.strerror}") from e
         try:
             report = await asyncio.to_thread(export, directory / f"bundle{EXTENSION}")
         except BaseException:
@@ -137,7 +146,7 @@ def bundles_router(config: Config, database: Database, area: TemporaryArea) -> A
     async def build_channel_bundle(channel_id: int) -> BuiltBundle:
         channel = await database.run(lambda conn: channels.get_channel(conn, channel_id))
         # By its YouTube id: Channel names are not unique, and export refuses a name two Channels share.
-        return await build(lambda path: export_channel(config, channel.youtube_channel_id, path))
+        return await build(lambda path: export_channel(config, channel.youtube_channel_id, path, called=CALLED))
 
     @router.get("/bundles/{bundle_id}")
     async def collect_bundle(bundle_id: str) -> FileResponse:

@@ -224,12 +224,15 @@ _VIDEO_COLUMNS = """
 """
 
 
-def export_channel(config: Config, channel: str, path: Path) -> ExportReport:
+def export_channel(config: Config, channel: str, path: Path, called: str | None = None) -> ExportReport:
     """Writes the Channel with this name or YouTube channel id to a Bundle at the path, adding `.seek` when the
     path lacks it.
 
     The Bundle holds the Channel's searchable Videos, Paused or not. It is read in one read transaction, so it is
     a consistent snapshot even while a Sync writes; no Sync lease is taken and no model is loaded.
+
+    A refusal names the Bundle by its path, or by `called` as it stands when that is given: the server gives one,
+    since where it writes a Bundle is a path of its own that the page asking has no business reading.
     """
 
     def entry(conn: sqlite3.Connection) -> _Entry:
@@ -262,10 +265,10 @@ def export_channel(config: Config, channel: str, path: Path) -> ExportReport:
         )
         return _Entry("channel", found.name, [row], videos, found.filters.playlist_id is not None)
 
-    return _export(config, path, entry)
+    return _export(config, path, entry, called)
 
 
-def export_playlist(config: Config, playlist: str, path: Path) -> ExportReport:
+def export_playlist(config: Config, playlist: str, path: Path, called: str | None = None) -> ExportReport:
     """Writes the Playlist with this name or YouTube playlist id to a Bundle at the path, as `export_channel`
     writes a Channel.
 
@@ -310,15 +313,17 @@ def export_playlist(config: Config, playlist: str, path: Path) -> ExportReport:
         ]
         return _Entry("playlist", found.name, rows, videos)
 
-    return _export(config, path, entry)
+    return _export(config, path, entry, called)
 
 
-def _export(config: Config, path: Path, find: Callable[[sqlite3.Connection], _Entry]) -> ExportReport:
+def _export(
+    config: Config, path: Path, find: Callable[[sqlite3.Connection], _Entry], called: str | None
+) -> ExportReport:
     """Writes the entry `find` reads from the knowledge base to a Bundle at the path."""
     if path.is_dir():
-        raise SyncCommandError(f"{path} is a directory; give the file to write the Bundle to")
+        raise SyncCommandError(f"{called or path} is a directory; give the file to write the Bundle to")
     destination = path if path.name.endswith(EXTENSION) else path.with_name(path.name + EXTENSION)
-    _refuse_existing(destination)
+    _refuse_existing(destination, called)
     _open_knowledge_base(config)
     with closing(db.connect(config.database_path)) as conn:
         # Left open until the connection closes: every read below sees the knowledge base as it is now.
@@ -328,7 +333,7 @@ def _export(config: Config, path: Path, find: Callable[[sqlite3.Connection], _En
             raise SyncCommandError(f"The {entry.kind.capitalize()} {entry.name!r} has no indexed Videos to export")
         model = conn.execute("SELECT name, dimension FROM embedding_model").fetchone()
         # Written under another name and renamed once complete, so a `.seek` file is never half a Bundle.
-        temporary, bundle = _new_bundle(destination, entry.kind)
+        temporary, bundle = _new_bundle(destination, entry.kind, called)
         try:
             with closing(bundle):
                 bundle.execute(
@@ -344,7 +349,7 @@ def _export(config: Config, path: Path, find: Callable[[sqlite3.Connection], _En
                 segments = sum(_export_video(conn, bundle, video) for video in entry.videos)
                 bundle.execute("COMMIT")
             # Again, since the write can take minutes and a rename replaces what is there without a word.
-            _refuse_existing(destination)
+            _refuse_existing(destination, called)
             temporary.rename(destination)
         except BaseException:
             temporary.unlink(missing_ok=True)
@@ -359,12 +364,12 @@ def _export(config: Config, path: Path, find: Callable[[sqlite3.Connection], _En
     )
 
 
-def _refuse_existing(destination: Path) -> None:
+def _refuse_existing(destination: Path, called: str | None) -> None:
     if destination.exists():
-        raise SyncCommandError(f"{destination} already exists; export never replaces a file")
+        raise SyncCommandError(f"{called or destination} already exists; export never replaces a file")
 
 
-def _new_bundle(destination: Path, kind: Kind) -> tuple[Path, sqlite3.Connection]:
+def _new_bundle(destination: Path, kind: Kind, called: str | None) -> tuple[Path, sqlite3.Connection]:
     """An empty Bundle of that kind under a temporary name beside the destination, inside a transaction for the
     caller to commit; returns that name with it.
 
@@ -377,7 +382,9 @@ def _new_bundle(destination: Path, kind: Kind) -> tuple[Path, sqlite3.Connection
         handle, name = tempfile.mkstemp(dir=destination.parent, prefix=f"{destination.name}.", suffix=".tmp")
         os.close(handle)
     except OSError as e:
-        raise SyncCommandError(f"Could not write {destination}: {e}") from e
+        # The system's error names the file as well, so a caller that keeps the path out gets its reason alone.
+        reason = e if called is None else e.strerror
+        raise SyncCommandError(f"Could not write {called or destination}: {reason}") from e
     temporary = Path(name)
     try:
         bundle = sqlite3.connect(temporary, autocommit=True)
@@ -390,7 +397,7 @@ def _new_bundle(destination: Path, kind: Kind) -> tuple[Path, sqlite3.Connection
         bundle.executescript(_SCHEMA + _ENTRY_SCHEMA[kind])
     except sqlite3.Error as e:
         temporary.unlink(missing_ok=True)
-        raise SyncCommandError(f"Could not write {destination}: {e}") from e
+        raise SyncCommandError(f"Could not write {called or destination}: {e}") from e
     return temporary, bundle
 
 
