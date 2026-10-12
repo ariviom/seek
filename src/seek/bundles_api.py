@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
-from seek import channels, playlists, videos
+from seek import channels, playlists, syncs, videos
 from seek.bundles import (
     EXTENSION,
     ExportReport,
@@ -37,7 +37,7 @@ from seek.bundles import (
 from seek.channels import ChannelFilters
 from seek.config import Config
 from seek.db import Database
-from seek.errors import NotFound
+from seek.errors import Conflict, NotFound
 from seek.events import Events
 from seek.sync_command import SyncCommandError
 from seek.videos import Listed, Source
@@ -49,6 +49,9 @@ CALLED = "the Bundle"
 UPLOADED = "The file"
 # The one content type a Bundle is sent to be imported as.
 UPLOAD_MEDIA_TYPE = "application/octet-stream"
+# Why an import is refused for now. The first is in the words the dialog shows beside its disabled import path.
+SYNC_IN_THE_WAY = "A Sync is running or waiting to run; import when it has finished."
+ANOTHER_IMPORT = "Another import is running; try again when it has finished."
 
 
 class TemporaryArea:
@@ -167,6 +170,13 @@ async def _store(request: Request, path: Path) -> None:
         await asyncio.to_thread(file.close)
 
 
+async def _discard(request: Request) -> None:
+    """Reads the request's body to its end and keeps none of it, so that the browser of an upload refused before
+    it was stored receives the sentence and not a dropped connection."""
+    async for _ in request.stream():
+        pass
+
+
 def _imported(conn: sqlite3.Connection, report: ImportReport) -> tuple[int, list[Listed]]:
     """The id here of the Channel or Playlist an import reported, which it names by its id on YouTube, and where
     its Videos are listed, a creator at a time, as a Sync of it would tell open pages."""
@@ -177,10 +187,14 @@ def _imported(conn: sqlite3.Connection, report: ImportReport) -> tuple[int, list
     return found, videos.listed_by_creator(conn, Source(report.kind, found))
 
 
-def bundles_router(config: Config, database: Database, area: TemporaryArea, events: Events) -> APIRouter:
+def bundles_router(
+    config: Config, database: Database, area: TemporaryArea, events: Events, wake_worker: Callable[[], None]
+) -> APIRouter:
     router = APIRouter()
     # Bundles built and not yet collected, by the id each is collected under.
     built: dict[str, _Built] = {}
+    # Whether an import is under way, uploading or importing: a server runs one at a time.
+    importing = False
 
     async def build(export: Callable[[Path], ExportReport]) -> BuiltBundle:
         """Runs the export in a worker thread, since it opens a connection of its own, into a fresh directory."""
@@ -236,17 +250,36 @@ def bundles_router(config: Config, database: Database, area: TemporaryArea, even
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 f"A Bundle is imported as the body of the request, sent as {UPLOAD_MEDIA_TYPE}",
             )
-        directory = area.new_directory()
+        nonlocal importing
+        if importing:
+            await _discard(request)
+            raise Conflict(ANOTHER_IMPORT)
+        # Taken with no await since it was found free, so two requests can't both find it so.
+        importing = True
         try:
-            path = directory / f"upload{EXTENSION}"
-            await _store(request, path)
-            # In a worker thread, as a build is: it opens connections of its own, and takes the Sync lease.
-            report = await asyncio.to_thread(import_bundle, config, path, called=UPLOADED)
-        except PlaylistNameTaken as e:
-            # The command's sentence points at a flag; here the way out is the other Playlist's Rename.
-            raise PlaylistNameTaken(e.name, "rename it, then import the file again.") from e
+            # The condition the dialog disables its import path on. The import function would refuse a running
+            # Sync itself, once the whole file had been stored; a queued one only this refuses.
+            if await database.run(syncs.has_work):
+                await _discard(request)
+                raise Conflict(SYNC_IN_THE_WAY)
+            directory = area.new_directory()
+            try:
+                path = directory / f"upload{EXTENSION}"
+                await _store(request, path)
+                # In a worker thread, as a build is: it opens connections of its own, and takes the Sync lease,
+                # which a Sync that started since the check above holds.
+                report = await asyncio.to_thread(import_bundle, config, path, called=UPLOADED)
+            except PlaylistNameTaken as e:
+                # The command's sentence points at a flag; here the way out is the other Playlist's Rename.
+                raise PlaylistNameTaken(e.name, "rename it, then import the file again.") from e
+            finally:
+                area.remove(directory)
         finally:
-            area.remove(directory)
+            # However it ended, an upload the browser abandoned included: that raises out of the body's stream.
+            importing = False
+            # A Sync queued while the import held the lease found the worker unable to take it, and the worker
+            # would otherwise look again only at its next poll.
+            wake_worker()
         entry_id, listed = await database.run(lambda conn: _imported(conn, report))
         # Published here, on the event loop, never from the import's thread; and only for an import that completed,
         # since a refusal names no entry. Every open page reloads its Channels, Playlists, and Videos table on it.

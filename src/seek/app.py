@@ -238,7 +238,7 @@ def create_app(
     app.include_router(
         playlists_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
     )
-    app.include_router(bundles_router(config, database, temporary, events), prefix="/api")
+    app.include_router(bundles_router(config, database, temporary, events, worker.wake), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")

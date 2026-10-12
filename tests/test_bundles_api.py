@@ -1,3 +1,4 @@
+import asyncio
 import errno
 import os
 import stat
@@ -29,9 +30,12 @@ from harness import (
     wait_for_syncs,
 )
 
+from seek import syncs
 from seek.app import create_app
 from seek.config import Config
+from seek.db import Database
 from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
+from seek.videos import Source
 
 
 @pytest.fixture
@@ -46,7 +50,12 @@ def friend(tmp_path: Path) -> Config:
     return bundle_config(tmp_path / "friend")
 
 
-def app_on(config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbedder | None = None) -> FastAPI:
+def app_on(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder | None = None,
+    sync_poll_seconds: float = 5.0,
+) -> FastAPI:
     return create_app(
         config,
         transcripts,
@@ -54,6 +63,7 @@ def app_on(config: Config, transcripts: FakeTranscriptSource, embedder: FakeEmbe
         FakeReranker(),
         FakeChatEngine(),
         static_dir=config.data_dir / "none",
+        sync_poll_seconds=sync_poll_seconds,
     )
 
 
@@ -825,3 +835,251 @@ async def test_a_bundle_imports_whatever_follows_or_however_the_content_type_is_
     assert (imported.status_code, imported.json()["added"]) == (200, 1)
     assert channels == [("Wood By Wright", 1)]
     assert held(friend) == []
+
+
+async def wrights_bundle(sender: Config, transcripts: FakeTranscriptSource) -> bytes:
+    """The Bundle a sender's Seek builds of Wood By Wright, whose one Video is on sharpening chisels."""
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone"))
+    )
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        return await bundle_of(client, f"channels/{wright['id']}")
+
+
+async def in_halves(content: bytes, read: list[int]) -> AsyncIterator[bytes]:
+    """The file in two pieces, each noted once the server has asked for what follows it: it read the file to its
+    end when both are."""
+    half = len(content) // 2
+    for piece in (content[:half], content[half:]):
+        yield piece
+        read.append(len(piece))
+
+
+AS_A_FILE = {"Content-Type": "application/octet-stream"}
+SYNC_IN_THE_WAY = {"detail": "A Sync is running or waiting to run; import when it has finished."}
+
+
+async def test_an_import_is_refused_while_a_sync_is_running_and_accepted_once_it_has_finished(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    gate = Gate()
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives", before_fetch=gate))
+    read: list[int] = []
+    async with running(app_on(friend, transcripts)) as client:
+        rex = await add_channel(client, "@rexkrueger")
+        await start_sync(client, rex["id"])
+        await gate.wait_entered()
+        before = await library(client)
+
+        refused = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        after = await library(client)
+        stored = held(friend)
+        gate.released.set()
+        await wait_for_syncs(client)
+        later = await import_file(client, bundle)
+
+    # The server's own sentence, not the command's: it refuses before the import function is asked.
+    assert (refused.status_code, refused.json()) == (409, SYNC_IN_THE_WAY)
+    # Read to its end all the same, so the browser gets the sentence and not a dropped connection, and discarded.
+    assert sum(read) == len(bundle)
+    assert stored == []
+    assert after == before == ([("Rex Krueger", 0)], [], [])
+    assert (later.status_code, later.json()["added"]) == (200, 1)
+    assert held(friend) == []
+
+
+async def test_an_import_is_refused_for_as_long_as_a_sync_waits_to_run_though_none_is_running(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Strop the knife on leather"))
+    )
+    # A Sync stays queued while the embedding model loads, which on a first run is a download.
+    loading = Gate()
+    read: list[int] = []
+    async with running(app_on(friend, transcripts, FakeEmbedder(before_load=loading))) as client:
+        rex = await add_channel(client, "@rexkrueger")
+        await start_sync(client, rex["id"])
+        await loading.wait_entered()
+        waiting = [s["status"] for s in (await client.get("/api/syncs")).json()]
+
+        refused = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        still_waiting = [s["status"] for s in (await client.get("/api/syncs")).json()]
+        stored = held(friend)
+        loading.released.set()
+        await wait_for_syncs(client)
+        # Nothing can be searched while the model loads, so the Library is looked at once it has.
+        after = await library(client)
+
+    assert waiting == still_waiting == ["queued"]
+    assert (refused.status_code, refused.json()) == (409, SYNC_IN_THE_WAY)
+    assert sum(read) == len(bundle)
+    assert stored == []
+    # Rex Krueger's Sync ran; nothing of Wood By Wright's Bundle is there.
+    assert after == ([("Rex Krueger", 1)], [], ["v-knives"])
+    assert held(friend) == []
+
+
+class Paused:
+    """A file sent as a body that pauses before its last chunk, which holds its import open as an upload still
+    arriving, for the test to end when it likes."""
+
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+        # Set once the server has asked for the last chunk, so it has taken the import on and stored the first.
+        self.arriving = asyncio.Event()
+        self.let_go = asyncio.Event()
+
+    async def chunks(self) -> AsyncIterator[bytes]:
+        half = len(self._content) // 2
+        yield self._content[:half]
+        self.arriving.set()
+        await self.let_go.wait()
+        yield self._content[half:]
+
+    def sent_to(self, client: httpx.AsyncClient) -> asyncio.Task[httpx.Response]:
+        return asyncio.create_task(client.post("/api/bundles", content=self.chunks(), headers=AS_A_FILE))
+
+
+ANOTHER_IMPORT = {"detail": "Another import is running; try again when it has finished."}
+
+
+@pytest.mark.parametrize("first_is_a_bundle", [True, False], ids=["which completes", "which is refused"])
+async def test_a_second_import_is_refused_while_one_is_uploading_and_a_later_one_accepted_once_it_has_ended(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, first_is_a_bundle: bool
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    first = Paused(bundle if first_is_a_bundle else b"Remember to sharpen the chisels")
+    read: list[int] = []
+    async with running(app_on(friend, transcripts)) as client:
+        uploading = first.sent_to(client)
+        await asyncio.wait_for(first.arriving.wait(), 5)
+        before = await library(client)
+
+        refused = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        after = await library(client)
+        stored = held(friend)
+        first.let_go.set()
+        ended = await uploading
+        later = await import_file(client, bundle)
+
+    assert (refused.status_code, refused.json()) == (409, ANOTHER_IMPORT)
+    # Read to its end and discarded: the one upload stored is the first's.
+    assert sum(read) == len(bundle)
+    assert len(stored) == 1
+    assert after == before == ([], [], [])
+    # However the first ended, it no longer holds the place of the one import.
+    if first_is_a_bundle:
+        assert (ended.status_code, ended.json()["added"]) == (200, 1)
+        assert (later.status_code, later.json()["added"], later.json()["already_indexed"]) == (200, 0, 1)
+    else:
+        assert (ended.status_code, ended.json()) == (422, {"detail": "The file is not a Seek Bundle"})
+        assert (later.status_code, later.json()["added"], later.json()["already_indexed"]) == (200, 1, 0)
+    assert held(friend) == []
+
+
+async def test_an_upload_the_browser_abandons_no_longer_holds_the_place_of_the_one_import(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    app = app_on(friend, transcripts)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/bundles",
+        "raw_path": b"/api/bundles",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"127.0.0.1:7337"), (b"content-type", b"application/octet-stream")],
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 7337),
+    }
+    first_half = [{"type": "http.request", "body": bundle[: len(bundle) // 2], "more_body": True}]
+    arriving = asyncio.Event()
+    gone = asyncio.Event()
+
+    async def receive() -> dict[str, Any]:
+        if first_half:
+            return first_half.pop()
+        # Asked for the rest, which never comes: the browser goes away instead.
+        arriving.set()
+        await gone.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        pass
+
+    async with running(app) as client:
+        abandoned = asyncio.create_task(app(scope, receive, send))
+        await asyncio.wait_for(arriving.wait(), 5)
+        meanwhile = await import_file(client, bundle)
+        gone.set()
+        # However the server ends a request nobody is waiting on.
+        await asyncio.gather(abandoned, return_exceptions=True)
+        stored = held(friend)
+        later = await import_file(client, bundle)
+
+    assert (meanwhile.status_code, meanwhile.json()) == (409, ANOTHER_IMPORT)
+    assert stored == []
+    assert (later.status_code, later.json()["added"]) == (200, 1)
+    assert held(friend) == []
+
+
+async def test_a_sync_that_starts_while_the_file_is_still_arriving_refuses_the_import_in_the_commands_sentence(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    gate = Gate()
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives", before_fetch=gate))
+    upload = Paused(bundle)
+    async with running(app_on(friend, transcripts)) as client:
+        rex = await add_channel(client, "@rexkrueger")
+        uploading = upload.sent_to(client)
+        await asyncio.wait_for(upload.arriving.wait(), 5)
+        # Nothing was running or queued when the server looked, so the upload was taken on.
+        await start_sync(client, rex["id"])
+        await gate.wait_entered()
+        before = await library(client)
+
+        upload.let_go.set()
+        refused = await uploading
+        after = await library(client)
+        gate.released.set()
+        await wait_for_syncs(client)
+
+    # The Sync lease is what refuses it, as it refuses `seek import`.
+    assert refused.status_code == 422
+    assert refused.json() == {"detail": "A Sync is running; run the import again when it has finished"}
+    assert after == before == ([("Rex Krueger", 0)], [], [])
+    assert held(friend) == []
+
+
+async def test_a_sync_queued_while_an_import_ran_starts_when_the_import_ends_without_waiting_for_the_poll(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    fake_channel(transcripts, "UC-rex").videos.append(fake_video("v-knives", "Knives"))
+    upload = Paused(bundle)
+    # An hour between the worker's looks at the queue: within the test, only being woken starts a Sync.
+    async with running(app_on(friend, transcripts, sync_poll_seconds=3600)) as client:
+        rex = await add_channel(client, "@rexkrueger")
+        uploading = upload.sent_to(client)
+        await asyncio.wait_for(upload.arriving.wait(), 5)
+        # Queued as another seek process queues one, which tells the server nothing: the worker sleeps on.
+        await Database(friend.database_path).run(lambda conn: syncs.enqueue(conn, Source("channel", rex["id"])))
+        waiting = [s["status"] for s in (await client.get("/api/syncs")).json()]
+
+        upload.let_go.set()
+        imported = await uploading
+        [started] = await wait_for_syncs(client)
+
+    assert waiting == ["queued"]
+    assert (imported.status_code, imported.json()["added"]) == (200, 1)
+    assert (started["channel_id"], started["status"]) == (rex["id"], "done")
