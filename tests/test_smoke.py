@@ -1,3 +1,4 @@
+import asyncio
 import re
 import subprocess
 from itertools import groupby
@@ -16,6 +17,7 @@ from harness import (
     add_channel,
     add_group,
     add_playlist,
+    bundle_config,
     fake_channel,
     fake_storyboard,
     fake_video,
@@ -26,7 +28,7 @@ from harness import (
     sync,
     wait_for_syncs,
 )
-from playwright.async_api import ConsoleMessage, Locator, Page, async_playwright, expect
+from playwright.async_api import ConsoleMessage, Locator, Page, Route, async_playwright, expect
 
 from seek.app import create_app
 from seek.config import Config
@@ -967,3 +969,97 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
     # The browser logs each refusal the dialog showed, and nothing else went wrong.
     refused = "Failed to load resource: the server responded with a status of"
     assert errors == [f"{refused} 422 (Unprocessable Content)", f"{refused} 409 (Conflict)", f"{refused} 409 (Conflict)"]
+
+
+async def test_exporting_a_channel_from_its_page_downloads_its_bundle_under_the_channels_name(
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+    tmp_path: Path,
+) -> None:
+    config = bundle_config(tmp_path / "data")
+    fake_channel(transcripts, "UC-wright").videos += [
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone")),
+        fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
+    ]
+    transcripts.playlists["PL-joinery"] = FakePlaylist("Joinery", [("UC-wright", "v-chisels"), ("UC-wright", "v-saws")])
+    filters = {"published_after": None, "published_before": None, "playlist_id": "PL-joinery", "most_recent": None}
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
+    no_videos = "The Channel 'Wood By Wright' has no indexed Videos to export"
+
+    async with serving(app) as base_url:
+        async with httpx.AsyncClient(base_url=base_url) as seed:
+            wright = await add_channel(seed, "@woodbywright")
+            assert (await seed.patch(f"api/channels/{wright['id']}", json={"filters": filters})).status_code == 200
+            await sync(seed, wright)
+            # Added and never synced, so it has nothing to export.
+            await add_channel(seed, "@rexkrueger")
+
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            # A row is one click that selects: Export is on the Channel's page only.
+            await expect(library.get_by_role("button", name="Export")).to_have_count(0)
+            await library.get_by_role("button").filter(has_text="Wood By Wright").click()
+
+            await main.get_by_role("button", name="Export").click()
+            dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Export Wood By Wright"))
+            await expect(dialog).to_contain_text("2 indexed Videos")
+            await expect(dialog).to_contain_text(
+                "The file contains the creators’ full Transcripts, so choose who you share it with."
+            )
+            # This Channel keeps only a playlist's Videos, which the recipient's Seek won't be told.
+            await expect(dialog).to_contain_text(
+                "The Channel’s Playlist filter is left out, so the recipient’s Syncs will bring in its other Videos."
+            )
+            await expect(dialog.get_by_role("button", name="Cancel")).to_be_enabled()
+
+            # A refusal is the server's sentence, in the dialog, which stays open; the page behind shows no alert.
+            builds = "**/api/channels/*/bundles"
+            await page.route(builds, lambda route: route.fulfill(status=422, json={"detail": no_videos}))
+            await dialog.get_by_role("button", name="Export").click()
+            await expect(dialog.get_by_role("alert")).to_have_text(no_videos)
+            await expect(main.get_by_role("alert")).to_have_count(0)
+            await page.unroute(builds)
+
+            # The build is held, so "Building…" is on screen long enough to read.
+            release = asyncio.Event()
+
+            async def hold(route: Route) -> None:
+                await release.wait()
+                await route.continue_()
+
+            await page.route(builds, hold)
+            async with page.expect_download() as downloading:
+                await dialog.get_by_role("button", name="Export").click()
+                await expect(dialog.get_by_role("button", name="Building…")).to_be_disabled()
+                await expect(dialog.get_by_role("alert")).to_have_count(0)
+                release.set()
+            download = await downloading.value
+            assert download.suggested_filename == "Wood By Wright.seek"
+            assert await download.failure() is None
+            saved = tmp_path / "saved.seek"
+            await download.save_as(saved)
+            assert saved.stat().st_size > 0
+            # The download closed the dialog and left the app where it was.
+            await expect(dialog).to_be_hidden()
+            await expect(main.get_by_role("heading", name="Wood By Wright")).to_be_visible()
+            assert page.url.startswith(base_url)
+
+            # Nothing indexed, nothing to export: the button says why, though a disabled control raises no hover.
+            await library.get_by_role("button").filter(has_text="Rex Krueger").click()
+            export = main.get_by_role("button", name="Export")
+            await expect(export).to_be_disabled()
+            await export.hover(force=True)
+            await expect(page.get_by_role("tooltip")).to_have_text("No indexed Videos to export yet.")
+            await expect(page.get_by_text("No indexed Videos to export yet.").first).to_be_visible()
+
+    # The browser logs the refusal the dialog showed, in the words of the test's own answer, and nothing else went
+    # wrong.
+    assert errors == ["Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"]
+    # Nothing of the Bundle stays on the server once the browser has it.
+    assert list(config.temporary_dir.iterdir()) == []

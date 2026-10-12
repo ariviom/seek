@@ -12,6 +12,7 @@ import { checkLabels, formatWhen } from "@/lib/format";
 import { channelSync, syncProgress, useNow } from "@/lib/sync-status";
 import { StageRule } from "@/syncs/StageRule";
 import { ChannelFiltersDialog, filtersSummary } from "./ChannelFiltersDialog";
+import { ExportButton, ExportDialog } from "./ExportDialog";
 import { RenameForm } from "./RenameForm";
 import { VideosTable } from "./VideosTable";
 
@@ -65,6 +66,7 @@ export function ChannelPage({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [videosOpen, setVideosOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const memberOf = groups.filter((group) => group.channels.some((c) => c.id === channel.id));
   const filters = filtersSummary(channel.filters);
@@ -196,6 +198,7 @@ export function ChannelPage({
             >
               {channel.indexed ? "Pause channel" : "Resume channel"}
             </Button>
+            <ExportButton indexedVideos={channel.indexed_videos} onClick={() => setExportOpen(true)} />
             <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setRemoveOpen(true)}>
               Remove channel
             </Button>
@@ -207,6 +210,15 @@ export function ChannelPage({
       </fieldset>
 
       <ChannelFiltersDialog channel={channel} act={act} open={filtersOpen} onOpenChange={setFiltersOpen} />
+
+      <ExportDialog
+        name={channel.name}
+        indexedVideos={channel.indexed_videos}
+        playlistFilterLeftOut={channel.filters.playlist_id !== null}
+        build={() => api.buildChannelBundle(channel.id)}
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+      />
 
       <ConfirmDialog
         title="Remove channel"

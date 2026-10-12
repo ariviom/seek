@@ -89,6 +89,15 @@ export type Channel = {
   avatar_url: string | null;
 };
 export type ChannelProposal = { youtube_channel_id: string; name: string };
+// A Bundle the server built and holds for one download, at `bundleUrl(id)`.
+export type BuiltBundle = {
+  id: string;
+  name: string;
+  videos: number;
+  segments: number;
+  size_bytes: number;
+  playlist_filter_left_out: boolean;
+};
 // A Channel some of a Playlist's Videos are credited to, in the Library or not.
 export type Creator = { id: number; name: string; avatar_url: string | null };
 export type Playlist = {
@@ -297,6 +306,11 @@ async function request<T>(
   return body as T;
 }
 
+// Where a built Bundle is downloaded from, once. Relative like every request, so it follows a proxy prefix too.
+export function bundleUrl(id: string): string {
+  return `api/bundles/${encodeURIComponent(id)}`;
+}
+
 export const api = {
   health: () => request<Health>("health"),
   settings: () => request<Settings>("settings"),
@@ -319,6 +333,7 @@ export const api = {
   setChannelChecks: (id: number, check_every_hours: CheckHours | null) =>
     request<Channel>(`channels/${id}`, { method: "PATCH", body: { check_every_hours } }),
   deleteChannel: (id: number) => request<void>(`channels/${id}`, { method: "DELETE" }),
+  buildChannelBundle: (id: number) => request<BuiltBundle>(`channels/${id}/bundles`, { method: "POST" }),
   listPlaylists: () => request<Playlist[]>("playlists"),
   resolvePlaylist: (playlist: string) =>
     request<PlaylistProposal>("playlists/resolve", { method: "POST", body: { playlist } }),
