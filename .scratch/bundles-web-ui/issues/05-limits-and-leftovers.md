@@ -30,3 +30,12 @@ What to hook into:
 - The router's `built` map in `bundles_router` (id to `_Built(path, file_name)`), filled at the end of `build()`. An expiry pops the id from it and calls `TemporaryArea.remove(path.parent)`; `collect_bundle` already pops before it sends, so whichever comes first wins and the other finds nothing.
 - `TemporaryArea.prepare()`, which the app's lifespan calls before it serves. Clearing what has not been modified in the last hour belongs there.
 - The expiry and the cap reach the router through `create_app`, as its other test-tunable values do; `app_on` in `tests/test_bundles_api.py` is where the tests would pass them.
+
+### 2026-10-12: from ticket 03
+
+The security review of ticket 03's commit `f223c5a` flagged, in `src/seek/bundles_api.py`, that `_store` writes a request's body to the data directory's disk with no limit on its size (resource exhaustion: anyone past Access can fill the disk). That is this ticket's 2 GB cap, left here by design; nothing was built for it in ticket 03.
+
+Where the cap hooks into `import_uploaded_bundle`:
+- **The declared length.** Straight after the content-type check, which stays first, and ahead of the checks ticket 04 adds: read `Content-Length` from `request.headers` and refuse a value over the cap without touching the body. Nothing is stored before `area.new_directory()`, which comes after all of these.
+- **The count while streaming.** In `_store(request, path)`, which writes each chunk of `request.stream()` as it arrives: add up the chunks' lengths and refuse once the sum passes the cap, for a body that declared no length or a false one. The handler's `finally` already removes the upload's directory, so what was written goes with it.
+- Both refusals are the server's own, like the 415 beside them, so they are raised there with the status 413 and the spec's sentence; `_store` needs the cap passed in, and `bundles_router` gets it from `create_app`.
