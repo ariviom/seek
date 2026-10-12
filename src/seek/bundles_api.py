@@ -4,6 +4,10 @@ download, and a Bundle sent as a request's body is imported.
 The Bundle itself is `bundles.export_channel`'s or `bundles.export_playlist`'s, the functions `seek export` calls;
 nothing here writes one. Nor does anything here read one: an upload is stored and handed to `bundles.import_bundle`,
 the function `seek import` calls, which reads it as the untrusted input it is.
+
+What is this module's own is the keeping of both files, in the temporary directory: an upload is counted as it is
+written and refused past a cap, a server takes one import at a time and none while a Sync is running or waiting to
+run, a built Bundle nobody collects is deleted when its expiry comes, and what a crash left is cleared at start.
 """
 
 import asyncio

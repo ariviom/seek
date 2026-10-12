@@ -118,7 +118,7 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   stands. The user-facing refusal the Bundle functions raise joins the app's table of errors that map to a status:
   422 for it, 409 for the Playlist-name refusal and for the server's own "not now" refusals below, 404 for an entry
   or a built Bundle that isn't there, 413 for a file over the cap, 415 for a body that isn't
-  `application/octet-stream`. The table is looked up by a refusal's exact type, so both kinds of Bundle refusal
+  `application/octet-stream`, 400 for an upload that stopped arriving. A build answers 201. The table is looked up by a refusal's exact type, so both kinds of Bundle refusal
   are entered in it. The dialogs read only the sentence, never the status.
 
 ### Export
@@ -156,19 +156,23 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   3. A Sync that is running or queued refuses the import: "A Sync is running or waiting to run; import when it has
      finished." This is the same condition the dialog disables on.
 - An upload refused at step 2 or 3 is still read to its end and discarded, so the browser receives the sentence
-  and not a dropped connection. One over the cap is not read: the dialog has already refused it (below), and any
-  other client gets the status.
+  and not a dropped connection. It is read no further than the cap, though: a body that declared no length and
+  passes the cap while being discarded is refused for its size, 413, not for the Sync or the other import. One that
+  declares a length over the cap is not read: the dialog has already refused it (below), and any other client gets
+  the status.
 - The body is then streamed to a file in a fresh directory of the temporary area, a chunk at a time, counting
   bytes. Nothing of it is held in memory, and the writes are kept off the event loop, which the event stream's
   keepalives share. A body that passes the cap is refused and what was written is deleted.
-- **The cap is 2 GB**, a constant: "The file is larger than 2 GB, the most the web UI imports; import it with
+- **The cap is 2 GB** (2,000,000,000 bytes), a constant: "The file is larger than 2 GB, the most the web UI imports; import it with
   `seek import`." The largest Bundle of the reference Library is 255 MB, and the whole Library would be about
   650 MB. The cap exists because the upload is written to the data directory's disk by anyone past Access. The app
   factory takes it as a parameter, as it takes its other test-tunable values.
 - The import function then runs in a worker thread with no name and no progress callback. It takes the Sync lease
   as it does for the command, so a Sync that started after step 2 is still refused, with the command's sentence.
-- An upload the browser abandons is discarded. Once the whole file has arrived, the import runs to its end whether
-  or not the browser is still there.
+- An upload the browser abandons is discarded, and its request ends as a refusal nobody reads, 400 "The file
+  stopped arriving", not as a failure of the server's. Once the whole file has arrived, the import runs to its end
+  whether or not the browser is still there: the server does not cancel a request whose connection has gone, so the
+  handler finishes, and the import needs no task of its own.
 - The answer is the import report as JSON: `{kind, id, name, youtube_id, created, filters, added, already_indexed,
   left_out}`. `id` is the entry's id in this Library, for the dialog to select it and start its Sync. The import
   function reports the YouTube id, not this one, so the handler looks the entry up by its kind and YouTube id once
@@ -355,17 +359,20 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   run or after a block can be minutes to hours. This follows from the session's decision that a queued Sync
   refuses; it is named here so that nobody "fixes" it, and it is why the sentence says "or waiting to run".
   `seek import` is refused only by a Sync that is running.
-- An import inside the server that loses its hold on Syncs says "Another seek process took over running Syncs",
-  the command's words, though the taker would be the server's own worker after a renewal lapsed. It needs a
-  knowledge base too busy to renew a lease for its whole length, so the wording is left alone.
+- An import inside the server that loses its hold on Syncs says so in the command's words, of which there are two:
+  "The knowledge base was too busy for the import to keep its hold on Syncs" when a renewal failed, and "Another
+  seek process took over running Syncs" when the lease was found taken, though inside the server the taker would be
+  its own worker after a renewal lapsed. The second needs a knowledge base too busy to renew a lease for its whole
+  length, so the wording is left alone.
 - Measured on the reference Library on 2026-10-11: its largest Channel (898 Videos, 23,919 Segments) is a 255 MB
   Bundle, 15 s to export and 23 s to import.
 - Not verified: that Cloudflare caps an upload at 100 MB on this plan. The spec doesn't depend on the number. If it
   holds, that Channel's Bundle can't be imported through the published host, and the fallback sentence is what its
   recipient sees.
-- A proxy also limits how long it waits for an answer. A build or an import that outlasts it shows the fallback
-  sentence in the dialog although the server finishes: the import's entry then appears through the event stream,
-  and the built Bundle expires uncollected. At the measured rates that needs a Bundle several times the largest
+- A proxy also limits how long it waits for an answer. An import that outlasts it shows the fallback sentence in
+  the dialog although the server finishes, and its entry then appears through the event stream. A build that
+  outlasts it goes through the shared request function, so its dialog shows "Request failed" with the proxy's
+  status, and the built Bundle expires uncollected. At the measured rates that needs a Bundle several times the largest
   real one, so it is accepted.
 - An export's count in the dialog comes from the page and the Bundle's from the server a moment later, so they can
   differ by what a running Sync finished in between.

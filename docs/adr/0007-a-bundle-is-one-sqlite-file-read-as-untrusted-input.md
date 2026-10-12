@@ -55,3 +55,27 @@ serialisation. Avatars are kept only on YouTube's avatar hosts.
   it carried if the passage shape changes.
 - Export does not apply import's checks. A Channel whose name holds a bidi override exports a Bundle that import
   refuses; the sender renames it and exports again.
+
+## Note, 2026-10-12: import also runs inside the server
+Spec 0006 put export and import in the web UI. Nothing above changes; two of its statements now cover more.
+
+- **The second writer is either the CLI's process or a thread of the server's.** `POST /api/bundles` hands an
+  uploaded file to the same import function, in a worker thread, with connections of its own. It takes the same
+  lease in the same way, so inside one process the lease still keeps the import and the server's Sync worker apart,
+  and each Video is still one transaction. The server adds two refusals of its own ahead of the lease, before the
+  upload is stored: a Sync that is queued, not only one that is running, and a second import while one is uploading
+  or importing. It wakes its Sync worker when an import ends. The import outlives its request because the server
+  does not cancel a request whose connection has gone, not because it runs in a task of its own; the hold of the one
+  import and the wake are the request handler's.
+- **The untrusted file also arrives over HTTP**, from anyone who can reach the API, which through a published host
+  means anyone past Access. Three things are the route's, and the rest is the reading described under Decision:
+  - It takes the body only as `application/octet-stream`, checked before any of it is read. A page on another site
+    can't send that type without a preflight, which Seek never grants, so no cross-site form can make Seek import a
+    file.
+  - It is capped at 2 GB (2,000,000,000 bytes). A declared length over the cap is refused with none of the body
+    read, and the bytes are counted as they arrive, so a body with no length or a false one is refused when it
+    passes the cap.
+  - It is never held in memory: the body is written a chunk at a time to a file of its own, in a directory of its
+    own inside the data directory, both readable by the user alone, and that directory is removed however the
+    import ends.
+- Export inside the server is the same copy, written to that temporary directory and served once.

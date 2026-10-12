@@ -3,7 +3,8 @@ another Seek imports.
 
 A Bundle is a single SQLite database in plain tables, so any SQLite reads it without extensions. Nothing in it is
 keyed by a local id: Videos go by their YouTube ids and Segments by their order within the Video. Both commands run
-in this process against the knowledge base, never through the server.
+in the CLI's own process against the knowledge base, never through the server. The server calls the same functions
+for the web UI (`bundles_api`), each in a worker thread of its own process, an import under the same Sync lease.
 """
 
 import importlib.metadata

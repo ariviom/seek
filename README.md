@@ -34,7 +34,7 @@ web UI, or give your coding agents (Claude Code, Codex) the same library over MC
 - [Upgrade](#upgrade)
 - Reference: [Checking for new videos](#check-for-new-videos-automatically-or-from-the-command-line) ·
   [Status and diagnostics](#check-on-it-from-the-command-line) ·
-  [Sharing (`seek export`, `seek import`)](#sharing-a-channel-or-playlist) · [Data](#data) · [Configuration](#configuration) ·
+  [Sharing (Export, import, `seek export`, `seek import`)](#sharing-a-channel-or-playlist) · [Data](#data) · [Configuration](#configuration) ·
   [Reverse proxy](#publishing-through-a-reverse-proxy) · [Agents (MCP)](#register-seek-with-your-agents) ·
   [Settings](#settings) · [Web chat](#web-chat) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -147,7 +147,8 @@ Status: `systemctl --user status seek`. Logs: `journalctl --user -u seek`.
 1. **Add a channel.** Open **Library**, choose **Add channel**, and paste a channel's URL or `@handle`. Start with a
    small one, a few dozen videos: Seek fetches and indexes every video it finds, and YouTube limits how fast it can
    (roughly 300 videos an hour without a signed-in cookie file). A playlist is added the same way, from the
-   Library's **Playlists** tab with **Add playlist** and its URL.
+   Library's **Playlists** tab with **Add playlist** and its URL. If someone gave you a `.seek` file, either dialog
+   imports it instead, already indexed: see [Sharing a Channel or Playlist](#sharing-a-channel-or-playlist).
 2. **Watch it Sync.** **Syncs** shows each video as it becomes searchable, with the rate, an estimated finish, and any
    failures. You can close the tab: syncing carries on while Seek runs, and an interrupted Sync resumes where it
    stopped.
@@ -214,8 +215,9 @@ seek sync --channel "Wood By Wright"      # one Channel, by its YouTube name or 
 seek sync --playlist "Sharpening picks"   # one Playlist, by its name or YouTube playlist id
 ```
 
-Channels and Playlists are added in the web UI, or imported from a Bundle with
-[`seek import`](#sharing-a-channel-or-playlist); `seek sync` only Syncs what the Library already has.
+Channels and Playlists are added in the web UI, from YouTube or from a
+[Bundle](#sharing-a-channel-or-playlist), or imported from a Bundle with `seek import`; `seek sync` only Syncs what
+the Library already has.
 
 When the server is running, `seek sync` queues the Syncs there and returns; their progress and any failures show in
 the web UI. When it isn't, `seek sync` loads the embedding model and runs the Syncs itself, returning when they finish
@@ -255,7 +257,48 @@ model, creates or migrates the database, or contacts a provider.
 ## Sharing a Channel or Playlist
 
 Indexing is the slow part. A **Bundle** is a `.seek` file holding one Channel's or one Playlist's indexed Videos, so
-someone else's Seek can have them without fetching or embedding anything:
+someone else's Seek can have them without fetching or embedding anything. You make one and take one in from the web
+UI, on whichever device you have it open, or with two commands on the machine Seek runs on.
+
+**In the web UI.**
+
+- **Export** is on a Channel's page and on a Playlist's, beside Pause. A dialog says how many indexed Videos go into
+  the file, that it contains the creators' full Transcripts, and, for a Channel with a Playlist filter, that the
+  filter is left out. Press **Export** there: Seek builds the Bundle ("Building…") and your browser downloads it as
+  `<name>.seek`, with `_` in place of any character a file name can't hold. It works on a Paused entry and during a
+  Sync, and is disabled on an entry with no indexed Videos. The built Bundle is downloaded once and then deleted from
+  Seek's data directory, and one never collected is deleted ten minutes after it was built; if a download breaks,
+  export again.
+- **Import** is in the **Add channel** and **Add playlist** dialogs, under the URL: choose **or import a `.seek`
+  file**, pick the file, and press **Import**. Either dialog takes either kind of Bundle. There is no name to give:
+  the entry takes the Bundle's, and you can rename it on its page. When "Importing…" ends, the dialog shows what
+  `seek import` reports (below), with a **Start a Sync** button in place of the command to run next; the entry is
+  selected in your Library, its Videos are searchable, and other open pages show it without a reload.
+
+An import in the web UI follows the rules under **Importing** below, with these differences:
+
+- **Not beside a Sync, queued or running.** While any Sync is running or waiting to run, the import path is disabled and says
+  `A Sync is running or waiting to run; import when it has finished.` A Sync that is only queued (while the embedding
+  model loads, or while Seek waits out a YouTube block) counts, where `seek import` is refused only by one that is
+  running. A Sync you queue during an import starts as soon as the import ends.
+- **One at a time.** A second import while one is uploading or importing is refused:
+  `Another import is running; try again when it has finished.`
+- **A name that is taken.** A Playlist whose name another of your Playlists has is refused with
+  `A Playlist named '…' already exists; rename it, then import the file again.` Rename the one you have.
+- **Up to 2 GB.** A file over 2 GB (2,000,000,000 bytes) is refused as you choose it, before anything is sent:
+  ``The file is larger than 2 GB, the most the web UI imports; import it with `seek import`.`` The cap is fixed.
+- **A proxy may refuse a large Bundle.** If you reach Seek [through a reverse proxy](#publishing-through-a-reverse-proxy)
+  or a service such as Cloudflare, that may limit the size of an upload well below 2 GB, and turn a large Bundle away
+  before Seek sees it. The dialog then says
+  ``The file didn't reach Seek. A proxy in front of it may refuse a file this large; import it at `localhost` on the machine Seek runs on, or with `seek import`.``
+  The file is fine: open Seek in a browser on the machine it runs on (`http://localhost:7337`, unless you changed
+  the port) and import it there, or use `seek import`. Seek doesn't know your proxy's limit, so it says this only
+  once a file has been turned away.
+- **Closing the tab.** The dialog can't be dismissed while it imports. If the browser goes while the file is still
+  being sent, the upload is discarded and nothing is imported. Once the whole file has reached Seek, the import
+  finishes without the browser, and the entry appears on any open page.
+
+**From the command line.**
 
 ```sh
 seek export --channel "Wood By Wright" wright.seek     # one Channel, by its name or YouTube channel id
@@ -275,14 +318,15 @@ unless they set a Playlist filter of their own first.
 **Size.** A Bundle is about 10 KB per Segment, 4 KB of it the vector and the rest the Transcript and the Segment's
 text, so a Channel of 900 Videos is 150 to 250 MB. Export prints the Videos, Segments, and file size.
 
-**Exporting** runs beside the server, even during a Sync, and loads no model. `.seek` is added to the path if
+**Exporting** with `seek export` runs beside the server, even during a Sync, and loads no model. `.seek` is added to the path if
 missing. It refuses to replace a file that exists and to write a Bundle with no indexed Videos, and never leaves a
 half-written `.seek` file (a killed export can leave a `.tmp` file beside it). The Bundle is readable by you alone
 until you change that.
 
-**Importing** makes the Videos searchable at once, and loads no model. It runs with the server up or down, and can be
-the first thing a new install does. The server isn't told: its pages show the new entry on their next load. Progress
-goes to stderr, and this report to stdout:
+**Importing** makes the Videos searchable at once, and loads no model. It can be the first thing a new install does,
+in the web UI or with `seek import`, which runs with the server up or down. A server running beside `seek import`
+isn't told: its pages show the new entry on their next load. The command's progress goes to stderr, and this report
+to stdout:
 
 ```
 Imported Wood By Wright: 212 Videos added, 0 already indexed, 3 left out.
@@ -306,10 +350,12 @@ begin after the first Sync you start. That Sync fetches only what is new.
   Channel's date range and any of its Videos your own Sync excluded or credits to another Channel; the report counts
   each reason. A Playlist's Videos are searchable whatever their Channels' filters, as with a Playlist you added, and
   creators you haven't added stay outside your Library.
-- **Names.** A Playlist whose name another of your Playlists has is refused, pointing at `--name`.
-- **Syncs.** While a Sync is running, import is refused with
+- **Names.** A Playlist whose name another of your Playlists has is refused: `seek import` points at `--name`, and
+  the web UI says to rename the one you have.
+- **Syncs.** While a Sync is running, `seek import` is refused with
   `A Sync is running; run the import again when it has finished`; that includes up to 20 seconds after a server was
-  killed mid-Sync. A Sync queued during an import waits, and starts within 5 seconds of the import ending.
+  killed mid-Sync. A Sync queued during a `seek import` waits, and starts within 5 seconds of the import ending. The
+  web UI is stricter, as above.
 - **Same embedding model.** A Bundle imports only into a knowledge base that uses the embedding model it was made
   with; any other is refused, naming both. A Bundle from a newer Seek is refused with "upgrade Seek".
 
@@ -341,6 +387,8 @@ The data directory contains:
 - `seek.db` holds the whole knowledge base in one SQLite file: Channels, Groups, Playlists, Transcripts, Segments,
   vectors, and Conversations.
 - `chat/` is the empty working directory the web chat runs the Claude CLI in when no project directory is attached.
+- `tmp/` holds a Bundle while the web UI builds it for download or imports one sent to it, readable by you alone.
+  Each is deleted when it is finished with, and Seek clears at start whatever has lain there untouched for an hour.
 
 Backup is a copy of `seek.db`. The database uses WAL mode, so recent changes can sit in `seek.db-wal` beside it.
 Either stop the service and copy both files, or take a consistent single-file copy while it runs:
@@ -463,6 +511,11 @@ published URL gets the whole API, the web chat (on your Claude subscription), an
    `/assets`, `/docs`) as the prefix.
 4. Don't let the proxy buffer responses: the event stream sends `X-Accel-Buffering: no` and a keepalive every 15
    seconds, and the web chat streams its answers the same way.
+5. Importing a [Bundle](#sharing-a-channel-or-playlist) in the web UI sends the whole `.seek` file as one request
+   body, up to Seek's own cap of 2 GB, and a large Channel's Bundle is hundreds of megabytes. A proxy, or a service in
+   front of it, may limit a request body to less; check yours (nginx's is `client_max_body_size`) and raise it if you
+   can. Where you can't, the import dialog says the file didn't reach Seek, and that Bundle imports in a browser at
+   `localhost` on the machine Seek runs on, or with `seek import`. Exporting is an ordinary download.
 
 **Cloudflare Access verification** (optional, off by default) guards against a request that reaches the proxy
 without going through Access, for example on the machine's own IP address. Set `cf_access_team_domain` to your team
