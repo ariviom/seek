@@ -114,7 +114,8 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   stands. The user-facing refusal the Bundle functions raise joins the app's table of errors that map to a status:
   422 for it, 409 for the Playlist-name refusal and for the server's own "not now" refusals below, 404 for an entry
   or a built Bundle that isn't there, 413 for a file over the cap, 415 for a body that isn't
-  `application/octet-stream`. The dialogs read only the sentence, never the status.
+  `application/octet-stream`. The table is looked up by a refusal's exact type, so both kinds of Bundle refusal
+  are entered in it. The dialogs read only the sentence, never the status.
 
 ### Export
 - The handler finds the entry by the id in the URL (a Channel outside the Library is not found) and passes the
@@ -132,24 +133,30 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 - A built Bundle nobody collects is deleted ten minutes after it was built.
 - **The file name** is the entry's name with path separators, the characters Windows forbids in a name
   (`< > : " / \ | ? *`), and control characters each replaced by `_`, leading and trailing dots and spaces removed,
-  cut to 100 characters, and `bundle` when nothing is left; then `.seek`. The header carries it twice, as an ASCII
-  fallback and in the UTF-8 form, so a name in another script or with an emoji survives.
+  cut to 100 characters, and `bundle` when nothing is left; then `.seek`. The header carries it twice, so a name
+  in another script or with an emoji survives: in the UTF-8 form, and as an ASCII fallback in which every other
+  character is `_` as well. The framework's file response writes only one of the two, so the header is built by
+  hand.
 - The server counts the Videos again when it builds, so an entry that lost its last indexed Video since the page
   loaded is refused with the command's sentence.
 
 ### Import
-- The body is the file's bytes with `Content-Type: application/octet-stream`. Any other content type is refused.
-  No file name is sent: the dialog already shows it, and the server has no use for one.
+- The body is the file's bytes with `Content-Type: application/octet-stream`. Any other media type is refused; a
+  parameter after it is ignored. No file name is sent: the dialog already shows it, and the server has no use for
+  one.
 - In order, before anything is stored:
-  1. One import at a time in a server. A second, while one is uploading or importing, is refused: "Another import
-     is running; try again when it has finished."
-  2. A Sync that is running or queued refuses the import: "A Sync is running or waiting to run; import when it has
+  1. A declared length over the cap is refused at once, without reading the body.
+  2. One import at a time in a server. A second, while one is uploading or importing, is refused: "Another import
+     is running; try again when it has finished." The hold is given up however the first one ends, an abandoned
+     upload included.
+  3. A Sync that is running or queued refuses the import: "A Sync is running or waiting to run; import when it has
      finished." This is the same condition the dialog disables on.
-  3. A declared length over the cap is refused.
-- An upload refused at one of those steps is still read to its end, up to the cap, and discarded, so the browser
-  receives the sentence and not a dropped connection.
+- An upload refused at step 2 or 3 is still read to its end and discarded, so the browser receives the sentence
+  and not a dropped connection. One over the cap is not read: the dialog has already refused it (below), and any
+  other client gets the status.
 - The body is then streamed to a file in a fresh directory of the temporary area, a chunk at a time, counting
-  bytes. Nothing of it is held in memory. A body that passes the cap is refused and what was written is deleted.
+  bytes. Nothing of it is held in memory, and the writes are kept off the event loop, which the event stream's
+  keepalives share. A body that passes the cap is refused and what was written is deleted.
 - **The cap is 2 GB**, a constant: "The file is larger than 2 GB, the most the web UI imports; import it with
   `seek import`." The largest Bundle of the reference Library is 255 MB, and the whole Library would be about
   650 MB. The cap exists because the upload is written to the data directory's disk by anyone past Access. The app
@@ -159,19 +166,25 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 - An upload the browser abandons is discarded. Once the whole file has arrived, the import runs to its end whether
   or not the browser is still there.
 - The answer is the import report as JSON: `{kind, id, name, youtube_id, created, filters, added, already_indexed,
-  left_out}`. `id` is the entry's id in this Library, for the dialog to select it and start its Sync; `filters` is
-  the Channel filters that arrived with a new Channel, else null; `left_out` maps each reason to its count.
+  left_out}`. `id` is the entry's id in this Library, for the dialog to select it and start its Sync. The import
+  function reports the YouTube id, not this one, so the handler looks the entry up by its kind and YouTube id once
+  the thread returns. `filters` is the Channel filters that arrived with a new Channel, else null; `left_out` maps
+  each reason to its count.
 - The Playlist-name refusal reads, here: "A Playlist named 'X' already exists; rename it, then import the file
-  again, or import it under another name with `seek import --name`."
+  again."
 - When the import ends, however it ends, the server wakes its Sync worker, so a Sync queued meanwhile starts at
   once.
 
 ### Telling open pages
-- When the import ends, including one that stopped partway with some Videos committed, the server publishes the
-  existing "these Videos changed" event for each Channel the entry's Videos are credited to, naming the Playlists
-  that include them. Every open page already reloads its Channels, its Playlists, and any open Videos table on that
-  event, so no new event type is needed.
+- When an import completes, the server publishes the existing "these Videos changed" event for the entry, as a
+  Sync of it would: one for each Channel that the existing listing by creator gives for the entry as a source,
+  naming the Playlists that include its Videos. That listing includes a Channel none of whose Videos were added.
+  Every open page already reloads its Channels, its Playlists, and any open Videos table on that event, so no new
+  event type is needed.
 - It is published from the event loop after the worker thread returns, never from the thread.
+- An import that stopped partway (its hold on Syncs lost) ends in a refusal, which names no entry, so nothing is
+  published for it. The page that asked reloads its own lists on any refusal; other open pages show what was
+  committed at their next reload.
 - `seek import` beside a running server still tells it nothing, as before.
 
 ### Temporary files
@@ -181,8 +194,10 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 - Each upload and each build gets a fresh, unguessably named directory there, removed whole when it is finished
   with: after an import ends or is refused, after a download's response ends, when a build fails, and when a built
   Bundle goes uncollected.
-- The server empties the directory at start, before it serves, which clears whatever a crash or a stop left. The
-  CLI never uses it.
+- At start, before it serves, the server removes whatever there has not been modified in the last hour, which
+  clears what a crash or a stop left. Not everything: a second server started by mistake on the same data
+  directory runs its startup before it fails to take the port, and must not delete the first one's upload in
+  flight. The CLI never uses the directory.
 
 ### Web UI: Export
 - An Export button on the Channel page and on the Playlist page, with the actions that concern the entry as a whole
@@ -193,16 +208,21 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   creators' full Transcripts, so choose who you share it with."; and, for a Channel with a Playlist filter, "The
   Channel's Playlist filter is left out, so the recipient's Syncs will bring in its other Videos." It has Cancel and
   one Export button, which is not styled as destructive.
-- Export becomes "Building…" and is disabled until the build answers. The page then sends the browser to the
-  download link, as a relative URL so it follows a proxy prefix, and the dialog closes. A refusal shows in the
-  dialog as an alert and leaves it open.
+- Export becomes "Building…" and is disabled until the build answers. The page then starts the download by
+  following a link that carries the `download` attribute, so that an error from the link is a failed download and
+  never a navigation away from the app, and the dialog closes. The link is a relative URL, so it follows a proxy
+  prefix.
+- A refusal shows in the dialog as an alert and leaves it open. The build keeps its own busy and error state: the
+  page's shared runner of changes would put the sentence in the page's alert and refresh the page.
 
 ### Web UI: Import
 - Both Add dialogs gain a second path under the URL form, "or import a `.seek` file": a file picker limited to
   `.seek`. It is one implementation, mounted in both. There is no Import button anywhere else.
-- Choosing a file shows its name and size and an Import button. There is no name field.
+- Choosing a file shows its name and size and an Import button. There is no name field. A file over the cap is
+  refused there, with the server's sentence, before anything is sent; the page holds the same number, and the
+  server's is the one that counts.
 - While any Sync is running or queued, the path is disabled and says so beside it, in the server's words. Syncs are
-  already held live at the top of the app.
+  already held live at the top of the app, and are passed down to the dialogs.
 - While it works, the dialog shows "Importing…", its controls are disabled, and it can't be dismissed.
 - On success the page reloads its Channels and Playlists, selects the entry on the tab of its kind, and the dialog
   shows the report: "Imported the Channel <name>" or "Imported the Playlist <name>"; the three counts; each
@@ -212,7 +232,8 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   "Start a Sync" and "Close".
 - "Start a Sync" starts the entry's Sync through the existing route and closes the dialog. It replaces the command's
   `seek sync --channel ID` line.
-- A refusal shows as an alert and keeps the chosen file, so an import refused for a Sync can be tried again.
+- A refusal shows as an alert and keeps the chosen file, so an import refused for a Sync can be tried again. The
+  page reloads its Channels and Playlists on a refusal too, since one that came partway has changed them.
 - **A failure that carries no sentence of Seek's** (the response isn't Seek's JSON, or the request fails outright)
   shows: "The file didn't reach Seek. A proxy in front of it may refuse a file this large; import it at `localhost`
   on the machine Seek runs on, or with `seek import`." The page doesn't guess the proxy's limit in advance.
@@ -269,13 +290,14 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   - Import refusals, each asserting the sentence and that the Library is unchanged: bytes that aren't a Bundle
     (called "The file", with no path in the sentence), a Bundle of another embedding model, a Playlist name already
     taken, a Sync running, a Sync queued, another import running (the first held open by a request body that
-    pauses before its last chunk), a body over a small cap both declared and undeclared, and a content type other
-    than `application/octet-stream`.
+    pauses before its last chunk, and a later import accepted once that request has ended either way), a body over
+    a small cap both declared and undeclared, and a content type other than `application/octet-stream`.
   - An import into an existing entry reports `created: false` and leaves its name alone.
   - After an import, a subscriber to the event stream receives the Videos-changed event for the entry's Channel,
-    and a Sync queued while the import ran starts without waiting for the poll.
-  - The temporary directory is empty after each path above, and a leftover planted before the app starts is gone
-    once it has started.
+    and a Sync queued while the import ran starts without waiting for the poll (the app is given a long poll
+    interval, so only the wake can explain it).
+  - The temporary directory is empty after each path above. Of two leftovers planted before the app starts, the
+    one last modified over an hour ago is gone once it has started and the fresh one is kept.
   - Through a published host with Access configured, in the remote-access tests' pattern: the three routes need a
     token like any other, and work under a forwarded prefix with one.
 - **Seam 2, the browser**, in the smoke module with `serving` and `browsing`, for what only a browser shows:
@@ -314,14 +336,22 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 
 - **Settled in this spec, beyond the grilling session's decisions**, for the critique to weigh:
   - building and downloading as two requests, with a one-time id and a ten-minute expiry;
-  - the temporary directory inside the data directory, emptied at start;
-  - a 2 GB cap on an upload, fixed;
+  - the temporary directory inside the data directory, cleared at start of what is over an hour old;
+  - a 2 GB cap on an upload, fixed, and checked in the page before sending;
   - one import at a time in a server, and the server refusing on a queued Sync as well as a running one;
   - refusals saying "The file", and the web wording of the Playlist-name refusal, each a small change to the import
     function;
   - an Import button after the file is chosen, where the session said only that there is no name field;
   - the dialog not dismissable while importing;
   - the statuses, which the page never reads.
+- **What refusing on a queued Sync costs.** A Sync stays queued, not running, while the embedding model downloads
+  or loads and while the worker waits out a YouTube throttle. Import is disabled for all of that, which on a first
+  run or after a block can be minutes to hours. This follows from the session's decision that a queued Sync
+  refuses; it is named here so that nobody "fixes" it, and it is why the sentence says "or waiting to run".
+  `seek import` is refused only by a Sync that is running.
+- An import inside the server that loses its hold on Syncs says "Another seek process took over running Syncs",
+  the command's words, though the taker would be the server's own worker after a renewal lapsed. It needs a
+  knowledge base too busy to renew a lease for its whole length, so the wording is left alone.
 - Measured on the reference Library on 2026-10-11: its largest Channel (898 Videos, 23,919 Segments) is a 255 MB
   Bundle, 15 s to export and 23 s to import.
 - Not verified: that Cloudflare caps an upload at 100 MB on this plan. The spec doesn't depend on the number. If it
