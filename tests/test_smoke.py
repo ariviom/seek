@@ -22,6 +22,7 @@ from harness import (
     fake_storyboard,
     fake_video,
     list_playlist_videos,
+    running,
     said,
     serving,
     start_playlist_sync,
@@ -971,7 +972,7 @@ async def test_adding_a_playlist_in_the_library_syncing_it_and_seeing_its_videos
     assert errors == [f"{refused} 422 (Unprocessable Content)", f"{refused} 409 (Conflict)", f"{refused} 409 (Conflict)"]
 
 
-async def test_exporting_a_channel_from_its_page_downloads_its_bundle_under_the_channels_name(
+async def test_exporting_a_channel_from_its_page_downloads_its_bundle_which_a_friends_seek_imports_in_its_add_dialog(
     transcripts: FakeTranscriptSource,
     embedder: FakeEmbedder,
     reranker: FakeReranker,
@@ -985,7 +986,12 @@ async def test_exporting_a_channel_from_its_page_downloads_its_bundle_under_the_
         fake_video("v-saws", "Saws", cues=said("Sharpen the saw with a fine file")),
     ]
     transcripts.playlists["PL-joinery"] = FakePlaylist("Joinery", [("UC-wright", "v-chisels"), ("UC-wright", "v-saws")])
-    filters = {"published_after": None, "published_before": None, "playlist_id": "PL-joinery", "most_recent": None}
+    filters = {
+        "published_after": "2025-01-01",
+        "published_before": None,
+        "playlist_id": "PL-joinery",
+        "most_recent": None,
+    }
     app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
     no_videos = "The Channel 'Wood By Wright' has no indexed Videos to export"
 
@@ -1064,6 +1070,80 @@ async def test_exporting_a_channel_from_its_page_downloads_its_bundle_under_the_
     # Nothing of the Bundle stays on the server once the browser has it.
     assert list(config.temporary_dir.iterdir()) == []
 
+    # A friend's Seek, with nothing in it yet: the file that was downloaded is the first thing it adds.
+    friend = bundle_config(tmp_path / "friend")
+    friends_app = create_app(friend, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=bundle)
+    async with serving(friends_app) as base_url:
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            # Import is a second way to add something, and is nowhere else.
+            await expect(page.get_by_role("button", name="Import", exact=True)).to_have_count(0)
+            await library.get_by_role("button", name="Add channel").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
+            picker = add.get_by_label("or import a .seek file")
+            assert await picker.get_attribute("accept") == ".seek"
+            await expect(add.get_by_role("button", name="Import", exact=True)).to_have_count(0)
+
+            # Choosing the file shows which one and how large, and asks for no name.
+            await picker.set_input_files(saved)
+            await expect(add).to_contain_text(re.compile(r"saved\.seek · \d+ KB"))
+            await expect(add.get_by_label("Channel name")).to_have_count(0)
+
+            # The upload is held, so "Importing…" is on screen long enough to read.
+            release = asyncio.Event()
+
+            async def hold_upload(route: Route) -> None:
+                await release.wait()
+                await route.continue_()
+
+            await page.route("**/api/bundles", hold_upload)
+            await add.get_by_role("button", name="Import", exact=True).click()
+            await expect(add.get_by_role("button", name="Importing…")).to_be_disabled()
+            await expect(add.get_by_label("YouTube channel URL or handle")).to_be_disabled()
+            await expect(picker).to_be_disabled()
+            await expect(add.get_by_role("button", name="Look up")).to_be_disabled()
+            # It can't be dismissed while it works.
+            await expect(add.get_by_role("button", name="Close")).to_have_count(0)
+            await page.keyboard.press("Escape")
+            await expect(add.get_by_role("button", name="Importing…")).to_be_visible()
+            release.set()
+
+            report = page.get_by_role("dialog").filter(
+                has=page.get_by_role("heading", name="Imported the Channel Wood By Wright")
+            )
+            await expect(report).to_contain_text("2 Videos added, 0 already indexed, 0 left out.")
+            # The date range came with the Channel; its Playlist filter never left the sender's Seek.
+            await expect(report).to_contain_text("It arrived with its filters: published from 2025-01-01.")
+            await expect(report).to_contain_text(
+                "The Bundle’s text came from whoever made the file, and is only as trustworthy as they are."
+            )
+            # The Channel is selected already, behind the report, which has the one Close.
+            await expect(page).to_have_url(re.compile(r"[?&]channel=\d+"))
+            await expect(report.get_by_role("button", name="Close")).to_have_count(1)
+
+            await report.get_by_role("button", name="Start a Sync").click()
+            await expect(report).to_be_hidden()
+            await expect(library.get_by_role("button").filter(has_text="Wood By Wright")).to_have_attribute(
+                "aria-current", "true"
+            )
+            await expect(main.get_by_role("heading", name="Wood By Wright")).to_be_visible()
+            # Its page knows of the Videos that arrived: there is something to export in turn.
+            await expect(main.get_by_role("button", name="Export")).to_be_enabled()
+
+        async with httpx.AsyncClient(base_url=base_url) as client:
+            [channel] = (await client.get("api/channels")).json()
+            started = await wait_for_syncs(client)
+            found = (await client.post("api/search", json={"query": "sharpen the saw with a file"})).json()
+
+    # The Sync is the imported Channel's, and its Videos were searchable without it.
+    assert [(s["channel_id"], s["status"]) for s in started] == [(channel["id"], "done")]
+    assert found[0]["youtube_video_id"] == "v-saws"
+    assert errors == []
+    assert list(friend.temporary_dir.iterdir()) == []
+
 
 async def test_exporting_a_playlist_from_its_page_downloads_its_bundle_under_the_playlists_name(
     transcripts: FakeTranscriptSource,
@@ -1128,3 +1208,104 @@ async def test_exporting_a_playlist_from_its_page_downloads_its_bundle_under_the
 
     assert errors == []
     assert list(config.temporary_dir.iterdir()) == []
+
+
+async def test_a_playlists_bundle_imported_in_the_add_channel_dialog_is_added_as_a_playlist_and_selected(
+    transcripts: FakeTranscriptSource, bundle: Path, tmp_path: Path
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone"))
+    )
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Strop the knife on leather"))
+    )
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Hand tool picks", [("UC-wright", "v-chisels"), ("UC-rex", "v-knives")]
+    )
+    transcripts.playlists["PL-other"] = FakePlaylist("Other picks", [])
+    sender = bundle_config(tmp_path / "sender")
+    friend = bundle_config(tmp_path / "friend")
+    file = tmp_path / "Hand tool picks.seek"
+    taken = "A Playlist named 'Hand tool picks' already exists; rename it, then import the file again."
+
+    # The Bundle is the one a sender's Seek hands its browser.
+    async with running(
+        create_app(sender, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=tmp_path / "none")
+    ) as client:
+        picks = await add_playlist(client, "PL-picks")
+        await start_playlist_sync(client, picks["id"])
+        await wait_for_syncs(client)
+        built = (await client.post(f"/api/playlists/{picks['id']}/bundles")).json()
+        file.write_bytes((await client.get(f"/api/bundles/{built['id']}")).content)
+
+    app = create_app(friend, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=bundle)
+    async with serving(app) as base_url:
+        async with httpx.AsyncClient(base_url=base_url) as seed, browsing(base_url) as (page, errors):
+            mine = await add_playlist(seed, "PL-other", "My picks")
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("tab", name="Playlists").click()
+            await expect(library.get_by_role("button").filter(has_text="My picks")).to_be_visible()
+            # The Add Playlist dialog has the same second path.
+            await library.get_by_role("button", name="Add playlist").click()
+            add_playlist_dialog = page.get_by_role("dialog").filter(
+                has=page.get_by_role("heading", name="Add a playlist")
+            )
+            assert await add_playlist_dialog.get_by_label("or import a .seek file").get_attribute("accept") == ".seek"
+            await page.keyboard.press("Escape")
+            await expect(add_playlist_dialog).to_be_hidden()
+            # Renamed behind the page's back, to the name the Bundle's Playlist has: the page still says "My picks".
+            renamed = await seed.patch(f"api/playlists/{mine['id']}", json={"name": "Hand tool picks"})
+            assert renamed.status_code == 200, renamed.text
+
+            # From the Channels tab: either dialog takes either kind of Bundle.
+            await library.get_by_role("tab", name="Channels").click()
+            await library.get_by_role("button", name="Add channel").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
+            await add.get_by_label("or import a .seek file").set_input_files(file)
+            await add.get_by_role("button", name="Import", exact=True).click()
+
+            # A refusal is the server's sentence, and the file stays chosen for another try.
+            await expect(add.get_by_role("alert")).to_have_text(taken)
+            await expect(add).to_contain_text(re.compile(r"Hand tool picks\.seek · \d+ KB"))
+            await expect(add.get_by_role("button", name="Import", exact=True)).to_be_enabled()
+            # The page reloaded its Playlists on the refusal, so the one in the way is there to rename.
+            await page.keyboard.press("Escape")
+            await expect(add).to_be_hidden()
+            await library.get_by_role("tab", name="Playlists").click()
+            await expect(library.get_by_role("button").filter(has_text="Hand tool picks")).to_be_visible()
+            await expect(library.get_by_role("button").filter(has_text="My picks")).to_have_count(0)
+
+            # Renamed out of the way, as the sentence said, the same file imports.
+            renamed = await seed.patch(f"api/playlists/{mine['id']}", json={"name": "My picks"})
+            assert renamed.status_code == 200, renamed.text
+            await library.get_by_role("tab", name="Channels").click()
+            await library.get_by_role("button", name="Add channel").click()
+            # A dialog that was closed forgot the file it was given.
+            await expect(add.get_by_role("button", name="Import", exact=True)).to_have_count(0)
+            await expect(add.get_by_role("alert")).to_have_count(0)
+            await add.get_by_label("or import a .seek file").set_input_files(file)
+            await add.get_by_role("button", name="Import", exact=True).click()
+
+            report = page.get_by_role("dialog").filter(
+                has=page.get_by_role("heading", name="Imported the Playlist Hand tool picks")
+            )
+            await expect(report).to_contain_text("2 Videos added, 0 already indexed, 0 left out.")
+            await expect(report).not_to_contain_text("It arrived with its filters")
+            await expect(report).not_to_contain_text("It was already in the Library")
+            await report.get_by_role("button", name="Close").click()
+            await expect(report).to_be_hidden()
+
+            # What arrived is a Playlist, so it is the Playlists tab that shows it, selected.
+            await expect(library.get_by_role("tab", name="Playlists")).to_have_attribute("aria-selected", "true")
+            await expect(library.get_by_role("button").filter(has_text="Hand tool picks")).to_have_attribute(
+                "aria-current", "true"
+            )
+            await expect(main.get_by_role("heading", name="Hand tool picks")).to_be_visible()
+            # Close started nothing.
+            assert (await seed.get("api/syncs")).json() == []
+
+    assert errors == ["Failed to load resource: the server responded with a status of 409 (Conflict)"]
+    assert list(friend.temporary_dir.iterdir()) == []

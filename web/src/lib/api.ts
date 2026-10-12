@@ -98,6 +98,21 @@ export type BuiltBundle = {
   size_bytes: number;
   playlist_filter_left_out: boolean;
 };
+// What an import did, and the id the Channel or Playlist it arrived as has in this Library.
+export type ImportedBundle = {
+  kind: "channel" | "playlist";
+  id: number;
+  name: string;
+  youtube_id: string;
+  // False when it was in the Library already, where it keeps its name and settings.
+  created: boolean;
+  // The filters that arrived with a new Channel; null otherwise.
+  filters: ChannelFilters | null;
+  added: number;
+  already_indexed: number;
+  // Videos the Bundle did not fill in, counted by the reason, in the server's words.
+  left_out: Record<string, number>;
+};
 // A Channel some of a Playlist's Videos are credited to, in the Library or not.
 export type Creator = { id: number; name: string; avatar_url: string | null };
 export type Playlist = {
@@ -306,6 +321,19 @@ async function request<T>(
   return body as T;
 }
 
+// Sends a file as it is, as the request's whole body: `request` sends JSON only. No name goes with it. The content
+// type is the one the server takes a Bundle as, and one no page on another site can send without asking first.
+async function upload<T>(path: string, file: Blob): Promise<T> {
+  const response = await fetch(`api/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(detailMessage(body, response.status));
+  return body as T;
+}
+
 // Where a built Bundle is downloaded from, once. Relative like every request, so it follows a proxy prefix too.
 export function bundleUrl(id: string): string {
   return `api/bundles/${encodeURIComponent(id)}`;
@@ -356,6 +384,8 @@ export const api = {
   deletePlaylist: (id: number) => request<void>(`playlists/${id}`, { method: "DELETE" }),
   buildPlaylistBundle: (id: number) => request<BuiltBundle>(`playlists/${id}/bundles`, { method: "POST" }),
   startPlaylistSync: (playlistId: number) => request<Sync>(`playlists/${playlistId}/syncs`, { method: "POST" }),
+  // Either kind of Bundle; the answer says which arrived.
+  importBundle: (file: File) => upload<ImportedBundle>("bundles", file),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   retryPlaylistFailed: (playlistId: number) =>
     request<Sync>(`playlists/${playlistId}/retry-failed`, { method: "POST" }),

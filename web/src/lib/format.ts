@@ -24,6 +24,12 @@ export function formatCount(n: number): string {
   return n.toLocaleString();
 }
 
+// A file's size as a person reads one: megabytes to one place, kilobytes under one.
+export function formatSize(bytes: number): string {
+  const megabytes = bytes / 1_000_000;
+  return megabytes >= 1 ? `${megabytes.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`;
+}
+
 export function plural(n: number, noun: string): string {
   return `${n} ${n === 1 ? noun : `${noun}s`}`;
 }
