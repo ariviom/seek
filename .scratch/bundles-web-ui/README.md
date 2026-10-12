@@ -4,7 +4,7 @@ Status: breakdown approved by Drew on 2026-10-11. Spec: `docs/specs/0006-bundles
 
 | # | Ticket | Blocked by | Status |
 |---|---|---|---|
-| 01 | Export a Channel from its page | — | ready-for-agent |
+| 01 | Export a Channel from its page | — | done |
 | 02 | Export a Playlist from its page | 01 | ready-for-agent |
 | 03 | Import a Bundle from the Add dialogs | 01 | ready-for-agent |
 | 04 | Import waits for Syncs and for another import | 03 | ready-for-agent |

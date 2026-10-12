@@ -19,3 +19,14 @@
 - [ ] Two tests on a really served app, with a client that drops its connection, cover an upload abandoned partway (nothing stored, a later import accepted) and an import whose file had arrived (it completes and the entry is listed).
 - [ ] Tests in the remote-access tests' pattern cover the three routes without a token and with one under a forwarded prefix.
 - [ ] A browser test, with the upload route answered as a proxy would (a 413 with an HTML body), covers the "didn't reach Seek" sentence.
+
+## Comments
+
+### 2026-10-12: from ticket 01
+
+The security review of ticket 01's commit `46dfdc6` flagged, in `src/seek/bundles_api.py`, that a built Bundle nobody collects stays on disk and in memory with no expiry (resource exhaustion, and Transcripts kept longer than they need be). That is this ticket's expiry and its clearing at start, left here by design; nothing was built for it in ticket 01.
+
+What to hook into:
+- The router's `built` map in `bundles_router` (id to `_Built(path, file_name)`), filled at the end of `build()`. An expiry pops the id from it and calls `TemporaryArea.remove(path.parent)`; `collect_bundle` already pops before it sends, so whichever comes first wins and the other finds nothing.
+- `TemporaryArea.prepare()`, which the app's lifespan calls before it serves. Clearing what has not been modified in the last hour belongs there.
+- The expiry and the cap reach the router through `create_app`, as its other test-tunable values do; `app_on` in `tests/test_bundles_api.py` is where the tests would pass them.
