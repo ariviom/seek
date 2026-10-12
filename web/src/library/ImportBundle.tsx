@@ -18,6 +18,11 @@ export type ImportHandlers = {
 // Why the path is closed while any Sync is running or queued, in the words the server refuses such an import with.
 const SYNC_IN_THE_WAY = "A Sync is running or waiting to run; import when it has finished.";
 
+// The most the server takes, and its sentence for a file over it, said here before the file is sent. The server
+// holds the same number, and its own is the one that counts.
+const UPLOAD_CAP_BYTES = 2_000_000_000;
+const TOO_LARGE = "The file is larger than 2 GB, the most the web UI imports; import it with `seek import`.";
+
 // Importing a Bundle, the second way to add something that both Add dialogs offer. The dialog holds this state,
 // since it is the dialog that an import locks and whose content the report takes over.
 export function useBundleImport({ onImported, onRefused }: ImportHandlers, syncs: Sync[] | null) {
@@ -29,9 +34,10 @@ export function useBundleImport({ onImported, onRefused }: ImportHandlers, syncs
   const running = useRef(false);
   // The server would refuse the file once all of it had been sent, so it is not sent at all.
   const syncing = syncs?.some(isRunning) ?? false;
+  const tooLarge = file !== null && file.size > UPLOAD_CAP_BYTES;
 
   async function start() {
-    if (file === null || syncing || running.current) return;
+    if (file === null || tooLarge || syncing || running.current) return;
     running.current = true;
     setError(null);
     setImporting(true);
@@ -57,7 +63,8 @@ export function useBundleImport({ onImported, onRefused }: ImportHandlers, syncs
     },
     importing,
     syncing,
-    error,
+    tooLarge,
+    error: tooLarge ? TOO_LARGE : error,
     report,
     start,
     // For the dialog to call as it closes.
@@ -74,7 +81,7 @@ export type BundleImport = ReturnType<typeof useBundleImport>;
 // The path itself, under a dialog's URL form: a file picker, then the chosen file and an Import button. There is
 // no name to give: the Channel or Playlist takes the Bundle's, and Rename is on its page.
 export function ImportBundle({ bundle }: { bundle: BundleImport }) {
-  const { file, importing, syncing, error } = bundle;
+  const { file, importing, syncing, tooLarge, error } = bundle;
   return (
     <div className="grid gap-3 border-t pt-3">
       <label className="grid gap-1.5 text-sm">
@@ -95,7 +102,12 @@ export function ImportBundle({ bundle }: { bundle: BundleImport }) {
             {file.name} · {formatSize(file.size)}
           </span>
           {/* Not the form's submit, which is the URL's Look up or Add. */}
-          <Button type="button" size="sm" disabled={importing || syncing} onClick={() => void bundle.start()}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={importing || syncing || tooLarge}
+            onClick={() => void bundle.start()}
+          >
             {importing ? "Importing…" : "Import"}
           </Button>
         </div>

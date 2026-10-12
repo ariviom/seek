@@ -1365,3 +1365,74 @@ async def test_the_import_path_is_disabled_with_its_reason_while_a_sync_runs_and
             await expect(add_playlist_dialog).not_to_contain_text(reason)
 
     assert errors == []
+
+
+async def test_a_file_over_the_cap_is_refused_when_chosen_and_one_a_proxy_turns_away_is_said_not_to_have_reached_seek(
+    transcripts: FakeTranscriptSource, bundle: Path, tmp_path: Path
+) -> None:
+    config = bundle_config(tmp_path / "data")
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=bundle)
+    too_large = "The file is larger than 2 GB, the most the web UI imports; import it with `seek import`."
+    not_reached = (
+        "The file didn't reach Seek. A proxy in front of it may refuse a file this large; import it at `localhost` "
+        "on the machine Seek runs on, or with `seek import`."
+    )
+    # One byte over the cap, and none of them on the disk.
+    whole_library = tmp_path / "Whole Library.seek"
+    with whole_library.open("wb") as file:
+        file.truncate(2_000_000_001)
+    # What stands in front of Seek, in turn: a proxy with a limit of its own, then a connection that fails.
+    in_front = ["a proxy", "nothing"]
+    sent: list[str] = []
+
+    async def instead_of_seek(route: Route) -> None:
+        sent.append(route.request.method)
+        if in_front.pop(0) == "a proxy":
+            await route.fulfill(
+                status=413,
+                content_type="text/html",
+                body="<html><body><center><h1>413 Request Entity Too Large</h1></center></body></html>",
+            )
+        else:
+            await route.abort()
+
+    async with serving(app) as base_url:
+        async with httpx.AsyncClient(base_url=base_url) as seed, browsing(base_url) as (page, errors):
+            await page.route("**/api/bundles", instead_of_seek)
+            await page.goto(base_url)
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("button", name="Add channel").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
+            picker = add.get_by_label("or import a .seek file")
+            import_button = add.get_by_role("button", name="Import", exact=True)
+
+            # Refused as it is chosen, in the server's sentence, with nothing sent.
+            await picker.set_input_files(whole_library)
+            await expect(add.get_by_role("alert")).to_have_text(too_large)
+            await expect(add).to_contain_text("Whole Library.seek · 2000.0 MB")
+            await expect(import_button).to_be_disabled()
+            assert sent == []
+
+            # A file Seek would take is another matter: the page doesn't guess what a proxy allows.
+            await picker.set_input_files(
+                {"name": "Rex Krueger.seek", "mimeType": "application/octet-stream", "buffer": b"A large Bundle"}
+            )
+            await expect(add.get_by_role("alert")).to_have_count(0)
+            await import_button.click()
+            # The proxy's answer is a page of its own, with no sentence of Seek's in it.
+            await expect(add.get_by_role("alert")).to_have_text(not_reached)
+            assert sent == ["POST"]
+            # The file stays chosen, and a request that fails outright says the same.
+            await expect(add).to_contain_text("Rex Krueger.seek · 1 KB")
+            async with page.expect_event("requestfailed"):
+                await import_button.click()
+            await expect(add.get_by_role("alert")).to_have_text(not_reached)
+            assert sent == ["POST", "POST"]
+            assert (await seed.get("api/channels")).json() == []
+
+    assert errors == [
+        "Failed to load resource: the server responded with a status of 413 (Payload Too Large)",
+        "Failed to load resource: net::ERR_FAILED",
+    ]
+    assert list(config.temporary_dir.iterdir()) == []

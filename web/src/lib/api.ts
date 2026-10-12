@@ -291,7 +291,8 @@ export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function detailMessage(body: unknown, status: number): string {
+// The sentence a refusal of Seek's carries, or null for a body that isn't one.
+function detailOf(body: unknown): string | null {
   if (typeof body === "object" && body !== null && "detail" in body) {
     const { detail } = body;
     if (typeof detail === "string") return detail;
@@ -302,7 +303,11 @@ function detailMessage(body: unknown, status: number): string {
         .join("; ");
     }
   }
-  return `Request failed (${status})`;
+  return null;
+}
+
+function detailMessage(body: unknown, status: number): string {
+  return detailOf(body) ?? `Request failed (${status})`;
 }
 
 // Relative URLs so requests follow any reverse-proxy path prefix.
@@ -321,16 +326,25 @@ async function request<T>(
   return body as T;
 }
 
+const NOT_REACHED =
+  "The file didn't reach Seek. A proxy in front of it may refuse a file this large; import it at `localhost` on " +
+  "the machine Seek runs on, or with `seek import`.";
+
 // Sends a file as it is, as the request's whole body: `request` sends JSON only. No name goes with it. The content
 // type is the one the server takes a Bundle as, and one no page on another site can send without asking first.
+//
+// Seek answers in JSON whether it took the file or refused it. A request that fails outright, or an answer that is
+// not Seek's, is something in between speaking, most likely a proxy with a limit of its own; the page doesn't guess
+// that limit in advance, and says this only once a file has been turned away.
 async function upload<T>(path: string, file: Blob): Promise<T> {
   const response = await fetch(`api/${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: file,
-  });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(detailMessage(body, response.status));
+  }).catch(() => null);
+  const body: unknown = response === null ? null : await response.json().catch(() => null);
+  if (response === null || body === null) throw new Error(NOT_REACHED);
+  if (!response.ok) throw new Error(detailOf(body) ?? NOT_REACHED);
   return body as T;
 }
 
