@@ -7,7 +7,8 @@ the function `seek import` calls, which reads it as the untrusted input it is.
 
 What is this module's own is the keeping of both files, in the temporary directory: an upload is counted as it is
 written and refused past a cap, a server takes one import at a time and none while a Sync is running or waiting to
-run, a built Bundle nobody collects is deleted when its expiry comes, and what a crash left is cleared at start.
+run, a built Bundle nobody collects is deleted when its expiry comes or the server stops, and what a crash left is
+cleared at start.
 """
 
 import asyncio
@@ -54,9 +55,8 @@ from seek.videos import Listed, Source
 CALLED = "the Bundle"
 # And one that was sent to be imported, which the server stores under a path of its own. It begins the sentence.
 UPLOADED = "The file"
-# The one content type a Bundle is sent to be imported as.
 UPLOAD_MEDIA_TYPE = "application/octet-stream"
-# Why an import is refused for now. The first is in the words the dialog shows beside its disabled import path.
+# The words the dialog shows beside its import path while it is disabled, which are a copy of these.
 SYNC_IN_THE_WAY = "A Sync is running or waiting to run; import when it has finished."
 ANOTHER_IMPORT = "Another import is running; try again when it has finished."
 # The most an upload may be. It is written to the data directory's disk by anyone past Access, and the largest
@@ -77,7 +77,7 @@ class TemporaryArea:
         self.root = root
 
     def prepare(self) -> None:
-        """Creates the directory, readable by the user alone, and clears what a crash or a stop left in it.
+        """Creates the directory, readable by the user alone, and clears what a crash left in it.
 
         Only what was last modified over an hour ago: a second server started by mistake on the same data
         directory gets this far before it fails to take the port, and must not delete the first one's upload in
@@ -138,34 +138,28 @@ class _Built:
     file_name: str
 
 
-# Path separators, the characters Windows forbids in a file name, and control characters.
-_NOT_IN_A_FILE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f  ]')
+# Path separators, the characters Windows forbids in a file name, control characters, and the two line breaks
+# Unicode has beside them, U+2028 and U+2029.
+_NOT_IN_A_FILE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f\u2028\u2029]')
 _FILE_NAME_LENGTH = 100
 _NOT_ASCII = re.compile(r"[^\x20-\x7e]")
 
 
 def bundle_file_name(name: str) -> str:
-    """The file name a Bundle of the Channel or Playlist with this name downloads under, on any system."""
-    safe = _NOT_IN_A_FILE_NAME.sub("_", name).strip(". ")[:_FILE_NAME_LENGTH]
+    # Cut before it is trimmed: the cut can leave a dot or a space at the end, which Windows drops from a name.
+    safe = _NOT_IN_A_FILE_NAME.sub("_", name)[:_FILE_NAME_LENGTH].strip(". ")
     return f"{safe or 'bundle'}{EXTENSION}"
 
 
 def _content_disposition(file_name: str) -> str:
-    """The header that makes a response a download under this name, which `bundle_file_name` made.
-
-    The name goes twice, so one in another script or with an emoji survives: in the UTF-8 form, and as an ASCII
+    """The name goes twice, so one in another script or with an emoji survives: in the UTF-8 form, and as an ASCII
     fallback for whatever reads only that. Built by hand because the framework's file response writes one of them.
     """
     fallback = _NOT_ASCII.sub("_", file_name)
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(file_name, safe='')}"
 
 
-class _ServedOnce(FileResponse):
-    """Sends a built Bundle, then removes its directory whether or not it was sent whole.
-
-    Not a background task, which a response that broke partway never reaches.
-    """
-
+class _Download(FileResponse):
     def __init__(self, built: _Built) -> None:
         super().__init__(
             built.path,
@@ -173,6 +167,13 @@ class _ServedOnce(FileResponse):
             headers={"Content-Disposition": _content_disposition(built.file_name)},
         )
         self._directory = built.path.parent
+
+
+class _ServedOnce(_Download):
+    """Sends a built Bundle, then removes its directory whether or not it was sent whole.
+
+    Not a background task, which a response that broke partway never reaches.
+    """
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
@@ -186,7 +187,6 @@ _UNITS = (("GB", 10**9), ("MB", 10**6), ("KB", 10**3), ("bytes", 1))
 
 
 def _too_large(cap_bytes: int) -> HTTPException:
-    """The refusal of an upload over the cap, which names the cap in the largest unit it fills."""
     unit, scale = next(named for named in _UNITS if cap_bytes >= named[1])
     return HTTPException(
         status.HTTP_413_CONTENT_TOO_LARGE,
@@ -216,23 +216,23 @@ async def _body(request: Request, cap_bytes: int) -> AsyncIterator[bytes]:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{UPLOADED} stopped arriving") from e
 
 
-async def _store(request: Request, path: Path, cap_bytes: int) -> None:
-    """Writes the request's body to the path a chunk at a time, so none of it is held in memory. The writes, the
-    last one on closing included, run in a worker thread: the event loop is shared with every other request and
-    the event stream's keepalives."""
+async def _store(body: AsyncIterator[bytes], path: Path) -> None:
+    """Writes the body to the path a chunk at a time, so none of it is held in memory. The writes, the last one on
+    closing included, run in a worker thread: the event loop is shared with every other request and the event
+    stream's keepalives."""
     file = await asyncio.to_thread(_create, path)
     try:
-        async for chunk in _body(request, cap_bytes):
+        async for chunk in body:
             await asyncio.to_thread(file.write, chunk)
     finally:
         await asyncio.to_thread(file.close)
 
 
-async def _discard(request: Request, cap_bytes: int) -> None:
-    """Reads the request's body to its end and keeps none of it, so that the browser of an upload refused before
-    it was stored receives the sentence and not a dropped connection. No further than the cap, though: a body
-    that passes it is refused for that, as one being stored is."""
-    async for _ in _body(request, cap_bytes):
+async def _discard(body: AsyncIterator[bytes]) -> None:
+    """Reads what is left of the body and keeps none of it, so that the browser of an upload refused before all of
+    it was read receives the sentence and not a dropped connection. No further than the cap, though: a body that
+    passes it is refused for that, as one being stored is."""
+    async for _ in body:
         pass
 
 
@@ -240,10 +240,15 @@ def _imported(conn: sqlite3.Connection, report: ImportReport) -> tuple[int, list
     """The id here of the Channel or Playlist an import reported, which it names by its id on YouTube, and where
     its Videos are listed, a creator at a time, as a Sync of it would tell open pages."""
     if report.kind == "channel":
-        [found] = [c.id for c in channels.list_channels(conn) if c.youtube_channel_id == report.youtube_id]
+        found = [c.id for c in channels.list_channels(conn) if c.youtube_channel_id == report.youtube_id]
     else:
-        [found] = [p.id for p in playlists.list_playlists(conn) if p.youtube_playlist_id == report.youtube_id]
-    return found, videos.listed_by_creator(conn, Source(report.kind, found))
+        found = [p.id for p in playlists.list_playlists(conn) if p.youtube_playlist_id == report.youtube_id]
+    if not found:
+        # Removed in the moment since the import ended. It did end, and the sentence has to say so.
+        raise NotFound(
+            f"The import finished, but the {report.kind.capitalize()} '{report.name}' is no longer in the Library"
+        )
+    return found[0], videos.listed_by_creator(conn, Source(report.kind, found[0]))
 
 
 def bundles_router(
@@ -254,7 +259,8 @@ def bundles_router(
     wake_worker: Callable[[], None],
     upload_cap_bytes: int,
     built_expiry_seconds: float,
-) -> APIRouter:
+) -> tuple[APIRouter, Callable[[], None]]:
+    """The router, and what the app calls as it stops, to delete the built Bundles nobody collected."""
     router = APIRouter()
     # Bundles built and not yet collected, by the id each is collected under.
     built: dict[str, _Built] = {}
@@ -267,6 +273,13 @@ def bundles_router(
         bundle = built.pop(bundle_id, None)
         if bundle is not None:
             area.remove(bundle.path.parent)
+
+    def discard_built() -> None:
+        """Deletes every built Bundle still waiting, for a server that is stopping: their timers stop with it, and
+        the next start keeps what is under an hour old. Only this server's own, never the whole directory, which a
+        second server started by mistake would be stopping beside the first."""
+        while built:
+            expire(next(iter(built)))
 
     async def build(export: Callable[[Path], ExportReport]) -> BuiltBundle:
         """Runs the export in a worker thread, since it opens a connection of its own, into a fresh directory."""
@@ -301,16 +314,18 @@ def bundles_router(
     @router.post("/playlists/{playlist_id}/bundles", status_code=status.HTTP_201_CREATED)
     async def build_playlist_bundle(playlist_id: int) -> BuiltBundle:
         playlist = await database.run(lambda conn: playlists.get_playlist(conn, playlist_id))
-        # By its YouTube playlist id, as a Channel is by its own.
         return await build(lambda path: export_playlist(config, playlist.youtube_playlist_id, path, called=CALLED))
 
     @router.get("/bundles/{bundle_id}")
-    async def collect_bundle(bundle_id: str) -> FileResponse:
+    @router.head("/bundles/{bundle_id}")
+    async def collect_bundle(bundle_id: str, request: Request) -> FileResponse:
+        # A download manager asks for the headers before it fetches, and that must not use the one download up.
+        probing = request.method == "HEAD"
         # Taken out before it is sent, so it is served once.
-        bundle = built.pop(bundle_id, None)
+        bundle = built.get(bundle_id) if probing else built.pop(bundle_id, None)
         if bundle is None:
             raise NotFound("That Bundle is not here to download; export it again")
-        return _ServedOnce(bundle)
+        return _Download(bundle) if probing else _ServedOnce(bundle)
 
     @router.post("/bundles")
     async def import_uploaded_bundle(request: Request) -> ImportedBundle:
@@ -327,9 +342,10 @@ def bundles_router(
         # checks below, so it neither takes the place of the one import nor waits for a Sync.
         if int(request.headers.get("content-length", 0)) > upload_cap_bytes:
             raise _too_large(upload_cap_bytes)
+        body = _body(request, upload_cap_bytes)
         nonlocal importing
         if importing:
-            await _discard(request, upload_cap_bytes)
+            await _discard(body)
             raise Conflict(ANOTHER_IMPORT)
         # Taken with no await since it was found free, so two requests can't both find it so.
         importing = True
@@ -337,12 +353,20 @@ def bundles_router(
             # The condition the dialog disables its import path on. The import function would refuse a running
             # Sync itself, once the whole file had been stored; a queued one only this refuses.
             if await database.run(syncs.has_work):
-                await _discard(request, upload_cap_bytes)
+                await _discard(body)
                 raise Conflict(SYNC_IN_THE_WAY)
-            directory = area.new_directory()
+            directory: Path | None = None
             try:
-                path = directory / f"upload{EXTENSION}"
-                await _store(request, path, upload_cap_bytes)
+                try:
+                    directory = area.new_directory()
+                    path = directory / f"upload{EXTENSION}"
+                    await _store(body, path)
+                except OSError as e:
+                    # A full disk, or a directory that can't be made. Refused as a build that can't be written
+                    # is, in the system's words for why and without the path, so the page shows a sentence of
+                    # Seek's and does not conclude that the file never arrived.
+                    await _discard(body)
+                    raise SyncCommandError(f"{UPLOADED} could not be stored: {e.strerror}") from e
                 # In a worker thread, as a build is: it opens connections of its own, and takes the Sync lease,
                 # which a Sync that started since the check above holds. From here the import runs to its end
                 # whether or not the browser is still there: the server cancels no request for its connection
@@ -352,7 +376,8 @@ def bundles_router(
                 # The command's sentence points at a flag; here the way out is the other Playlist's Rename.
                 raise PlaylistNameTaken(e.name, "rename it, then import the file again.") from e
             finally:
-                area.remove(directory)
+                if directory is not None:
+                    area.remove(directory)
         finally:
             # However it ended, an upload the browser abandoned included: that raises out of the body's stream.
             importing = False
@@ -376,4 +401,4 @@ def bundles_router(
             left_out=report.left_out,
         )
 
-    return router
+    return router, discard_built

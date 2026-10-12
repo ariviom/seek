@@ -78,4 +78,6 @@ Spec 0006 put export and import in the web UI. Nothing above changes; two of its
   - It is never held in memory: the body is written a chunk at a time to a file of its own, in a directory of its
     own inside the data directory, both readable by the user alone, and that directory is removed however the
     import ends.
-- Export inside the server is the same copy, written to that temporary directory and served once.
+- Export inside the server is the same copy, written to that temporary directory and served once. One nobody
+  collects is deleted after ten minutes, or when the server stops if that comes first, so the Transcripts in it
+  outlast neither.

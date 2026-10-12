@@ -41,7 +41,7 @@ export function ExportButton({ indexedVideos, onClick }: { indexedVideos: number
   );
 }
 
-// Says what an export shares, builds the Bundle, and hands it to the browser to download.
+// Says what the Bundle will share, builds it, and hands it to the browser to download.
 export function ExportDialog({
   name,
   indexedVideos,

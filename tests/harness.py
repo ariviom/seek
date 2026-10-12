@@ -1,10 +1,11 @@
 import asyncio
 import json
+import shutil
 import socket
 import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
@@ -15,8 +16,18 @@ from fastapi import FastAPI
 from mcp import Client
 
 from seek import db
+from seek.app import create_app
+from seek.bundles_api import UPLOAD_CAP_BYTES
 from seek.config import Config
-from seek.fakes import FakeChannel, FakeEmbedder, FakePlaylist, FakeTranscriptSource, FakeVideo
+from seek.fakes import (
+    FakeChannel,
+    FakeChatEngine,
+    FakeEmbedder,
+    FakePlaylist,
+    FakeReranker,
+    FakeTranscriptSource,
+    FakeVideo,
+)
 from seek.ports import Chapter, Cue, Storyboard, Transcript, VideoDetails, VideoListing, VideoUnavailable
 
 
@@ -59,6 +70,38 @@ def bundle_config(data_dir: Path) -> Config:
     """A Config naming the fake embedder's model, since the Bundle functions open the knowledge base with the
     Config's."""
     return Config(data_dir=data_dir, embedding_model=FakeEmbedder.model_name, embedding_dimension=FakeEmbedder.dimension)
+
+
+def app_on(
+    config: Config,
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder | None = None,
+    sync_poll_seconds: float = 5.0,
+    bundle_upload_cap_bytes: int = UPLOAD_CAP_BYTES,
+    built_bundle_expiry_seconds: float = 600.0,
+) -> FastAPI:
+    """An app on the data directory, for a test that runs a sender's Seek and a friend's."""
+    return create_app(
+        config,
+        transcripts,
+        embedder or FakeEmbedder(),
+        FakeReranker(),
+        FakeChatEngine(),
+        static_dir=config.data_dir / "none",
+        sync_poll_seconds=sync_poll_seconds,
+        bundle_upload_cap_bytes=bundle_upload_cap_bytes,
+        built_bundle_expiry_seconds=built_bundle_expiry_seconds,
+    )
+
+
+def altered(bundle: Path, name: str, *changes: str) -> Path:
+    """A copy of the Bundle with the statements run on it, as someone editing the file could."""
+    copy = bundle.with_name(name)
+    shutil.copy(bundle, copy)
+    with closing(sqlite3.connect(copy, autocommit=True)) as conn:
+        for change in changes:
+            conn.execute(change)
+    return copy
 
 
 def free_port() -> int:

@@ -175,6 +175,9 @@ def create_app(
     )
     models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
     temporary = TemporaryArea(config.temporary_dir)
+    bundles, discard_built_bundles = bundles_router(
+        config, database, temporary, events, worker.wake, bundle_upload_cap_bytes, built_bundle_expiry_seconds
+    )
     chat = Chat(database, search, {"api": api_engine or ApiEngine(credentials), "cli": cli_engine})
     mcp = create_mcp_server(database, search, sql_time_limit_seconds)
     mcp_hosts = [*LOOPBACK_HOSTS, *config.allowed_hosts]
@@ -215,6 +218,8 @@ def create_app(
             for task in tasks:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            # A built Bundle holds Transcripts, and nothing else would delete one this side of a later start.
+            discard_built_bundles()
 
     app = FastAPI(title="Seek", lifespan=lifespan)
     app.state.mcp = mcp
@@ -240,12 +245,7 @@ def create_app(
     app.include_router(
         playlists_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
     )
-    app.include_router(
-        bundles_router(
-            config, database, temporary, events, worker.wake, bundle_upload_cap_bytes, built_bundle_expiry_seconds
-        ),
-        prefix="/api",
-    )
+    app.include_router(bundles, prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")

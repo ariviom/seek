@@ -1,7 +1,6 @@
 import asyncio
 import errno
 import os
-import shutil
 import sqlite3
 import threading
 import time
@@ -12,13 +11,15 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
 from harness import (
     WRIGHT_AVATAR,
     Gate,
     Synonyms,
     add_channel,
     add_playlist,
+    altered,
+    app_on,
+    bundle_config,
     fake_channel,
     fake_video,
     fetched,
@@ -40,47 +41,12 @@ from harness import (
 )
 
 from seek import db, sync_worker, syncs
-from seek.app import create_app
 from seek.bundles import export_channel, export_playlist, format_export, format_import, import_bundle
 from seek.config import Config
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeEmbedder, FakePlaylist, FakeTranscriptSource
 from seek.ports import Chapter, Cue, GpuOutOfMemory, VideoUnavailable
 from seek.status_command import format_list, list_all
 from seek.sync_command import SyncCommandError
-
-
-def bundle_config(data_dir: Path) -> Config:
-    """A Config naming the fake embedder's model, since the commands open the knowledge base with the Config's."""
-    return Config(data_dir=data_dir, embedding_model=FakeEmbedder.model_name, embedding_dimension=FakeEmbedder.dimension)
-
-
-@pytest.fixture
-def sender(tmp_path: Path) -> Config:
-    """Whoever exports the Bundle."""
-    return bundle_config(tmp_path / "sender")
-
-
-@pytest.fixture
-def friend(tmp_path: Path) -> Config:
-    """Whoever imports it: a data directory that has never been started."""
-    return bundle_config(tmp_path / "friend")
-
-
-def app_on(
-    config: Config,
-    transcripts: FakeTranscriptSource,
-    embedder: FakeEmbedder | None = None,
-    sync_poll_seconds: float = 5.0,
-) -> FastAPI:
-    return create_app(
-        config,
-        transcripts,
-        embedder or FakeEmbedder(),
-        FakeReranker(),
-        FakeChatEngine(),
-        static_dir=config.data_dir / "none",
-        sync_poll_seconds=sync_poll_seconds,
-    )
 
 
 async def test_an_exported_channel_is_listed_searchable_and_citable_where_it_was_never_added(
@@ -378,16 +344,6 @@ async def test_export_runs_beside_the_server_while_a_sync_holds_the_lease(
         arrived = {title: video["stage"] for title, video in (await list_videos(client, channel["id"])).items()}
     # Only what was searchable when the export read the knowledge base.
     assert arrived == {"Chisels": "done"}
-
-
-def altered(bundle: Path, name: str, *changes: str) -> Path:
-    """A copy of the Bundle with the statements run on it, as someone editing the file could."""
-    copy = bundle.with_name(name)
-    shutil.copy(bundle, copy)
-    with closing(sqlite3.connect(copy, autocommit=True)) as conn:
-        for change in changes:
-            conn.execute(change)
-    return copy
 
 
 def unconstrained(table: str) -> list[str]:

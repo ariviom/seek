@@ -1,6 +1,8 @@
 import asyncio
 import errno
+import io
 import json
+import logging
 import os
 import sqlite3
 import stat
@@ -13,16 +15,18 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from harness import (
     Gate,
     add_channel,
     add_playlist,
+    altered,
+    app_on,
     bundle_config,
     event_stream,
     fake_channel,
     fake_video,
     pause_playlist,
+    query,
     running,
     said,
     search,
@@ -35,61 +39,28 @@ from harness import (
     wait_for_syncs,
 )
 
-from seek import syncs
-from seek.app import create_app
+from seek import bundles_api, syncs
+from seek.bundles import ImportReport, import_bundle
 from seek.config import Config
 from seek.db import Database
-from seek.fakes import FakeChatEngine, FakeEmbedder, FakePlaylist, FakeReranker, FakeTranscriptSource
+from seek.fakes import FakeEmbedder, FakePlaylist, FakeTranscriptSource
 from seek.videos import Source
-
-
-@pytest.fixture
-def sender(tmp_path: Path) -> Config:
-    """Whoever exports the Bundle."""
-    return bundle_config(tmp_path / "sender")
-
-
-@pytest.fixture
-def friend(tmp_path: Path) -> Config:
-    """Whoever imports it."""
-    return bundle_config(tmp_path / "friend")
-
-
-def app_on(
-    config: Config,
-    transcripts: FakeTranscriptSource,
-    embedder: FakeEmbedder | None = None,
-    sync_poll_seconds: float = 5.0,
-    **limits: Any,
-) -> FastAPI:
-    """`limits` are the app factory's own: `bundle_upload_cap_bytes` and `built_bundle_expiry_seconds`."""
-    return create_app(
-        config,
-        transcripts,
-        embedder or FakeEmbedder(),
-        FakeReranker(),
-        FakeChatEngine(),
-        static_dir=config.data_dir / "none",
-        sync_poll_seconds=sync_poll_seconds,
-        **limits,
-    )
 
 
 def held(config: Config) -> list[Path]:
     """What a started server holds in its temporary directory: a directory for each Bundle it has built and not yet
-    sent."""
+    sent, and for each upload it has not finished with."""
     return sorted(config.temporary_dir.iterdir())
 
 
 def mode(path: Path) -> int:
-    """Who may read, write, and enter it."""
     return stat.S_IMODE(path.stat().st_mode)
 
 
 async def import_file(
     client: httpx.AsyncClient, content: bytes, content_type: str | None = "application/octet-stream"
 ) -> httpx.Response:
-    """Sends the bytes to be imported as the web UI sends a file: as the request's whole body."""
+    """Sends the bytes as the web UI sends a file: as the request's whole body."""
     headers = {} if content_type is None else {"Content-Type": content_type}
     return await client.post("/api/bundles", content=content, headers=headers)
 
@@ -162,8 +133,17 @@ async def test_a_channels_bundle_is_built_downloaded_as_a_file_and_imports_into_
         ("a\\b<c>d:e|f?g*h\ti", "a_b_c_d_e_f_g_h_i.seek", "a_b_c_d_e_f_g_h_i.seek"),
         (". Wright .", "Wright.seek", "Wright.seek"),
         ("W" * 150, "W" * 100 + ".seek", "W" * 100 + ".seek"),
+        ("W" * 98 + ". " + "W" * 50, "W" * 98 + ".seek", "W" * 98 + ".seek"),
     ],
-    ids=["a slash and a quote", "an emoji", "nothing but dots", "what Windows forbids", "dots around it", "too long"],
+    ids=[
+        "a slash and a quote",
+        "an emoji",
+        "nothing but dots",
+        "what Windows forbids",
+        "dots around it",
+        "too long",
+        "a dot and a space where it is cut",
+    ],
 )
 async def test_a_bundle_downloads_under_a_file_name_any_system_takes_whatever_the_channel_is_called(
     sender: Config, transcripts: FakeTranscriptSource, name: str, plain: str, encoded: str
@@ -214,6 +194,32 @@ async def test_a_built_bundle_waits_where_only_the_user_can_read_it_and_is_serve
     assert len(after_one) == 1
     assert other.status_code == 200
     assert never_built.status_code == 404
+    assert held(sender) == []
+
+
+async def test_a_request_for_a_built_bundles_headers_alone_leaves_it_to_be_collected(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        built = (await client.post(f"/api/channels/{wright['id']}/bundles")).json()
+
+        # As a download manager asks before it fetches.
+        probed = await client.head(f"/api/bundles/{built['id']}")
+        waiting = held(sender)
+        collected = await client.get(f"/api/bundles/{built['id']}")
+        gone = await client.head(f"/api/bundles/{built['id']}")
+
+    assert (probed.status_code, probed.content) == (200, b"")
+    assert probed.headers["content-length"] == str(built["size_bytes"])
+    assert probed.headers["content-disposition"] == (
+        "attachment; filename=\"Wood By Wright.seek\"; filename*=UTF-8''Wood%20By%20Wright.seek"
+    )
+    assert len(waiting) == 1
+    assert (collected.status_code, len(collected.content)) == (200, built["size_bytes"])
+    assert gone.status_code == 404
     assert held(sender) == []
 
 
@@ -582,6 +588,41 @@ async def test_a_bundle_embedded_with_another_model_is_refused_in_a_sentence_nam
         "detail": "The file was embedded with another-embedder (64 dimensions), but this knowledge base uses "
         "fake-embedder (64 dimensions); a Bundle imports only into a knowledge base that uses the same embedding model"
     }
+    assert after == ([], [], [])
+    assert held(friend) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "sentence"),
+    [
+        (
+            "UPDATE segments SET end_seconds = 9e999",
+            "The file is damaged or has been altered: a Segment of the Video v-chisels has a start or an end that is "
+            "not a number of seconds",
+        ),
+        (
+            "UPDATE meta SET format_version = 2",
+            "The file was made by a newer Seek (Bundle format 2, this build reads 1); upgrade Seek",
+        ),
+    ],
+    ids=["damaged", "made by a newer Seek"],
+)
+async def test_a_bundle_that_import_refuses_once_it_has_read_it_is_refused_as_the_file_with_no_path_of_the_servers(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path, change: str, sentence: str
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        downloaded = tmp_path / "wright.seek"
+        downloaded.write_bytes(await bundle_of(client, f"channels/{wright['id']}"))
+
+    async with running(app_on(friend, transcripts)) as client:
+        refused = await import_file(client, altered(downloaded, "changed.seek", change).read_bytes())
+        after = await library(client)
+
+    assert (refused.status_code, refused.json()) == (422, {"detail": sentence})
+    assert str(friend.data_dir) not in refused.text
     assert after == ([], [], [])
     assert held(friend) == []
 
@@ -990,56 +1031,6 @@ async def test_a_second_import_is_refused_while_one_is_uploading_and_a_later_one
     assert held(friend) == []
 
 
-async def test_an_upload_the_browser_abandons_no_longer_holds_the_place_of_the_one_import(
-    sender: Config, friend: Config, transcripts: FakeTranscriptSource
-) -> None:
-    bundle = await wrights_bundle(sender, transcripts)
-    app = app_on(friend, transcripts)
-    scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": "POST",
-        "scheme": "http",
-        "path": "/api/bundles",
-        "raw_path": b"/api/bundles",
-        "root_path": "",
-        "query_string": b"",
-        "headers": [(b"host", b"127.0.0.1:7337"), (b"content-type", b"application/octet-stream")],
-        "client": ("127.0.0.1", 50000),
-        "server": ("127.0.0.1", 7337),
-    }
-    first_half = [{"type": "http.request", "body": bundle[: len(bundle) // 2], "more_body": True}]
-    arriving = asyncio.Event()
-    gone = asyncio.Event()
-
-    async def receive() -> dict[str, Any]:
-        if first_half:
-            return first_half.pop()
-        # Asked for the rest, which never comes: the browser goes away instead.
-        arriving.set()
-        await gone.wait()
-        return {"type": "http.disconnect"}
-
-    async def send(message: MutableMapping[str, Any]) -> None:
-        pass
-
-    async with running(app) as client:
-        abandoned = asyncio.create_task(app(scope, receive, send))
-        await asyncio.wait_for(arriving.wait(), 5)
-        meanwhile = await import_file(client, bundle)
-        gone.set()
-        # The server ends a request nobody is waiting on without a failure of its own to log.
-        await abandoned
-        stored = held(friend)
-        later = await import_file(client, bundle)
-
-    assert (meanwhile.status_code, meanwhile.json()) == (409, ANOTHER_IMPORT)
-    assert stored == []
-    assert (later.status_code, later.json()["added"]) == (200, 1)
-    assert held(friend) == []
-
-
 async def test_a_sync_that_starts_while_the_file_is_still_arriving_refuses_the_import_in_the_commands_sentence(
     sender: Config, friend: Config, transcripts: FakeTranscriptSource
 ) -> None:
@@ -1091,6 +1082,85 @@ async def test_a_sync_queued_while_an_import_ran_starts_when_the_import_ends_wit
     assert waiting == ["queued"]
     assert (imported.status_code, imported.json()["added"]) == (200, 1)
     assert (started["channel_id"], started["status"]) == (rex["id"], "done")
+
+
+async def test_an_upload_the_server_has_nowhere_to_store_is_refused_as_the_file_without_a_path_of_the_servers(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    read: list[int] = []
+    async with running(app_on(friend, transcripts)) as client:
+        friend.temporary_dir.chmod(0o500)
+        try:
+            if os.access(friend.temporary_dir, os.W_OK):
+                pytest.skip("The current user/filesystem does not enforce directory write permissions")
+            refused = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        finally:
+            friend.temporary_dir.chmod(0o700)
+        later = await import_file(client, bundle)
+
+    # A sentence of Seek's, where a failure with none has the page blame a proxy: the system's own words for why,
+    # and nothing of where.
+    assert refused.status_code == 422
+    assert refused.json() == {"detail": f"The file could not be stored: {os.strerror(errno.EACCES)}"}
+    assert sum(read) == len(bundle)
+    assert (later.status_code, later.json()["added"]) == (200, 1)
+    assert held(friend) == []
+
+
+class NoRoom(io.FileIO):
+    """A file on a disk that has filled: it is created, and nothing can be written to it."""
+
+    def write(self, data: object) -> int:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+
+async def test_an_upload_the_disk_has_no_room_for_is_refused_the_same_way_and_what_was_stored_is_deleted(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    read: list[int] = []
+    async with running(app_on(friend, transcripts)) as client:
+        # No disk is filled for the test: the server's one way of creating an upload's file gives it this one.
+        monkeypatch.setattr(bundles_api, "_create", lambda path: NoRoom(path, "x"))
+        refused = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        stored = held(friend)
+        monkeypatch.undo()
+        later = await import_file(client, bundle)
+
+    assert refused.status_code == 422
+    assert refused.json() == {"detail": f"The file could not be stored: {os.strerror(errno.ENOSPC)}"}
+    # The first half was refused by the disk, and the rest was read all the same and kept nowhere.
+    assert sum(read) == len(bundle)
+    assert stored == []
+    assert (later.status_code, later.json()["added"]) == (200, 1)
+    assert held(friend) == []
+
+
+async def test_an_import_whose_channel_leaves_the_library_as_it_ends_says_that_it_finished_and_the_channel_is_gone(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+
+    def then_removed(config: Config, path: Path, called: str) -> ImportReport:
+        report = import_bundle(config, path, called=called)
+        # What a Remove pressed on another page does when it lands after the import's last write and before the
+        # server looks the Channel up, a moment no test can otherwise reach.
+        [channel] = query(config, "SELECT id FROM channels")
+        take_out_of_library(config, {"id": channel["id"]})
+        return report
+
+    monkeypatch.setattr(bundles_api, "import_bundle", then_removed)
+    async with running(app_on(friend, transcripts)) as client:
+        answered = await import_file(client, bundle)
+        channels, _, _ = await library(client)
+
+    assert answered.status_code == 404
+    assert answered.json() == {
+        "detail": "The import finished, but the Channel 'Wood By Wright' is no longer in the Library"
+    }
+    assert channels == []
+    assert held(friend) == []
 
 
 def too_large(cap: str) -> dict[str, str]:
@@ -1209,7 +1279,6 @@ async def test_a_file_over_the_cap_is_refused_for_its_size_whatever_else_is_in_t
 
 
 async def emptied(config: Config, timeout: float = 5.0) -> None:
-    """Waits for the server to hold nothing in its temporary directory."""
     async with asyncio.timeout(timeout):
         while held(config):
             await asyncio.sleep(0.01)
@@ -1226,17 +1295,39 @@ async def test_a_built_bundle_nobody_collects_is_deleted_once_its_time_is_up_and
         await sync(client, wright)
         await sync_playlist(client, picks)
 
-        left = (await client.post(f"/api/channels/{wright['id']}/bundles")).json()
         collected = (await client.post(f"/api/playlists/{picks['id']}/bundles")).json()
         in_time = await client.get(f"/api/bundles/{collected['id']}")
-        waiting = held(sender)
+        # Built last, and looked for only once its time is up: nothing is counted while the half second runs,
+        # which on a slow machine may already be over.
+        left = (await client.post(f"/api/channels/{wright['id']}/bundles")).json()
         await emptied(sender)
         too_late = await client.get(f"/api/bundles/{left['id']}")
 
     # One collected in time is sent whole; its time running out afterwards finds nothing to do.
     assert (in_time.status_code, len(in_time.content)) == (200, collected["size_bytes"])
-    assert len(waiting) == 1
     assert (too_late.status_code, too_late.json()) == (404, {"detail": "That Bundle is not here to download; export it again"})
+    assert held(sender) == []
+
+
+async def test_a_built_bundle_nobody_collected_is_removed_when_its_server_stops_and_not_when_another_does(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
+    async with running(app_on(sender, transcripts)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        built = (await client.post(f"/api/channels/{wright['id']}/bundles")).json()
+        # A second server started by mistake on the same data directory stops again without having served.
+        async with running(app_on(sender, transcripts)):
+            pass
+        still_waiting = held(sender)
+        collected = await client.get(f"/api/bundles/{built['id']}")
+        await client.post(f"/api/channels/{wright['id']}/bundles")
+        left = held(sender)
+
+    assert len(still_waiting) == 1
+    assert (collected.status_code, len(collected.content)) == (200, built["size_bytes"])
+    assert len(left) == 1
     assert held(sender) == []
 
 
@@ -1289,17 +1380,23 @@ async def begin_upload(base_url: str, sent: bytes, length: int) -> asyncio.Strea
 
 
 async def stored_whole(config: Config, length: int, timeout: float = 5.0) -> None:
-    """Waits for the server to have stored the whole of an upload of this many bytes."""
     async with asyncio.timeout(timeout):
         while [file.stat().st_size for directory in held(config) for file in directory.iterdir()] != [length]:
             await asyncio.sleep(0.01)
 
 
 async def test_an_upload_whose_browser_goes_away_partway_is_discarded_and_a_later_import_is_accepted(
-    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+    sender: Config,
+    friend: Config,
+    transcripts: FakeTranscriptSource,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bundle = await wrights_bundle(sender, transcripts)
     async with serving(app_on(friend, transcripts)) as base_url, httpx.AsyncClient(base_url=base_url) as client:
+        # The server logs a request that raised on a logger of its own, which keeps its records from the root's.
+        server_log = logging.getLogger("uvicorn.error")
+        monkeypatch.setattr(server_log, "handlers", [*server_log.handlers, caplog.handler])
         connection = await begin_upload(base_url, bundle[: len(bundle) // 2], len(bundle))
         # Taken on, with half of it here: until it ends it is the one import.
         async with asyncio.timeout(5):
@@ -1316,6 +1413,8 @@ async def test_an_upload_whose_browser_goes_away_partway_is_discarded_and_a_late
     # Nothing of the half that arrived was imported, and nothing of it is kept.
     assert after == ([], [], [])
     assert (later.status_code, later.json()["added"]) == (200, 1)
+    # The request nobody was waiting on ended as a refusal, not as a failure of the server's to log.
+    assert [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR] == []
     assert held(friend) == []
 
 
@@ -1331,6 +1430,10 @@ async def test_an_import_whose_file_had_arrived_runs_to_its_end_though_the_brows
             with closing(sqlite3.connect(friend.database_path, autocommit=True)) as writer:
                 writer.execute("BEGIN IMMEDIATE")
                 connection = await begin_upload(base_url, bundle, len(bundle))
+                # With the whole file stored, the handler has the body to its end, which no test can watch
+                # directly. It rests on the upload declaring its length: the server then hands over the bytes
+                # that complete it already marked as the last, so the handler never asks the connection for
+                # more, and asking is the only way it would learn the browser has gone.
                 await stored_whole(friend, len(bundle))
                 connection.transport.abort()
                 # Long enough for the server to have noticed, were it to do anything about it.

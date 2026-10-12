@@ -267,8 +267,8 @@ UI, on whichever device you have it open, or with two commands on the machine Se
   filter is left out. Press **Export** there: Seek builds the Bundle ("Building…") and your browser downloads it as
   `<name>.seek`, with `_` in place of any character a file name can't hold. It works on a Paused entry and during a
   Sync, and is disabled on an entry with no indexed Videos. The built Bundle is downloaded once and then deleted from
-  Seek's data directory, and one never collected is deleted ten minutes after it was built; if a download breaks,
-  export again.
+  Seek's data directory, and one never collected is deleted ten minutes after it was built, or when Seek stops if
+  that comes first; if a download breaks, export again.
 - **Import** is in the **Add channel** and **Add playlist** dialogs, under the URL: choose **or import a `.seek`
   file**, pick the file, and press **Import**. Either dialog takes either kind of Bundle. There is no name to give:
   the entry takes the Bundle's, and you can rename it on its page. When "Importing…" ends, the dialog shows what
@@ -388,7 +388,8 @@ The data directory contains:
   vectors, and Conversations.
 - `chat/` is the empty working directory the web chat runs the Claude CLI in when no project directory is attached.
 - `tmp/` holds a Bundle while the web UI builds it for download or imports one sent to it, readable by you alone.
-  Each is deleted when it is finished with, and Seek clears at start whatever has lain there untouched for an hour.
+  Each is deleted when it is finished with, a built Bundle nobody downloaded goes when Seek stops, and Seek clears
+  at start whatever a crash left there, once it has lain untouched for an hour.
 
 Backup is a copy of `seek.db`. The database uses WAL mode, so recent changes can sit in `seek.db-wal` beside it.
 Either stop the service and copy both files, or take a consistent single-file copy while it runs:

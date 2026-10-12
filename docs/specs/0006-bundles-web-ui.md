@@ -131,13 +131,16 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
 - The answer carries an id that is long, random, and good for one download. `GET /api/bundles/{id}` sends the file
   as `application/octet-stream` with its length and `Content-Disposition: attachment`, and deletes it when the
   response ends, whether or not it was sent whole. A second request for the same id is 404. A download that broke
-  is exported again.
+  is exported again. A `HEAD` request for it, which a download manager sends before it fetches, answers the same
+  headers and leaves the Bundle to be collected.
 - Building and downloading are two requests so that a refusal reaches the dialog as a sentence, "Building…" has an
   end the page can see, and the browser saves the file itself instead of holding 255 MB in the page's memory.
-- A built Bundle nobody collects is deleted ten minutes after it was built.
+- A built Bundle nobody collects is deleted ten minutes after it was built, or when the server stops if that comes
+  first.
 - **The file name** is the entry's name with path separators, the characters Windows forbids in a name
-  (`< > : " / \ | ? *`), and control characters each replaced by `_`, leading and trailing dots and spaces removed,
-  cut to 100 characters, and `bundle` when nothing is left; then `.seek`. The header carries it twice, so a name
+  (`< > : " / \ | ? *`), and control characters each replaced by `_`, cut to 100 characters, leading and trailing
+  dots and spaces then removed (after the cut, which can leave one at the end), and `bundle` when nothing is left;
+  then `.seek`. The header carries it twice, so a name
   in another script or with an emoji survives: in the UTF-8 form, and as an ASCII fallback in which every other
   character is `_` as well. The framework's file response writes only one of the two, so the header is built by
   hand.
@@ -162,7 +165,11 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   the status.
 - The body is then streamed to a file in a fresh directory of the temporary area, a chunk at a time, counting
   bytes. Nothing of it is held in memory, and the writes are kept off the event loop, which the event stream's
-  keepalives share. A body that passes the cap is refused and what was written is deleted.
+  keepalives share. A body that passes the cap is refused and what was written is deleted. A file the system will
+  not store, for a full disk or a directory that can't be made, is refused in a sentence of Seek's with the
+  system's reason and no path, 422 "The file could not be stored: No space left on device", once the rest of the
+  body has been read; left to itself the failure would answer with no sentence, and the page would say the file
+  never reached Seek.
 - **The cap is 2 GB** (2,000,000,000 bytes), a constant: "The file is larger than 2 GB, the most the web UI imports; import it with
   `seek import`." The largest Bundle of the reference Library is 255 MB, and the whole Library would be about
   650 MB. The cap exists because the upload is written to the data directory's disk by anyone past Access. The app
@@ -177,7 +184,8 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   left_out}`. `id` is the entry's id in this Library, for the dialog to select it and start its Sync. The import
   function reports the YouTube id, not this one, so the handler looks the entry up by its kind and YouTube id once
   the thread returns. `filters` is the Channel filters that arrived with a new Channel, else null; `left_out` maps
-  each reason to its count.
+  each reason to its count. An entry removed in the moment between the import's end and that lookup is answered
+  404, in a sentence that says both: "The import finished, but the Channel 'X' is no longer in the Library".
 - The Playlist-name refusal reads, here: "A Playlist named 'X' already exists; rename it, then import the file
   again."
 - When the import ends, however it ends, the server wakes its Sync worker, so a Sync queued meanwhile starts at
@@ -201,9 +209,12 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
   data directory is on the disk the user already sized for the knowledge base.
 - Each upload and each build gets a fresh, unguessably named directory there, removed whole when it is finished
   with: after an import ends or is refused, after a download's response ends, when a build fails, and when a built
-  Bundle goes uncollected.
+  Bundle goes uncollected, past its ten minutes or to the server's stop.
+- As it stops, the server removes every built Bundle still waiting to be collected: the timers that would have
+  deleted them stop with it, and a Bundle holds Transcripts. Only its own, never the whole directory, which a
+  second server started by mistake is stopping beside the first.
 - At start, before it serves, the server removes whatever there has not been modified in the last hour, which
-  clears what a crash or a stop left. Not everything: a second server started by mistake on the same data
+  clears what a crash left. Not everything: a second server started by mistake on the same data
   directory runs its startup before it fails to take the port, and must not delete the first one's upload in
   flight. The CLI never uses the directory.
 
@@ -290,13 +301,15 @@ file either way, and it is held to the same rules as `seek export` and `seek imp
     existing route.
   - The download's headers: attachment, the `.seek` name, and names that need sanitising (a slash, a quote, an
     emoji, a name of nothing but dots).
-  - A built Bundle is served once; the second request is 404. One left uncollected is gone after the expiry, with
-    the expiry shortened through the app factory.
+  - A built Bundle is served once; the second request is 404, and a `HEAD` before the first leaves it to be
+    collected. One left uncollected is gone after the expiry, with the expiry shortened through the app factory,
+    and when its server stops, though not when another on the same data directory does.
   - Export of a Paused entry, of an entry during a Sync held by a `Gate`, of a Channel that shares its name with
     another; and the refusal for an entry with no indexed Videos and for an id that isn't there.
   - A Channel with a Playlist filter reports that it was left out.
   - Import refusals, each asserting the sentence and that the Library is unchanged: bytes that aren't a Bundle
-    (called "The file", with no path in the sentence), a Bundle of another embedding model, a Playlist name already
+    (called "The file", with no path in the sentence), a damaged Bundle and one from a newer Seek (the same), a file
+    the server can't store, a Bundle of another embedding model, a Playlist name already
     taken, a Sync running, a Sync queued, another import running (the first held open by a request body that
     pauses before its last chunk, and a later import accepted once that request has ended either way), a body over
     a small cap both declared and undeclared, and a content type other than `application/octet-stream`.

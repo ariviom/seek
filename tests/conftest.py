@@ -3,7 +3,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from harness import WRIGHT_AVATAR, running
+from harness import WRIGHT_AVATAR, bundle_config, running
 
 from seek.app import create_app
 from seek.config import Config
@@ -14,6 +14,18 @@ from seek.ports import ChannelInfo, ChatEngineStatus
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
     return Config(data_dir=tmp_path / "data")
+
+
+@pytest.fixture
+def sender(tmp_path: Path) -> Config:
+    """Whoever exports the Bundle."""
+    return bundle_config(tmp_path / "sender")
+
+
+@pytest.fixture
+def friend(tmp_path: Path) -> Config:
+    """Whoever imports it: a data directory that has never been started."""
+    return bundle_config(tmp_path / "friend")
 
 
 @pytest.fixture
