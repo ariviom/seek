@@ -1,8 +1,12 @@
 import asyncio
 import errno
+import json
 import os
+import sqlite3
 import stat
+import time
 from collections.abc import AsyncIterator, MutableMapping
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -22,6 +26,7 @@ from harness import (
     running,
     said,
     search,
+    serving,
     start_playlist_sync,
     start_sync,
     sync,
@@ -55,7 +60,9 @@ def app_on(
     transcripts: FakeTranscriptSource,
     embedder: FakeEmbedder | None = None,
     sync_poll_seconds: float = 5.0,
+    **limits: Any,
 ) -> FastAPI:
+    """`limits` are the app factory's own: `bundle_upload_cap_bytes` and `built_bundle_expiry_seconds`."""
     return create_app(
         config,
         transcripts,
@@ -64,6 +71,7 @@ def app_on(
         FakeChatEngine(),
         static_dir=config.data_dir / "none",
         sync_poll_seconds=sync_poll_seconds,
+        **limits,
     )
 
 
@@ -1021,8 +1029,8 @@ async def test_an_upload_the_browser_abandons_no_longer_holds_the_place_of_the_o
         await asyncio.wait_for(arriving.wait(), 5)
         meanwhile = await import_file(client, bundle)
         gone.set()
-        # However the server ends a request nobody is waiting on.
-        await asyncio.gather(abandoned, return_exceptions=True)
+        # The server ends a request nobody is waiting on without a failure of its own to log.
+        await abandoned
         stored = held(friend)
         later = await import_file(client, bundle)
 
@@ -1083,3 +1091,259 @@ async def test_a_sync_queued_while_an_import_ran_starts_when_the_import_ends_wit
     assert waiting == ["queued"]
     assert (imported.status_code, imported.json()["added"]) == (200, 1)
     assert (started["channel_id"], started["status"]) == (rex["id"], "done")
+
+
+def too_large(cap: str) -> dict[str, str]:
+    return {"detail": f"The file is larger than {cap}, the most the web UI imports; import it with `seek import`."}
+
+
+async def test_a_file_declared_larger_than_the_cap_is_refused_with_the_way_to_import_it_all_the_same(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    async with running(app_on(friend, transcripts, bundle_upload_cap_bytes=1000)) as client:
+        # A Bundle Seek would import, were it not some tens of times the most this one takes.
+        refused = await import_file(client, bundle)
+        after = await library(client)
+
+    assert int(refused.request.headers["content-length"]) == len(bundle) > 1000
+    assert (refused.status_code, refused.json()) == (413, too_large("1 KB"))
+    assert after == ([], [], [])
+    assert held(friend) == []
+
+
+async def test_a_length_declared_over_2_gb_is_refused_at_once_without_any_of_the_body_being_read(
+    friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    # The cap a server has unless it is told another, and one byte more than it.
+    app = app_on(friend, transcripts)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/bundles",
+        "raw_path": b"/api/bundles",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"127.0.0.1:7337"),
+            (b"content-type", b"application/octet-stream"),
+            (b"content-length", b"2000000001"),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 7337),
+    }
+    asked_for_the_body: list[bool] = []
+    answered: list[int] = []
+    said_why = b""
+
+    async def receive() -> dict[str, Any]:
+        asked_for_the_body.append(True)
+        return {"type": "http.request", "body": b"The first of a great many bytes", "more_body": True}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        nonlocal said_why
+        if message["type"] == "http.response.start":
+            answered.append(message["status"])
+        else:
+            said_why += message.get("body", b"")
+
+    async with running(app):
+        await app(scope, receive, send)
+
+    assert answered == [413]
+    assert json.loads(said_why) == too_large("2 GB")
+    assert asked_for_the_body == []
+    assert held(friend) == []
+
+
+async def test_a_file_that_passes_the_cap_without_declaring_its_length_is_refused_and_what_was_stored_deleted(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    read: list[int] = []
+    async with running(app_on(friend, transcripts, bundle_upload_cap_bytes=1000)) as client:
+        refused = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        after = await library(client)
+        stored = held(friend)
+        # It no longer holds the place of the one import: the next is refused for its own size, not for the first.
+        again = await client.post("/api/bundles", content=in_halves(bundle, []), headers=AS_A_FILE)
+
+    assert "content-length" not in refused.request.headers
+    assert (refused.status_code, refused.json()) == (413, too_large("1 KB"))
+    # The first half was already over, so the rest was never asked for.
+    assert read == []
+    assert stored == []
+    assert after == ([], [], [])
+    assert (again.status_code, again.json()) == (413, too_large("1 KB"))
+    assert held(friend) == []
+
+
+async def test_a_file_over_the_cap_is_refused_for_its_size_whatever_else_is_in_the_way(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    # Small enough to be taken on, and held open as an upload still arriving.
+    first = Paused(b"Remember to sharpen the chisels")
+    read: list[int] = []
+    async with running(app_on(friend, transcripts, bundle_upload_cap_bytes=1000)) as client:
+        uploading = first.sent_to(client)
+        await asyncio.wait_for(first.arriving.wait(), 5)
+
+        declared = await import_file(client, bundle)
+        undeclared = await client.post("/api/bundles", content=in_halves(bundle, read), headers=AS_A_FILE)
+        fits = await import_file(client, b"Remember to sharpen the saws")
+        first.let_go.set()
+        ended = await uploading
+
+    # Its size is what can't be waited out, so that is what each is told, and not to try again later.
+    assert (declared.status_code, declared.json()) == (413, too_large("1 KB"))
+    # One that declared no length is read no further than the cap, though nothing of it is stored.
+    assert (undeclared.status_code, undeclared.json()) == (413, too_large("1 KB"))
+    assert read == []
+    assert (fits.status_code, fits.json()) == (409, ANOTHER_IMPORT)
+    assert (ended.status_code, ended.json()) == (422, {"detail": "The file is not a Seek Bundle"})
+    assert held(friend) == []
+
+
+async def emptied(config: Config, timeout: float = 5.0) -> None:
+    """Waits for the server to hold nothing in its temporary directory."""
+    async with asyncio.timeout(timeout):
+        while held(config):
+            await asyncio.sleep(0.01)
+
+
+async def test_a_built_bundle_nobody_collects_is_deleted_once_its_time_is_up_and_is_then_not_there_to_download(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    sharpening(transcripts)
+    # Half a second where a server gives ten minutes.
+    async with running(app_on(sender, transcripts, built_bundle_expiry_seconds=0.5)) as client:
+        wright = await add_channel(client, "@woodbywright")
+        picks = await add_playlist(client, "PL-sharpening")
+        await sync(client, wright)
+        await sync_playlist(client, picks)
+
+        left = (await client.post(f"/api/channels/{wright['id']}/bundles")).json()
+        collected = (await client.post(f"/api/playlists/{picks['id']}/bundles")).json()
+        in_time = await client.get(f"/api/bundles/{collected['id']}")
+        waiting = held(sender)
+        await emptied(sender)
+        too_late = await client.get(f"/api/bundles/{left['id']}")
+
+    # One collected in time is sent whole; its time running out afterwards finds nothing to do.
+    assert (in_time.status_code, len(in_time.content)) == (200, collected["size_bytes"])
+    assert len(waiting) == 1
+    assert (too_late.status_code, too_late.json()) == (404, {"detail": "That Bundle is not here to download; export it again"})
+    assert held(sender) == []
+
+
+def leftover(config: Config, name: str, directory_age: float, file_age: float) -> Path:
+    """An upload's or a build's directory as a server that stopped would leave it, with each of the directory and
+    the file in it last modified so many seconds ago."""
+    directory = config.temporary_dir / name
+    directory.mkdir(parents=True)
+    file = directory / "upload.seek"
+    file.write_bytes(b"What had arrived of a Bundle")
+    now = time.time()
+    os.utime(file, (now - file_age, now - file_age))
+    os.utime(directory, (now - directory_age, now - directory_age))
+    return directory
+
+
+async def test_a_server_clears_at_start_what_was_left_over_an_hour_ago_and_keeps_what_another_may_still_be_writing(
+    friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    hour = 3600
+    stale = leftover(friend, "left-by-a-crash", directory_age=hour + 60, file_age=hour + 60)
+    fresh = leftover(friend, "left-a-moment-ago", directory_age=hour - 60, file_age=hour - 60)
+    # A large upload on a slow line: its directory was made long ago, and its file is still being written.
+    arriving = leftover(friend, "still-arriving", directory_age=2 * hour, file_age=1)
+    stray = friend.temporary_dir / "stray.seek"
+    stray.write_bytes(b"Not in a directory of its own")
+    os.utime(stray, (time.time() - 2 * hour, time.time() - 2 * hour))
+
+    async with running(app_on(friend, transcripts)):
+        # Before it serves anything: this is the first thing asked of it.
+        kept = held(friend)
+
+    assert kept == sorted([fresh, arriving])
+    assert [file.name for directory in kept for file in directory.iterdir()] == ["upload.seek", "upload.seek"]
+    assert not stale.exists() and not stray.exists()
+
+
+async def begin_upload(base_url: str, sent: bytes, length: int) -> asyncio.StreamWriter:
+    """Starts sending a file of `length` bytes to a served app as a browser does, on a connection of its own that
+    the test can drop, and returns it with `sent` on its way."""
+    url = httpx.URL(base_url)
+    _, writer = await asyncio.open_connection(url.host, url.port)
+    head = (
+        f"POST /api/bundles HTTP/1.1\r\nHost: {url.netloc.decode()}\r\n"
+        f"Content-Type: application/octet-stream\r\nContent-Length: {length}\r\n\r\n"
+    )
+    writer.write(head.encode() + sent)
+    await writer.drain()
+    return writer
+
+
+async def stored_whole(config: Config, length: int, timeout: float = 5.0) -> None:
+    """Waits for the server to have stored the whole of an upload of this many bytes."""
+    async with asyncio.timeout(timeout):
+        while [file.stat().st_size for directory in held(config) for file in directory.iterdir()] != [length]:
+            await asyncio.sleep(0.01)
+
+
+async def test_an_upload_whose_browser_goes_away_partway_is_discarded_and_a_later_import_is_accepted(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    async with serving(app_on(friend, transcripts)) as base_url, httpx.AsyncClient(base_url=base_url) as client:
+        connection = await begin_upload(base_url, bundle[: len(bundle) // 2], len(bundle))
+        # Taken on, with half of it here: until it ends it is the one import.
+        async with asyncio.timeout(5):
+            while not held(friend):
+                await asyncio.sleep(0.01)
+        meanwhile = await import_file(client, bundle)
+
+        connection.transport.abort()
+        await emptied(friend)
+        after = await library(client)
+        later = await import_file(client, bundle)
+
+    assert (meanwhile.status_code, meanwhile.json()) == (409, ANOTHER_IMPORT)
+    # Nothing of the half that arrived was imported, and nothing of it is kept.
+    assert after == ([], [], [])
+    assert (later.status_code, later.json()["added"]) == (200, 1)
+    assert held(friend) == []
+
+
+async def test_an_import_whose_file_had_arrived_runs_to_its_end_though_the_browser_has_gone_and_open_pages_are_told(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource
+) -> None:
+    bundle = await wrights_bundle(sender, transcripts)
+    app = app_on(friend, transcripts)
+    async with serving(app) as base_url, httpx.AsyncClient(base_url=base_url) as client:
+        async with event_stream(app) as events:
+            # Something else is writing to the knowledge base, as another seek process may: the import waits for
+            # it, which is what keeps it running for as long as the test needs.
+            with closing(sqlite3.connect(friend.database_path, autocommit=True)) as writer:
+                writer.execute("BEGIN IMMEDIATE")
+                connection = await begin_upload(base_url, bundle, len(bundle))
+                await stored_whole(friend, len(bundle))
+                connection.transport.abort()
+                # Long enough for the server to have noticed, were it to do anything about it.
+                await asyncio.sleep(0.2)
+                still_importing = await import_file(client, bundle)
+                writer.execute("ROLLBACK")
+            told = await events.until(lambda event: event["type"] == "videos")
+        after = await library(client)
+        later = await import_file(client, bundle)
+
+    # The place of the one import stayed taken for as long as the import ran, and no longer.
+    assert (still_importing.status_code, still_importing.json()) == (409, ANOTHER_IMPORT)
+    assert after == ([("Wood By Wright", 1)], [], ["v-chisels"])
+    [channel_id] = {event["channel_id"] for event in told if event["type"] == "videos"}
+    assert (later.status_code, later.json()["id"], later.json()["already_indexed"]) == (200, channel_id, 1)
+    assert held(friend) == []

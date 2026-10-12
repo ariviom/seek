@@ -9,7 +9,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
-from harness import event_stream, running
+from harness import add_channel, bundle_config, event_stream, fake_channel, fake_video, running, sync
 from jwt.algorithms import RSAAlgorithm
 from starlette.types import Message
 
@@ -181,10 +181,16 @@ def new_key() -> rsa.RSAPrivateKey:
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-def guarded_app(config: Config, certs: Certs, static_dir: Path, refetch_seconds: float = 60.0) -> FastAPI:
+def guarded_app(
+    config: Config,
+    certs: Certs,
+    static_dir: Path,
+    refetch_seconds: float = 60.0,
+    transcripts: FakeTranscriptSource | None = None,
+) -> FastAPI:
     return create_app(
         replace(config, cf_access_team_domain=TEAM_DOMAIN, cf_access_aud=AUDIENCE),
-        FakeTranscriptSource(),
+        transcripts or FakeTranscriptSource(),
         FakeEmbedder(),
         FakeReranker(),
         FakeChatEngine(),
@@ -234,6 +240,48 @@ async def test_with_access_configured_every_proxied_request_needs_a_valid_token(
     assert "expired" in refused["expired"].json()["detail"]
     assert [refused_mcp.status_code, refused_page.status_code, refused_stream.status_code] == [403, 403, 403]
     assert certs.fetched[0] == f"https://{TEAM_DOMAIN}/cdn-cgi/access/certs"
+
+
+async def test_a_bundle_is_built_downloaded_and_imported_through_access_under_the_prefix_and_never_without_a_token(
+    tmp_path: Path, transcripts: FakeTranscriptSource
+) -> None:
+    certs = Certs()
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels"))
+    # The Bundle functions open the knowledge base with the Config's model, so it names the fake embedder's.
+    config = replace(bundle_config(tmp_path / "data"), allowed_hosts=("seek.example.com",))
+    app = guarded_app(config, certs, tmp_path / "no-bundle", transcripts=transcripts)
+    valid = with_token(certs.token())
+    as_a_file = {"Content-Type": "application/octet-stream"}
+
+    async with running(app) as client:
+        # Set up on the machine itself, where no token is asked for.
+        wright = await add_channel(client, "@woodbywright")
+        await sync(client, wright)
+        waiting = (await client.post(f"/api/channels/{wright['id']}/bundles")).json()
+
+        refused = [
+            await client.post(f"/seek/api/channels/{wright['id']}/bundles", headers=PROXIED),
+            await client.get(f"/seek/api/bundles/{waiting['id']}", headers=PROXIED),
+            await client.post("/seek/api/bundles", content=b"A Bundle", headers=PROXIED | as_a_file),
+        ]
+        built = await client.post(f"/seek/api/channels/{wright['id']}/bundles", headers=valid)
+        download = await client.get(f"/seek/api/bundles/{built.json()['id']}", headers=valid)
+        imported = await client.post("/seek/api/bundles", content=download.content, headers=valid | as_a_file)
+        # The download that was refused took nothing: the built Bundle is still there for whoever has a token.
+        still_there = await client.get(f"/seek/api/bundles/{waiting['id']}", headers=valid)
+
+    assert [r.status_code for r in refused] == [403, 403, 403]
+    assert all("Cloudflare Access" in r.json()["detail"] for r in refused)
+    assert (built.status_code, built.json()["videos"]) == (201, 1)
+    assert (download.status_code, len(download.content)) == (200, built.json()["size_bytes"])
+    assert download.headers["content-disposition"].startswith('attachment; filename="Wood By Wright.seek"')
+    assert (imported.status_code, imported.json()["name"], imported.json()["already_indexed"]) == (
+        200,
+        "Wood By Wright",
+        1,
+    )
+    assert still_there.status_code == 200
+    assert list(config.temporary_dir.iterdir()) == []
 
 
 async def test_only_requests_made_directly_on_this_machine_go_without_a_token(

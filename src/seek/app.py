@@ -17,7 +17,7 @@ from starlette.routing import Route
 from seek import access, db
 from seek.api_chat import ApiEngine
 from seek.bundles import PlaylistNameTaken
-from seek.bundles_api import TemporaryArea, bundles_router
+from seek.bundles_api import UPLOAD_CAP_BYTES, TemporaryArea, bundles_router
 from seek.channels_api import channels_router
 from seek.chat import Chat
 from seek.chat_api import chat_router
@@ -152,6 +152,8 @@ def create_app(
     api_engine: ChatEngine | None = None,
     check_seconds: float = 300.0,
     clock: Callable[[], datetime] = utc_now,
+    bundle_upload_cap_bytes: int = UPLOAD_CAP_BYTES,
+    built_bundle_expiry_seconds: float = 600.0,
 ) -> FastAPI:
     database = db.Database(config.database_path)
     events = Events()
@@ -238,7 +240,12 @@ def create_app(
     app.include_router(
         playlists_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
     )
-    app.include_router(bundles_router(config, database, temporary, events, worker.wake), prefix="/api")
+    app.include_router(
+        bundles_router(
+            config, database, temporary, events, worker.wake, bundle_upload_cap_bytes, built_bundle_expiry_seconds
+        ),
+        prefix="/api",
+    )
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")

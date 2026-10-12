@@ -12,7 +12,9 @@ import re
 import secrets
 import shutil
 import sqlite3
-from collections.abc import Callable
+import time
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
@@ -21,6 +23,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.requests import ClientDisconnect
 from starlette.types import Receive, Scope, Send
 
 from seek import channels, playlists, syncs, videos
@@ -52,6 +55,11 @@ UPLOAD_MEDIA_TYPE = "application/octet-stream"
 # Why an import is refused for now. The first is in the words the dialog shows beside its disabled import path.
 SYNC_IN_THE_WAY = "A Sync is running or waiting to run; import when it has finished."
 ANOTHER_IMPORT = "Another import is running; try again when it has finished."
+# The most an upload may be. It is written to the data directory's disk by anyone past Access, and the largest
+# Bundle of a real Library is an eighth of this.
+UPLOAD_CAP_BYTES = 2_000_000_000
+# How long what is in the temporary directory has to have lain untouched for a starting server to clear it.
+LEFTOVER_SECONDS = 3600
 
 
 class TemporaryArea:
@@ -65,8 +73,24 @@ class TemporaryArea:
         self.root = root
 
     def prepare(self) -> None:
-        """Creates the directory, readable by the user alone."""
+        """Creates the directory, readable by the user alone, and clears what a crash or a stop left in it.
+
+        Only what was last modified over an hour ago: a second server started by mistake on the same data
+        directory gets this far before it fails to take the port, and must not delete the first one's upload in
+        flight.
+        """
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stale_before = time.time() - LEFTOVER_SECONDS
+        for entry in self.root.iterdir():
+            # One that another server removes meanwhile, or that can't be read, is left to it.
+            with suppress(OSError):
+                # A directory's own time is when its file was created; one still being written shows in the file's.
+                if max(path.stat().st_mtime for path in (entry, *entry.rglob("*"))) >= stale_before:
+                    continue
+                if entry.is_dir():
+                    self.remove(entry)
+                else:
+                    entry.unlink()
 
     def new_directory(self) -> Path:
         """A fresh directory under a name nobody can guess, for the caller to `remove` when it is finished with."""
@@ -153,27 +177,58 @@ class _ServedOnce(FileResponse):
             TemporaryArea.remove(self._directory)
 
 
+# The units the cap is named in, largest first, each a thousand of the next as the page writes a size.
+_UNITS = (("GB", 10**9), ("MB", 10**6), ("KB", 10**3), ("bytes", 1))
+
+
+def _too_large(cap_bytes: int) -> HTTPException:
+    """The refusal of an upload over the cap, which names the cap in the largest unit it fills."""
+    unit, scale = next(named for named in _UNITS if cap_bytes >= named[1])
+    return HTTPException(
+        status.HTTP_413_CONTENT_TOO_LARGE,
+        f"{UPLOADED} is larger than {cap_bytes / scale:g} {unit}, the most the web UI imports; "
+        "import it with `seek import`.",
+    )
+
+
 def _create(path: Path) -> BinaryIO:
     """A new file at the path, readable by the user alone as a built Bundle is."""
     return open(path, "xb", opener=lambda name, flags: os.open(name, flags, 0o600))
 
 
-async def _store(request: Request, path: Path) -> None:
+async def _body(request: Request, cap_bytes: int) -> AsyncIterator[bytes]:
+    """The request's body a chunk at a time, refused once more of it has arrived than the cap allows: a body
+    may declare no length, or a false one."""
+    arrived = 0
+    try:
+        async for chunk in request.stream():
+            arrived += len(chunk)
+            if arrived > cap_bytes:
+                raise _too_large(cap_bytes)
+            yield chunk
+    except ClientDisconnect as e:
+        # An upload the browser abandoned. Nobody is left to read this, but as a refusal it ends the request
+        # like any other, where the disconnect itself would be logged as a failure of the server's.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{UPLOADED} stopped arriving") from e
+
+
+async def _store(request: Request, path: Path, cap_bytes: int) -> None:
     """Writes the request's body to the path a chunk at a time, so none of it is held in memory. The writes, the
     last one on closing included, run in a worker thread: the event loop is shared with every other request and
     the event stream's keepalives."""
     file = await asyncio.to_thread(_create, path)
     try:
-        async for chunk in request.stream():
+        async for chunk in _body(request, cap_bytes):
             await asyncio.to_thread(file.write, chunk)
     finally:
         await asyncio.to_thread(file.close)
 
 
-async def _discard(request: Request) -> None:
+async def _discard(request: Request, cap_bytes: int) -> None:
     """Reads the request's body to its end and keeps none of it, so that the browser of an upload refused before
-    it was stored receives the sentence and not a dropped connection."""
-    async for _ in request.stream():
+    it was stored receives the sentence and not a dropped connection. No further than the cap, though: a body
+    that passes it is refused for that, as one being stored is."""
+    async for _ in _body(request, cap_bytes):
         pass
 
 
@@ -188,13 +243,26 @@ def _imported(conn: sqlite3.Connection, report: ImportReport) -> tuple[int, list
 
 
 def bundles_router(
-    config: Config, database: Database, area: TemporaryArea, events: Events, wake_worker: Callable[[], None]
+    config: Config,
+    database: Database,
+    area: TemporaryArea,
+    events: Events,
+    wake_worker: Callable[[], None],
+    upload_cap_bytes: int,
+    built_expiry_seconds: float,
 ) -> APIRouter:
     router = APIRouter()
     # Bundles built and not yet collected, by the id each is collected under.
     built: dict[str, _Built] = {}
     # Whether an import is under way, uploading or importing: a server runs one at a time.
     importing = False
+
+    def expire(bundle_id: str) -> None:
+        """Deletes a built Bundle nobody collected. One that was collected is no longer in the map, which is what
+        a download and this both take it out of: whichever comes first, the other finds nothing."""
+        bundle = built.pop(bundle_id, None)
+        if bundle is not None:
+            area.remove(bundle.path.parent)
 
     async def build(export: Callable[[Path], ExportReport]) -> BuiltBundle:
         """Runs the export in a worker thread, since it opens a connection of its own, into a fresh directory."""
@@ -210,6 +278,7 @@ def bundles_router(
             raise
         bundle_id = secrets.token_urlsafe(32)
         built[bundle_id] = _Built(report.path, bundle_file_name(report.name))
+        asyncio.get_running_loop().call_later(built_expiry_seconds, expire, bundle_id)
         return BuiltBundle(
             id=bundle_id,
             name=report.name,
@@ -250,9 +319,13 @@ def bundles_router(
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 f"A Bundle is imported as the body of the request, sent as {UPLOAD_MEDIA_TYPE}",
             )
+        # A length declared over the cap is refused on its word, with none of the body read, and ahead of the
+        # checks below, so it neither takes the place of the one import nor waits for a Sync.
+        if int(request.headers.get("content-length", 0)) > upload_cap_bytes:
+            raise _too_large(upload_cap_bytes)
         nonlocal importing
         if importing:
-            await _discard(request)
+            await _discard(request, upload_cap_bytes)
             raise Conflict(ANOTHER_IMPORT)
         # Taken with no await since it was found free, so two requests can't both find it so.
         importing = True
@@ -260,14 +333,16 @@ def bundles_router(
             # The condition the dialog disables its import path on. The import function would refuse a running
             # Sync itself, once the whole file had been stored; a queued one only this refuses.
             if await database.run(syncs.has_work):
-                await _discard(request)
+                await _discard(request, upload_cap_bytes)
                 raise Conflict(SYNC_IN_THE_WAY)
             directory = area.new_directory()
             try:
                 path = directory / f"upload{EXTENSION}"
-                await _store(request, path)
+                await _store(request, path, upload_cap_bytes)
                 # In a worker thread, as a build is: it opens connections of its own, and takes the Sync lease,
-                # which a Sync that started since the check above holds.
+                # which a Sync that started since the check above holds. From here the import runs to its end
+                # whether or not the browser is still there: the server cancels no request for its connection
+                # having gone, so the hold and the wake below wait for it too.
                 report = await asyncio.to_thread(import_bundle, config, path, called=UPLOADED)
             except PlaylistNameTaken as e:
                 # The command's sentence points at a flag; here the way out is the other Playlist's Rename.
