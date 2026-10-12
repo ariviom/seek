@@ -398,6 +398,7 @@ allowed_hosts = ["seek.example.com"]
 | `embedding_model` | `Qwen/Qwen3-Embedding-0.6B` | Hugging Face model for Segment vectors |
 | `embedding_dimension` | `1024` | Its vector size |
 | `reranker_model` | `mixedbread-ai/mxbai-rerank-base-v2` | Hugging Face cross-encoder that reranks search results |
+| `model_idle_unload_seconds` | `0` | The server unloads a model unused for this long, freeing its GPU memory, and loads it again at the next search or Sync; `0` keeps the models loaded |
 | `reranker_temperature` | `3` | Scores are sigmoid(logit / temperature); higher spreads confident results apart |
 | `gentle_recency_half_life_days` | `3650` | "Prefer newer, gently": age penalty half-life |
 | `gentle_recency_max_penalty_percent` | `15` | …and the most a Video's score can lose to age |

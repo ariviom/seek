@@ -47,6 +47,9 @@ class Config:
     embedding_dimension: int = DEFAULT_EMBEDDING_DIMENSION
     # Models are Hugging Face repository names, downloaded on first use.
     reranker_model: str = DEFAULT_RERANKER_MODEL
+    # The server unloads a model unused for this long, freeing its GPU memory, and loads it again at the next search
+    # or Sync; 0 keeps the models loaded.
+    model_idle_unload_seconds: int = 0
     # The least time between a Sync's YouTube calls: each listing, and each Video with its captions.
     youtube_delay_seconds: int = DEFAULT_YOUTUBE_DELAY_SECONDS
     # Retries after YouTube rate limits a request or can't be reached, waiting youtube_backoff_seconds and doubling.
@@ -223,6 +226,9 @@ def load_config(
     reranker_model = DEFAULT_RERANKER_MODEL
     if "reranker_model" in raw:
         reranker_model = _text("reranker_model", *raw["reranker_model"])
+    idle_unload = 0
+    if "model_idle_unload_seconds" in raw:
+        idle_unload = _integer("model_idle_unload_seconds", *raw["model_idle_unload_seconds"], 0, 24 * 60 * 60)
     youtube_delay = DEFAULT_YOUTUBE_DELAY_SECONDS
     if "youtube_delay_seconds" in raw:
         youtube_delay = _integer("youtube_delay_seconds", *raw["youtube_delay_seconds"], 0, 3600)
@@ -283,6 +289,7 @@ def load_config(
         embedding_model=embedding_model,
         embedding_dimension=embedding_dimension,
         reranker_model=reranker_model,
+        model_idle_unload_seconds=idle_unload,
         youtube_delay_seconds=youtube_delay,
         youtube_retries=youtube_retries,
         youtube_backoff_seconds=youtube_backoff,

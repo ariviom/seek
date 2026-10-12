@@ -90,6 +90,15 @@ def test_youtube_politeness_and_cookie_file_are_configurable(tmp_path: Path) -> 
     assert config.youtube_cookie_file == Path("~/cookies.txt").expanduser()
 
 
+def test_idle_models_stay_loaded_unless_an_unload_time_is_set(tmp_path: Path) -> None:
+    write_config(tmp_path, "model_idle_unload_seconds = 600\n")
+
+    assert load_config({"XDG_CONFIG_HOME": str(tmp_path / "elsewhere")}).model_idle_unload_seconds == 0
+    assert load_config({"XDG_CONFIG_HOME": str(tmp_path)}).model_idle_unload_seconds == 600
+    with pytest.raises(ConfigError, match="model_idle_unload_seconds"):
+        load_config({"XDG_CONFIG_HOME": str(tmp_path), "SEEK_MODEL_IDLE_UNLOAD_SECONDS": "-1"})
+
+
 def test_browser_cookies_and_extractor_args_are_configurable(tmp_path: Path) -> None:
     write_config(
         tmp_path,

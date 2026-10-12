@@ -1,5 +1,6 @@
 """Model ports with injected Hugging Face / sentence-transformers execution boundaries."""
 
+import time
 from typing import Any
 
 import numpy as np
@@ -262,3 +263,75 @@ def test_download_progress_keeps_byte_totals_and_selected_device(monkeypatch: py
         ("downloading", 340, 1200, "cpu", "float32"),
     ]
     assert reranker.status().state == "ready"
+
+
+def _wait_until(condition: Any) -> None:
+    deadline = time.monotonic() + 5
+    while not condition():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+
+def test_an_idle_model_leaves_the_gpu_and_loads_again_at_the_next_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    import huggingface_hub
+    import sentence_transformers
+    import torch
+
+    from seek.ports import GpuOutOfMemory
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **kw: [])
+    cleanup: list[bool] = []
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: cleanup.append(True))
+    opened: list[bool] = []
+    gpu_full = False
+
+    class Encoder:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            if gpu_full:
+                raise torch.OutOfMemoryError("full")
+            opened.append(True)
+
+        def predict(self, pairs: list[tuple[str, str]]) -> Any:
+            return np.array([2.5] * len(pairs))
+
+    monkeypatch.setattr(sentence_transformers, "CrossEncoder", Encoder)
+    reranker = CrossEncoderReranker("test/reranker", GpuRunner(), DeviceSelection("cuda", "bfloat16"), 0.05)
+    reranker.load()
+    _wait_until(lambda: cleanup)
+    # Idle isn't a state of its own: the model is still there to be used.
+    assert reranker.status().state == "ready"
+    assert opened == [True]
+
+    gpu_full = True
+    with pytest.raises(GpuOutOfMemory, match="reloading"):
+        reranker.score("question", ["passage"])
+    assert reranker.status().state == "ready"
+
+    gpu_full = False
+    assert reranker.score("question", ["passage"]) == [2.5]
+    assert opened == [True, True]
+    unloads = len(cleanup)
+    _wait_until(lambda: len(cleanup) > unloads)
+
+
+def test_a_model_in_use_stays_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    import huggingface_hub
+    import sentence_transformers
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **kw: [])
+    opened: list[bool] = []
+
+    class Encoder:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            opened.append(True)
+
+        def predict(self, pairs: list[tuple[str, str]]) -> Any:
+            return np.array([2.5] * len(pairs))
+
+    monkeypatch.setattr(sentence_transformers, "CrossEncoder", Encoder)
+    reranker = CrossEncoderReranker("test/reranker", GpuRunner(), DeviceSelection("cpu", "float32"), 0.2)
+    reranker.load()
+    for _ in range(8):
+        time.sleep(0.05)
+        reranker.score("question", ["passage"])
+    assert opened == [True]

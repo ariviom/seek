@@ -4,7 +4,11 @@ Models download from Hugging Face on first use and are cached there. torch and s
 when a model loads, so commands and tests that don't need them start quickly.
 """
 
+import contextlib
+import gc
 import logging
+import threading
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -41,17 +45,25 @@ class _LoadRefused(Exception):
 
 
 class _HubModel[M]:
-    """A Hugging Face model that downloads and loads in load(), then runs its calls on the GPU thread."""
+    """A Hugging Face model that downloads and loads in load(), then runs its calls on the GPU thread.
+
+    With idle_unload_seconds, a model unused for that long leaves the device and the next call loads it again.
+    """
 
     def __init__(
         self, name: str, role: Literal["embedding", "reranking"], gpu: GpuRunner,
-        selection: DeviceSelection | None = None,
+        selection: DeviceSelection | None = None, idle_unload_seconds: float = 0,
     ) -> None:
         self._name = name
         self._role = role
         self._gpu = gpu
         self._selection = selection
         self._model: M | None = None
+        self._idle_unload_seconds = idle_unload_seconds
+        # Unloaded for going unused. The status stays "ready": the model is usable, the next call just waits for it.
+        self._idle = False
+        self._last_used = 0.0
+        self._idle_timer: threading.Timer | None = None
         # Replaced whole, never mutated, so readers on other threads see a consistent status.
         self._status = ModelStatus(
             name, "waiting", device=selection.device if selection else None,
@@ -81,6 +93,65 @@ class _HubModel[M]:
             if not self._fallback(error):
                 raise
         self._status = replace(self._status, state="ready", error=None)
+        self._used()
+
+    def _used(self) -> None:
+        """Restarts the idle countdown. Like everything that touches the model, runs on the GPU thread."""
+        self._last_used = time.monotonic()
+        if self._idle_unload_seconds and self._idle_timer is None:
+            self._arm_idle_timer(self._idle_unload_seconds)
+
+    def _arm_idle_timer(self, seconds: float) -> None:
+        self._idle_timer = threading.Timer(seconds, self._unload_when_idle)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+
+    def _unload_when_idle(self) -> None:
+        # The GPU thread is gone if the server stopped first.
+        with contextlib.suppress(RuntimeError):
+            self._gpu.run(self._unload_on_device)
+
+    def _unload_on_device(self) -> None:
+        self._idle_timer = None
+        if self._model is None:
+            return
+        remaining = self._last_used + self._idle_unload_seconds - time.monotonic()
+        if remaining > 0:
+            self._arm_idle_timer(remaining)
+            return
+        self._model = None
+        self._idle = True
+        self._release_memory()
+        log.info("Unloaded the %s model %s after %g idle seconds", self._role, self._name, self._idle_unload_seconds)
+
+    def _release_memory(self) -> None:
+        import torch
+
+        gc.collect()
+        if self._selection is not None and self._selection.device == "cuda":
+            torch.cuda.empty_cache()
+        elif self._selection is not None and self._selection.device == "mps":
+            torch.mps.empty_cache()
+
+    def _reload(self) -> None:
+        import torch
+
+        try:
+            self._model = self._open()
+        except Exception as error:
+            if (self._selection is not None and self._selection.device == "cuda"
+                    and isinstance(error, torch.OutOfMemoryError)):
+                # Still idle, so the next call tries again once other programs have let go of the memory.
+                self._release_memory()
+                raise GpuOutOfMemory(
+                    f"The GPU ran out of memory reloading the {self._role} model {self._name}; free GPU memory used "
+                    "by other programs and try again"
+                ) from None
+            self._idle = False
+            self._fail(error, "load")
+            raise ModelUnavailable(self._not_ready()) from error
+        self._idle = False
+        self._used()
 
     def _fallback(self, error: Exception) -> bool:
         # Only the cross-encoder needs the known MPS escape hatch. After switching, every future call sees CPU.
@@ -178,12 +249,16 @@ class _HubModel[M]:
         def on_device() -> T:
             import torch
 
+            if self._idle:
+                self._reload()
             # Resolve the model inside the serial executor: another call may just have moved it to CPU.
             model = self._model
             if model is None or self._status.state != "ready":
                 raise ModelUnavailable(self._not_ready())
             try:
-                return work(model)
+                result = work(model)
+                self._used()
+                return result
             except Exception as error:
                 if (self._selection is not None and self._selection.device == "cuda"
                         and isinstance(error, torch.OutOfMemoryError)):
@@ -227,9 +302,10 @@ class SentenceTransformerEmbedder(_HubModel["SentenceTransformer"]):
     empty. Vectors are L2-normalised."""
 
     def __init__(
-        self, model_name: str, dimension: int, gpu: GpuRunner, selection: DeviceSelection | None = None
+        self, model_name: str, dimension: int, gpu: GpuRunner, selection: DeviceSelection | None = None,
+        idle_unload_seconds: float = 0,
     ) -> None:
-        super().__init__(model_name, "embedding", gpu, selection)
+        super().__init__(model_name, "embedding", gpu, selection, idle_unload_seconds)
         self.model_name = model_name
         self.dimension = dimension
 
@@ -266,9 +342,10 @@ class CrossEncoderReranker(_HubModel["CrossEncoder"]):
     """Scores are raw logits, as the Reranker port requires."""
 
     def __init__(
-        self, model_name: str, gpu: GpuRunner, selection: DeviceSelection | None = None
+        self, model_name: str, gpu: GpuRunner, selection: DeviceSelection | None = None,
+        idle_unload_seconds: float = 0,
     ) -> None:
-        super().__init__(model_name, "reranking", gpu, selection)
+        super().__init__(model_name, "reranking", gpu, selection, idle_unload_seconds)
 
     def _open(self) -> "CrossEncoder":
         import torch

@@ -78,8 +78,9 @@ def serve() -> None:
     # loopback check needs the real peer address, which uvicorn would otherwise rewrite).
     gpu = GpuRunner()
     selection = select_device(probe_device())
-    embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu, selection)
-    reranker = CrossEncoderReranker(config.reranker_model, gpu, selection)
+    idle = config.model_idle_unload_seconds
+    embedder = SentenceTransformerEmbedder(config.embedding_model, config.embedding_dimension, gpu, selection, idle)
+    reranker = CrossEncoderReranker(config.reranker_model, gpu, selection, idle)
     youtube = _youtube(config)
     app = create_app(config, youtube, embedder, reranker, _chat_engine(config), secrets=KeyringSecrets(config.data_dir))
     print(f"Starting Seek at http://{HOST}:{config.port}/ — watch the startup log for readiness.", flush=True)
