@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Sync } from "@/lib/api";
 import type { Selection } from "@/lib/url-state";
 import { AddChannelDialog } from "./AddChannelDialog";
 import { AddPlaylistDialog } from "./AddPlaylistDialog";
@@ -12,11 +13,13 @@ export function useLibraryDialogs({
   reloadChannels,
   reloadGroups,
   reloadPlaylists,
+  syncs,
 }: {
   select: (selection: Selection) => void;
   reloadChannels: () => Promise<void>;
   reloadGroups: () => Promise<void>;
   reloadPlaylists: () => Promise<void>;
+  syncs: Sync[] | null;
 }) {
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -53,6 +56,7 @@ export function useLibraryDialogs({
             select({ channel: channel.id, group: undefined, playlist: undefined, tab: "channels" });
           }}
           imports={imports}
+          syncs={syncs}
         />
         <NewGroupDialog
           open={creating}
@@ -70,6 +74,7 @@ export function useLibraryDialogs({
             select({ playlist: playlist.id, channel: undefined, group: undefined, tab: "playlists" });
           }}
           imports={imports}
+          syncs={syncs}
         />
       </>
     ),

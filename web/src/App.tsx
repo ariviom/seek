@@ -233,7 +233,7 @@ export function App() {
     ...(playlists ?? []).filter((p) => p.indexed).map((p) => playlistSync(syncs, p.id)),
   ];
   const syncing = active.length > 0 && active.every((sync) => sync !== null);
-  const library = useLibraryDialogs({ select, reloadChannels, reloadGroups, reloadPlaylists });
+  const library = useLibraryDialogs({ select, reloadChannels, reloadGroups, reloadPlaylists, syncs });
 
   const search = useSearch(channels, groups, playlists);
 

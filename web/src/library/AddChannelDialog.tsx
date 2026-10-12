@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, errorText, type Channel, type ChannelProposal } from "@/lib/api";
+import { api, errorText, type Channel, type ChannelProposal, type Sync } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,19 +18,22 @@ export function AddChannelDialog({
   onOpenChange,
   onAdded,
   imports,
+  syncs,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAdded: (channel: Channel) => void;
   // A Bundle imported here may be of either kind, so what it added is the Library's to select.
   imports: ImportHandlers;
+  // Every Sync, live: importing waits while one is running or queued.
+  syncs: Sync[] | null;
 }) {
   const [query, setQuery] = useState("");
   const [proposal, setProposal] = useState<ChannelProposal | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const bundle = useBundleImport(imports);
+  const bundle = useBundleImport(imports, syncs);
 
   function reset(next: boolean) {
     // Not while a Bundle is importing: its report, or its refusal, would have nowhere to show.

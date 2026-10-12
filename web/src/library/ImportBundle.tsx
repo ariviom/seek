@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
-import { api, errorText, type ImportedBundle } from "@/lib/api";
+import { api, errorText, type ImportedBundle, type Sync } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { formatCount, formatSize } from "@/lib/format";
+import { isRunning } from "@/lib/sync-status";
 import { filtersSummary } from "./ChannelFiltersDialog";
 
 // What the Library does about an import, whichever dialog it was made in.
@@ -14,18 +15,23 @@ export type ImportHandlers = {
   onRefused: () => void;
 };
 
+// Why the path is closed while any Sync is running or queued, in the words the server refuses such an import with.
+const SYNC_IN_THE_WAY = "A Sync is running or waiting to run; import when it has finished.";
+
 // Importing a Bundle, the second way to add something that both Add dialogs offer. The dialog holds this state,
 // since it is the dialog that an import locks and whose content the report takes over.
-export function useBundleImport({ onImported, onRefused }: ImportHandlers) {
+export function useBundleImport({ onImported, onRefused }: ImportHandlers, syncs: Sync[] | null) {
   const [file, setFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ImportedBundle | null>(null);
   // `importing` lands a render late, and a second click in between would send the file twice.
   const running = useRef(false);
+  // The server would refuse the file once all of it had been sent, so it is not sent at all.
+  const syncing = syncs?.some(isRunning) ?? false;
 
   async function start() {
-    if (file === null || running.current) return;
+    if (file === null || syncing || running.current) return;
     running.current = true;
     setError(null);
     setImporting(true);
@@ -50,6 +56,7 @@ export function useBundleImport({ onImported, onRefused }: ImportHandlers) {
       setError(null);
     },
     importing,
+    syncing,
     error,
     report,
     start,
@@ -67,7 +74,7 @@ export type BundleImport = ReturnType<typeof useBundleImport>;
 // The path itself, under a dialog's URL form: a file picker, then the chosen file and an Import button. There is
 // no name to give: the Channel or Playlist takes the Bundle's, and Rename is on its page.
 export function ImportBundle({ bundle }: { bundle: BundleImport }) {
-  const { file, importing, error } = bundle;
+  const { file, importing, syncing, error } = bundle;
   return (
     <div className="grid gap-3 border-t pt-3">
       <label className="grid gap-1.5 text-sm">
@@ -77,17 +84,18 @@ export function ImportBundle({ bundle }: { bundle: BundleImport }) {
         <Input
           type="file"
           accept=".seek"
-          disabled={importing}
+          disabled={importing || syncing}
           onChange={(e) => bundle.choose(e.target.files?.[0] ?? null)}
         />
       </label>
+      {syncing && <p className="text-xs text-muted-foreground">{SYNC_IN_THE_WAY}</p>}
       {file !== null && (
         <div className="flex items-center justify-between gap-2 text-sm">
           <span className="min-w-0 truncate">
             {file.name} · {formatSize(file.size)}
           </span>
           {/* Not the form's submit, which is the URL's Look up or Add. */}
-          <Button type="button" size="sm" disabled={importing} onClick={() => void bundle.start()}>
+          <Button type="button" size="sm" disabled={importing || syncing} onClick={() => void bundle.start()}>
             {importing ? "Importing…" : "Import"}
           </Button>
         </div>

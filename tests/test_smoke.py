@@ -26,6 +26,7 @@ from harness import (
     said,
     serving,
     start_playlist_sync,
+    start_sync,
     sync,
     wait_for_syncs,
 )
@@ -1309,3 +1310,58 @@ async def test_a_playlists_bundle_imported_in_the_add_channel_dialog_is_added_as
 
     assert errors == ["Failed to load resource: the server responded with a status of 409 (Conflict)"]
     assert list(friend.temporary_dir.iterdir()) == []
+
+
+async def test_the_import_path_is_disabled_with_its_reason_while_a_sync_runs_and_enabled_once_it_has_finished(
+    transcripts: FakeTranscriptSource, bundle: Path, tmp_path: Path
+) -> None:
+    # Held for as long as the browser needs to look at both dialogs.
+    gate = Gate(seconds=30)
+    fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-chisels", "Chisels", before_fetch=gate))
+    config = bundle_config(tmp_path / "data")
+    app = create_app(config, transcripts, FakeEmbedder(), FakeReranker(), FakeChatEngine(), static_dir=bundle)
+    reason = "A Sync is running or waiting to run; import when it has finished."
+
+    async with serving(app) as base_url:
+        async with httpx.AsyncClient(base_url=base_url) as seed, browsing(base_url) as (page, errors):
+            wright = await add_channel(seed, "@woodbywright")
+            await page.goto(base_url)
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("button", name="Add channel").click()
+            add = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add a channel"))
+            picker = add.get_by_label("or import a .seek file")
+
+            # Nothing is syncing, so a file can be chosen and sent.
+            await expect(picker).to_be_enabled()
+            await expect(add).not_to_contain_text(reason)
+            await picker.set_input_files(
+                {"name": "Rex Krueger.seek", "mimeType": "application/octet-stream", "buffer": b"A large Bundle"}
+            )
+            await expect(add.get_by_role("button", name="Import", exact=True)).to_be_enabled()
+
+            # A Sync that starts while the dialog is open closes the path, before anything is sent, and says why.
+            await start_sync(seed, wright["id"])
+            await gate.wait_entered()
+            await expect(add.get_by_role("button", name="Import", exact=True)).to_be_disabled()
+            await expect(picker).to_be_disabled()
+            await expect(add).to_contain_text(reason)
+
+            # The Add Playlist dialog has the same path, closed for the same reason.
+            await page.keyboard.press("Escape")
+            await expect(add).to_be_hidden()
+            await library.get_by_role("tab", name="Playlists").click()
+            await library.get_by_role("button", name="Add playlist").click()
+            add_playlist_dialog = page.get_by_role("dialog").filter(
+                has=page.get_by_role("heading", name="Add a playlist")
+            )
+            playlist_picker = add_playlist_dialog.get_by_label("or import a .seek file")
+            await expect(playlist_picker).to_be_disabled()
+            await expect(add_playlist_dialog).to_contain_text(reason)
+
+            # Once the Sync has finished the path opens again, with no reload.
+            gate.released.set()
+            await expect(playlist_picker).to_be_enabled()
+            await expect(add_playlist_dialog).not_to_contain_text(reason)
+
+    assert errors == []
