@@ -189,6 +189,18 @@ class ImportReport:
     left_out: dict[str, int]
 
 
+class PlaylistNameTaken(SyncCommandError):
+    """Import's refusal of a Playlist whose name another Playlist of the Library has, told apart from its others
+    because what to do about it depends on who asked: `seek import` has a flag for it, and the web UI has none.
+
+    `name` is the name as that other Playlist has it.
+    """
+
+    def __init__(self, name: str, remedy: str = "import this one under another name with --name") -> None:
+        super().__init__(f"A Playlist named {name!r} already exists; {remedy}")
+        self.name = name
+
+
 def _seek_version() -> str:
     try:
         return importlib.metadata.version("seek")
@@ -464,7 +476,11 @@ def _export_video(conn: sqlite3.Connection, bundle: sqlite3.Connection, video: s
 
 
 def import_bundle(
-    config: Config, path: Path, name: str | None = None, progress: Callable[[int, int], None] | None = None
+    config: Config,
+    path: Path,
+    name: str | None = None,
+    progress: Callable[[int, int], None] | None = None,
+    called: str | None = None,
 ) -> ImportReport:
     """Merges the Bundle's Channel or Playlist into the Library, its Videos searchable at once: nothing is fetched
     from YouTube and nothing embedded. Creates the knowledge base if there is none yet.
@@ -490,19 +506,23 @@ def import_bundle(
     A Bundle is untrusted input. It is refused whole, before anything is written, when this build can't read it,
     when it was embedded with another model, or when anything in it is not what a Sync would have stored. Each
     Video is then committed on its own, so a running server's writes wait for one Video at most.
+
+    A refusal names the Bundle by its path, or by `called` as it stands when that is given, as export's does: the
+    server imports an upload from a path of its own.
     """
     if name is not None:
         try:
             name = _NAME.validate_python(name)
         except ValidationError as e:
             raise SyncCommandError("A name is 1 to 200 characters") from e
-    with _open_bundle(path) as bundle:
+    with _open_bundle(path, called or str(path)) as bundle:
         meta = _meta(bundle)
         model, dimension = config.embedding_model, config.embedding_dimension
         if (meta["embedding_model"], meta["embedding_dimension"]) != (model, dimension):
             # Vectors from two models can't be compared, and a Bundle carries no way to embed its text again.
             raise SyncCommandError(
-                f"{path} was embedded with {meta['embedding_model']} ({meta['embedding_dimension']} dimensions), "
+                f"{bundle.called} was embedded with {meta['embedding_model']} "
+                f"({meta['embedding_dimension']} dimensions), "
                 f"but this knowledge base uses {model} ({dimension} dimensions); a Bundle imports only into a "
                 "knowledge base that uses the same embedding model"
             )
@@ -652,9 +672,7 @@ def _create_playlist(conn: sqlite3.Connection, listed: PlaylistInfo, name: str |
     ).fetchone()
     if taken is not None:
         # The name is this Library's own, never the Bundle's: the row is one the user named.
-        raise SyncCommandError(
-            f"A Playlist named {taken['name']!r} already exists; import this one under another name with --name"
-        )
+        raise PlaylistNameTaken(taken["name"])
     return playlists.create_playlist(conn, listed, name)
 
 
@@ -740,9 +758,9 @@ def _described(filters: ChannelFilters) -> str:
 @dataclass(frozen=True)
 class _Bundle:
     """A Bundle being read. It is untrusted input, so every read goes through `rows` and every refusal names the
-    file."""
+    file, by what it is `called`."""
 
-    path: Path
+    called: str
     conn: sqlite3.Connection
 
     def rows(self, sql: str, parameters: Sequence[object] = ()) -> list[sqlite3.Row]:
@@ -753,23 +771,23 @@ class _Bundle:
             raise self.not_a_bundle() from e
 
     def not_a_bundle(self) -> SyncCommandError:
-        return SyncCommandError(f"{self.path} is not a Seek Bundle")
+        return SyncCommandError(f"{self.called} is not a Seek Bundle")
 
     def damaged(self, what: str) -> SyncCommandError:
-        return SyncCommandError(f"{self.path} is damaged or has been altered: {what}")
+        return SyncCommandError(f"{self.called} is damaged or has been altered: {what}")
 
 
 @contextmanager
-def _open_bundle(path: Path) -> Iterator[_Bundle]:
+def _open_bundle(path: Path, called: str) -> Iterator[_Bundle]:
     """The file as untrusted input: read-only, on a connection of its own that loads no extension and is never
     attached to the knowledge base's, with the SQL its schema embeds untrusted."""
     try:
         conn = sqlite3.connect(f"{path.absolute().as_uri()}?mode=ro", uri=True, autocommit=True)
     except sqlite3.Error as e:
-        raise SyncCommandError(f"{path} is not a Seek Bundle") from e
+        raise SyncCommandError(f"{called} is not a Seek Bundle") from e
     with closing(conn):
         conn.row_factory = sqlite3.Row
-        bundle = _Bundle(path, conn)
+        bundle = _Bundle(called, conn)
         bundle.rows("PRAGMA trusted_schema = OFF")
         # Left open until the connection closes, so that what is written is what was checked: SQLite holds off
         # anyone changing the file between the two readings.
@@ -793,7 +811,7 @@ def _meta(bundle: _Bundle) -> sqlite3.Row:
     ((version,),) = versions
     if isinstance(version, int) and version > FORMAT_VERSION:
         raise SyncCommandError(
-            f"{bundle.path} was made by a newer Seek (Bundle format {version}, this build reads {FORMAT_VERSION}); "
+            f"{bundle.called} was made by a newer Seek (Bundle format {version}, this build reads {FORMAT_VERSION}); "
             "upgrade Seek"
         )
     if version != FORMAT_VERSION:

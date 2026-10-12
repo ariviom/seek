@@ -1,34 +1,54 @@
 """Bundles in the web UI: a Channel's or a Playlist's Bundle is built on the server, then collected once as a
-download.
+download, and a Bundle sent as a request's body is imported.
 
 The Bundle itself is `bundles.export_channel`'s or `bundles.export_playlist`'s, the functions `seek export` calls;
-nothing here writes one.
+nothing here writes one. Nor does anything here read one: an upload is stored and handed to `bundles.import_bundle`,
+the function `seek import` calls, which reads it as the untrusted input it is.
 """
 
 import asyncio
+import os
 import re
 import secrets
 import shutil
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 from urllib.parse import quote
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
-from seek import channels, playlists
-from seek.bundles import EXTENSION, ExportReport, export_channel, export_playlist
+from seek import channels, playlists, videos
+from seek.bundles import (
+    EXTENSION,
+    ExportReport,
+    ImportReport,
+    Kind,
+    PlaylistNameTaken,
+    export_channel,
+    export_playlist,
+    import_bundle,
+)
+from seek.channels import ChannelFilters
 from seek.config import Config
 from seek.db import Database
 from seek.errors import NotFound
+from seek.events import Events
 from seek.sync_command import SyncCommandError
+from seek.videos import Listed, Source
 
 
 # What a refusal calls a Bundle the server is building: its path there is not for the page that asked to read.
 CALLED = "the Bundle"
+# And one that was sent to be imported, which the server stores under a path of its own. It begins the sentence.
+UPLOADED = "The file"
+# The one content type a Bundle is sent to be imported as.
+UPLOAD_MEDIA_TYPE = "application/octet-stream"
 
 
 class TemporaryArea:
@@ -65,6 +85,20 @@ class BuiltBundle(BaseModel):
     segments: int
     size_bytes: int
     playlist_filter_left_out: bool
+
+
+class ImportedBundle(BaseModel):
+    """The import's report, and the id the Channel or Playlist has in this Library."""
+
+    kind: Kind
+    id: int
+    name: str
+    youtube_id: str
+    created: bool
+    filters: ChannelFilters | None
+    added: int
+    already_indexed: int
+    left_out: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -116,7 +150,34 @@ class _ServedOnce(FileResponse):
             TemporaryArea.remove(self._directory)
 
 
-def bundles_router(config: Config, database: Database, area: TemporaryArea) -> APIRouter:
+def _create(path: Path) -> BinaryIO:
+    """A new file at the path, readable by the user alone as a built Bundle is."""
+    return open(path, "xb", opener=lambda name, flags: os.open(name, flags, 0o600))
+
+
+async def _store(request: Request, path: Path) -> None:
+    """Writes the request's body to the path a chunk at a time, so none of it is held in memory. The writes, the
+    last one on closing included, run in a worker thread: the event loop is shared with every other request and
+    the event stream's keepalives."""
+    file = await asyncio.to_thread(_create, path)
+    try:
+        async for chunk in request.stream():
+            await asyncio.to_thread(file.write, chunk)
+    finally:
+        await asyncio.to_thread(file.close)
+
+
+def _imported(conn: sqlite3.Connection, report: ImportReport) -> tuple[int, list[Listed]]:
+    """The id here of the Channel or Playlist an import reported, which it names by its id on YouTube, and where
+    its Videos are listed, a creator at a time, as a Sync of it would tell open pages."""
+    if report.kind == "channel":
+        [found] = [c.id for c in channels.list_channels(conn) if c.youtube_channel_id == report.youtube_id]
+    else:
+        [found] = [p.id for p in playlists.list_playlists(conn) if p.youtube_playlist_id == report.youtube_id]
+    return found, videos.listed_by_creator(conn, Source(report.kind, found))
+
+
+def bundles_router(config: Config, database: Database, area: TemporaryArea, events: Events) -> APIRouter:
     router = APIRouter()
     # Bundles built and not yet collected, by the id each is collected under.
     built: dict[str, _Built] = {}
@@ -163,5 +224,44 @@ def bundles_router(config: Config, database: Database, area: TemporaryArea) -> A
         if bundle is None:
             raise NotFound("That Bundle is not here to download; export it again")
         return _ServedOnce(bundle)
+
+    @router.post("/bundles")
+    async def import_uploaded_bundle(request: Request) -> ImportedBundle:
+        # First, and before any of the body is read: this is what closes the route to a form on another site. A
+        # page there can send a form's three content types without asking, and this one only after a preflight
+        # that Seek never grants. A parameter after the type is ignored.
+        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if media_type != UPLOAD_MEDIA_TYPE:
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                f"A Bundle is imported as the body of the request, sent as {UPLOAD_MEDIA_TYPE}",
+            )
+        directory = area.new_directory()
+        try:
+            path = directory / f"upload{EXTENSION}"
+            await _store(request, path)
+            # In a worker thread, as a build is: it opens connections of its own, and takes the Sync lease.
+            report = await asyncio.to_thread(import_bundle, config, path, called=UPLOADED)
+        except PlaylistNameTaken as e:
+            # The command's sentence points at a flag; here the way out is the other Playlist's Rename.
+            raise PlaylistNameTaken(e.name, "rename it, then import the file again.") from e
+        finally:
+            area.remove(directory)
+        entry_id, listed = await database.run(lambda conn: _imported(conn, report))
+        # Published here, on the event loop, never from the import's thread; and only for an import that completed,
+        # since a refusal names no entry. Every open page reloads its Channels, Playlists, and Videos table on it.
+        for creator in listed:
+            events.videos(creator)
+        return ImportedBundle(
+            kind=report.kind,
+            id=entry_id,
+            name=report.name,
+            youtube_id=report.youtube_id,
+            created=report.created,
+            filters=report.filters,
+            added=report.added,
+            already_indexed=report.already_indexed,
+            left_out=report.left_out,
+        )
 
     return router

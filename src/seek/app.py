@@ -16,6 +16,7 @@ from starlette.routing import Route
 
 from seek import access, db
 from seek.api_chat import ApiEngine
+from seek.bundles import PlaylistNameTaken
 from seek.bundles_api import TemporaryArea, bundles_router
 from seek.channels_api import channels_router
 from seek.chat import Chat
@@ -68,6 +69,8 @@ ERROR_STATUS: dict[type[Exception], int] = {
     ModelUnavailable: 503,
     # What a Bundle function refuses, in the sentence `seek export` or `seek import` would print.
     SyncCommandError: 422,
+    # A kind of the same, entered apart because the status is looked up by a refusal's exact type.
+    PlaylistNameTaken: 409,
 }
 
 
@@ -235,7 +238,7 @@ def create_app(
     app.include_router(
         playlists_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
     )
-    app.include_router(bundles_router(config, database, temporary), prefix="/api")
+    app.include_router(bundles_router(config, database, temporary, events), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")
