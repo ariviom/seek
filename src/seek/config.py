@@ -86,6 +86,11 @@ class Config:
         return self.data_dir / "seek.db"
 
     @property
+    def temporary_dir(self) -> Path:
+        # Where the server holds a Bundle while it is built and until it is collected.
+        return self.data_dir / "tmp"
+
+    @property
     def listen_host(self) -> str:
         return "0.0.0.0" if self.listen_all_interfaces else HOST
 

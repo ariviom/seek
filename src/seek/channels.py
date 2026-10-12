@@ -84,7 +84,8 @@ def read_filters(row: sqlite3.Row) -> ChannelFilters:
     )
 
 
-def _get_channel(conn: sqlite3.Connection, channel_id: int) -> Channel:
+def get_channel(conn: sqlite3.Connection, channel_id: int) -> Channel:
+    """The Library's Channel with this id; one outside the Library is not found."""
     row = conn.execute(f"{_CHANNEL_SQL} WHERE channels.id = ? AND channels.in_library = 1", (channel_id,)).fetchone()
     if row is None:
         raise NotFound(f"Channel {channel_id} not found")
@@ -132,7 +133,7 @@ def create_channel(
             )
         if filters is not None:
             _set_filters(conn, channel_id, filters)
-        return _get_channel(conn, channel_id)
+        return get_channel(conn, channel_id)
 
 
 def _set_filters(conn: sqlite3.Connection, channel_id: int, filters: ChannelFilters) -> None:
@@ -186,7 +187,7 @@ def update_channel(
     """Changes whichever of the name, indexed, the filters, and the check interval are given (None turns checks
     off, so leaving it unchanged is ...); filters are replaced as a whole."""
     with transaction(conn):
-        _get_channel(conn, channel_id)
+        get_channel(conn, channel_id)
         if name is not None:
             conn.execute("UPDATE channels SET name = ? WHERE id = ?", (name, channel_id))
             # A Conversation keeps its Channel's name for when the Channel is gone.
@@ -197,7 +198,7 @@ def update_channel(
             _set_filters(conn, channel_id, filters)
         if check_every_hours is not ...:
             conn.execute("UPDATE channels SET check_every_hours = ? WHERE id = ?", (check_every_hours, channel_id))
-        return _get_channel(conn, channel_id)
+        return get_channel(conn, channel_id)
 
 
 def leave_library(conn: sqlite3.Connection, channel_id: int) -> None:

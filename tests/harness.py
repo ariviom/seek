@@ -6,6 +6,7 @@ import threading
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import date
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -52,6 +53,12 @@ async def serving(app: FastAPI) -> AsyncIterator[str]:
         finally:
             server.should_exit = True
             await task
+
+
+def bundle_config(data_dir: Path) -> Config:
+    """A Config naming the fake embedder's model, since the Bundle functions open the knowledge base with the
+    Config's."""
+    return Config(data_dir=data_dir, embedding_model=FakeEmbedder.model_name, embedding_dimension=FakeEmbedder.dimension)
 
 
 def free_port() -> int:

@@ -16,6 +16,7 @@ from starlette.routing import Route
 
 from seek import access, db
 from seek.api_chat import ApiEngine
+from seek.bundles_api import TemporaryArea, bundles_router
 from seek.channels_api import channels_router
 from seek.chat import Chat
 from seek.chat_api import chat_router
@@ -50,6 +51,7 @@ from seek.search_api import search_router
 from seek.secrets import KeyringSecrets
 from seek.settings_api import settings_router
 from seek.storyboards_api import storyboards_router
+from seek.sync_command import SyncCommandError
 from seek.sync_worker import SyncWorker
 from seek.syncs_api import syncs_router
 
@@ -64,6 +66,8 @@ ERROR_STATUS: dict[type[Exception], int] = {
     Conflict: 409,
     SourceUnavailable: 503,
     ModelUnavailable: 503,
+    # What a Bundle function refuses, in the sentence `seek export` or `seek import` would print.
+    SyncCommandError: 422,
 }
 
 
@@ -165,6 +169,7 @@ def create_app(
         cooldown_seconds=config.youtube_backoff_seconds,
     )
     models: dict[str, Model] = {"embedding": embedder, "reranker": reranker}
+    temporary = TemporaryArea(config.temporary_dir)
     chat = Chat(database, search, {"api": api_engine or ApiEngine(credentials), "cli": cli_engine})
     mcp = create_mcp_server(database, search, sql_time_limit_seconds)
     mcp_hosts = [*LOOPBACK_HOSTS, *config.allowed_hosts]
@@ -186,6 +191,7 @@ def create_app(
         app.state.database_info = await asyncio.to_thread(
             db.initialize, config.database_path, embedder.model_name, embedder.dimension
         )
+        temporary.prepare()
         # Syncs wait for the embedding model, so the worker is woken as the models' statuses change.
         tasks = [
             asyncio.create_task(_load_models(models, events, worker.wake, model_progress_seconds)),
@@ -229,6 +235,7 @@ def create_app(
     app.include_router(
         playlists_router(database, transcripts, events, config.min_duration_seconds), prefix="/api"
     )
+    app.include_router(bundles_router(config, database, temporary), prefix="/api")
     app.include_router(groups_router(database), prefix="/api")
     app.include_router(settings_router(database, events), prefix="/api")
     app.include_router(credentials_router(credentials), prefix="/api")
