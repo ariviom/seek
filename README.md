@@ -272,8 +272,8 @@ settings, and everything else in your Library. **A Channel's Playlist filter doe
 playlist the recipient may not be able to list; export says so, and their Syncs bring in the Channel's other Videos
 unless they set a Playlist filter of their own first.
 
-**Size.** Vectors are about 4 KB per Segment, so a Channel of 900 Videos is on the order of 100 MB. Export prints the
-Videos, Segments, and file size.
+**Size.** A Bundle is about 10 KB per Segment, 4 KB of it the vector and the rest the Transcript and the Segment's
+text, so a Channel of 900 Videos is 150 to 250 MB. Export prints the Videos, Segments, and file size.
 
 **Exporting** runs beside the server, even during a Sync, and loads no model. `.seek` is added to the path if
 missing. It refuses to replace a file that exists and to write a Bundle with no indexed Videos, and never leaves a

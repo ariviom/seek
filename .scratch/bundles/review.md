@@ -17,7 +17,7 @@ Found and fixed:
 - **Playlist export's refusals were asserted nowhere.** Tests added for no indexed Videos (and no file left), an unknown name, and an ambiguous one.
 - ADR 0007's meta record omitted the Seek version and the export time.
 
-Spec text the code no longer matches, left for Drew to amend or not:
+Spec text the code no longer matched, amended afterwards at Drew's word:
 - §Export, "On the recipient's machine the Channel's filters will exclude those at the next Sync": §Import has a new Video judged by the date range at import, and the code follows §Import (ticket 03's reading). The sentence holds only for the most-recent count.
 - §Import, a Playlist Bundle's Video "judged exactly as a Playlist Sync's discovery judges one it includes": a Video that is `done` and searchable is not judged, so an import never changes one (ticket 04's reading, story 27). Discovery would judge it.
 
@@ -60,3 +60,11 @@ Left as judgement calls:
 `tests/test_doctor.py` carries a change that is not Bundles work (`d937e0b`): the installed-service test now has a config directory of its own. Drew asked for it in this session; the handoff's "leave both alone" predates that.
 
 Clean: glossary terms across code and docs, the tracker's conventions, tests through the app's surfaces with no fixed sleeps, ADR 0007's headings and status line, mypy strict.
+
+## A round trip of the real Library
+
+Run after the review, with the server up. Each of the reference Library's nine Channels (2,877 Videos; it has no Playlists) was exported from the real knowledge base and imported into a scratch data directory. None was refused. For the largest, App Masters (898 Videos, 23,919 Segments), export took 15 seconds and import 23; every Video, Transcript, Segment row, and vector matched the source byte for byte, and a lexical search returned the same 4,614 hits. A second import added nothing and kept the name. The knowledge base was at the branch's schema version, so opening it changed nothing.
+
+It found the size guide wrong: it counted the vectors alone. A Bundle runs 8 to 11.5 KB per Segment, and App Masters is 255 MB, not about 100. The README and the spec are corrected.
+
+Not exercised on real data: a Playlist Bundle, a vector search (it would have loaded the embedding model beside the server's), and a Sync after an import.

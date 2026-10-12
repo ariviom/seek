@@ -118,7 +118,8 @@ up only what has been published since.
 - The Bundle's Videos are the ones that are `done` and not excluded: those credited to the Channel, or those the
   Playlist includes. Pause state is ignored, so a Paused entry exports what it would search if Active.
 - A Channel's Bundle includes Videos that are searchable only because one of the exporter's Playlists includes
-  them. On the recipient's machine the Channel's filters will exclude those at the next Sync. This is accepted.
+  them. On the recipient's machine the Channel's date range leaves those out at import, and its most-recent count
+  excludes them at the next Sync. This is accepted.
 - Export reads the knowledge base in one read transaction, so the Bundle is a consistent snapshot even while a Sync
   writes. It takes no lease and runs beside the server.
 - Vectors are read one lookup per Segment id. The vector table finds a row by its id but scans every vector for
@@ -179,8 +180,9 @@ up only what has been published since.
     that is credited here to a different Channel is left untouched and reported.
   - **Playlist Bundle.** The Playlist is made to include the Video at the Bundle's position (the next Sync settles
     the order). A Video not yet known is credited to its creator, and a creator not yet known becomes a Channel
-    outside the Library. The Video is then judged exactly as a Playlist Sync's discovery judges one it includes:
-    only the minimum length can exclude it, and any exclusion by its Channel's filters is lifted.
+    outside the Library. The Video is then judged as a Playlist Sync's discovery judges one it includes: only the
+    minimum length can exclude it, and any exclusion by its Channel's filters is lifted. One that is already
+    `done` and searchable is not judged, so an import never changes it; its own next Sync judges it.
   - **Channel Bundle, Video not yet known.** It is judged by the minimum length and the date-range filters in
     force on the Channel after the entry step. One they exclude is not added; the next Sync discovers it as usual.
     The Playlist filter and most-recent count need a listing, so the next Sync applies them.
@@ -220,7 +222,7 @@ up only what has been published since.
 
 ### Docs
 - README: a "Sharing a Channel or Playlist" section with both commands, what a Bundle holds and leaves out, a rough
-  size guide (about 4 KB of vectors per Segment, so on the order of 100 MB for a Channel of 900 Videos), the
+  size guide (about 10 KB per Segment, 4 KB of it vectors, so 150 to 250 MB for a Channel of 900 Videos), the
   embedding-model requirement, and the note that a Bundle redistributes creators' Transcripts. It also says that a
   Bundle is only as trustworthy as whoever made it, and that a Channel's Playlist filter does not travel.
 - HANDOFF mentions Bundles. The glossary entry is already written.
@@ -307,4 +309,5 @@ up only what has been published since.
 - A Channel with a most-recent filter can lose older imported Videos at the recipient's first Sync, if the Channel
   has published since the export. That is the filter working as it does on the exporter's machine.
 - Sizes from the reference Library on 2026-10-11: 3,679 Videos and 64,637 Segments. Its largest Channel has 915
-  Videos and 23,919 Segments, about 98 MB of vectors before text.
+  Videos and 23,919 Segments, about 98 MB of vectors before text. Its Bundle came to 255 MB: the Transcripts'
+  cues are 60 MB and the Segments' text and cues 31 MB each.
