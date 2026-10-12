@@ -11,6 +11,7 @@ import { useChanges } from "@/lib/changes";
 import { checkLabels, formatWhen } from "@/lib/format";
 import { playlistSync, syncProgress, useNow } from "@/lib/sync-status";
 import { StageRule } from "@/syncs/StageRule";
+import { ExportButton, ExportDialog } from "./ExportDialog";
 import { RenameForm } from "./RenameForm";
 import { VideosTable } from "./VideosTable";
 
@@ -58,6 +59,7 @@ export function PlaylistPage({
   const [error, setError] = useState<string | null>(null);
   const { act, busy } = useChanges(refresh, setError);
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const running = playlistSync(syncs, playlist.id);
   const now = useNow(running === null ? 0 : 10);
@@ -179,6 +181,7 @@ export function PlaylistPage({
             >
               {playlist.indexed ? "Pause playlist" : "Resume playlist"}
             </Button>
+            <ExportButton indexedVideos={playlist.indexed_videos} onClick={() => setExportOpen(true)} />
             <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setRemoveOpen(true)}>
               Remove playlist
             </Button>
@@ -188,6 +191,14 @@ export function PlaylistPage({
           </p>
         </div>
       </fieldset>
+
+      <ExportDialog
+        name={playlist.name}
+        indexedVideos={playlist.indexed_videos}
+        build={() => api.buildPlaylistBundle(playlist.id)}
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+      />
 
       <ConfirmDialog
         title="Remove playlist"

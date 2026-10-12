@@ -10,14 +10,18 @@ from fastapi import FastAPI
 from harness import (
     Gate,
     add_channel,
+    add_playlist,
     bundle_config,
     fake_channel,
     fake_video,
+    pause_playlist,
     running,
     said,
     search,
+    start_playlist_sync,
     start_sync,
     sync,
+    sync_playlist,
     take_out_of_library,
     wait_for_syncs,
 )
@@ -336,4 +340,124 @@ async def test_a_channel_that_is_not_in_the_library_has_no_bundle_to_build(
 
     assert (outside.status_code, outside.json()) == (404, {"detail": f"Channel {wright['id']} not found"})
     assert (missing.status_code, missing.json()) == (404, {"detail": f"Channel {wright['id'] + 1} not found"})
+    assert held(sender) == []
+
+
+def sharpening(transcripts: FakeTranscriptSource) -> None:
+    """The playlist PL-sharpening, "Sharpening": Wood By Wright's chisels, then Rex Krueger's knives."""
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone"))
+    )
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Strop the knife on leather"))
+    )
+    transcripts.playlists["PL-sharpening"] = FakePlaylist(
+        "Sharpening", [("UC-wright", "v-chisels"), ("UC-rex", "v-knives")]
+    )
+
+
+async def test_a_playlists_bundle_is_built_downloaded_as_a_file_and_imports_into_another_seek(
+    sender: Config, friend: Config, transcripts: FakeTranscriptSource, tmp_path: Path
+) -> None:
+    sharpening(transcripts)
+    async with running(app_on(sender, transcripts)) as client:
+        picks = await add_playlist(client, "PL-sharpening", "Edge picks")
+        await sync_playlist(client, picks)
+
+        built = await client.post(f"/api/playlists/{picks['id']}/bundles")
+        assert built.status_code == 201, built.text
+        report = built.json()
+        download = await client.get(f"/api/bundles/{report['id']}")
+
+    assert download.status_code == 200, download.text
+    assert report == {
+        "id": report["id"],
+        "name": "Edge picks",
+        "videos": 2,
+        "segments": 2,
+        "size_bytes": len(download.content),
+        "playlist_filter_left_out": False,
+    }
+    assert download.headers["content-type"] == "application/octet-stream"
+    assert download.headers["content-disposition"] == (
+        "attachment; filename=\"Edge picks.seek\"; filename*=UTF-8''Edge%20picks.seek"
+    )
+
+    # What was downloaded is the Playlist's Bundle: the friend's Seek imports it, as a Playlist.
+    downloaded = tmp_path / "Edge picks.seek"
+    downloaded.write_bytes(download.content)
+    import_bundle(friend, downloaded)
+    async with running(app_on(friend, FakeTranscriptSource())) as client:
+        [playlist] = (await client.get("/api/playlists")).json()
+        found = await search(client, "strop the knife on leather")
+    assert (playlist["name"], playlist["indexed_videos"]) == ("Edge picks", 2)
+    assert found[0]["youtube_video_id"] == "v-knives"
+    assert held(sender) == []
+
+
+async def test_a_paused_playlist_exports(sender: Config, transcripts: FakeTranscriptSource) -> None:
+    sharpening(transcripts)
+    async with running(app_on(sender, transcripts)) as client:
+        picks = await add_playlist(client, "PL-sharpening")
+        await sync_playlist(client, picks)
+        await pause_playlist(client, picks)
+
+        built = await client.post(f"/api/playlists/{picks['id']}/bundles")
+        download = await client.get(f"/api/bundles/{built.json()['id']}")
+
+    assert (built.status_code, built.json()["name"], built.json()["videos"]) == (201, "Sharpening", 2)
+    assert download.status_code == 200
+    assert held(sender) == []
+
+
+async def test_a_playlist_exports_what_is_indexed_so_far_while_its_sync_is_running(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    gate = Gate()
+    sharpening(transcripts)
+    async with running(app_on(sender, transcripts)) as client:
+        picks = await add_playlist(client, "PL-sharpening")
+        await sync_playlist(client, picks)
+        fake_channel(transcripts, "UC-wright").videos.append(fake_video("v-saws", "Saws", before_fetch=gate))
+        transcripts.playlists["PL-sharpening"].entries.append(("UC-wright", "v-saws"))
+        await start_playlist_sync(client, picks["id"])
+        await gate.wait_entered()
+
+        built = await client.post(f"/api/playlists/{picks['id']}/bundles")
+        [running_sync, _] = (await client.get("/api/syncs")).json()
+        download = await client.get(f"/api/bundles/{built.json()['id']}")
+        gate.released.set()
+        await wait_for_syncs(client)
+
+    assert running_sync["status"] == "running"
+    assert (built.status_code, built.json()["videos"]) == (201, 2)
+    assert download.status_code == 200
+    assert held(sender) == []
+
+
+async def test_a_playlist_with_no_indexed_videos_is_refused_in_the_commands_sentence(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    sharpening(transcripts)
+    async with running(app_on(sender, transcripts)) as client:
+        picks = await add_playlist(client, "PL-sharpening")
+
+        refused = await client.post(f"/api/playlists/{picks['id']}/bundles")
+
+    assert refused.status_code == 422
+    assert refused.json() == {"detail": "The Playlist 'Sharpening' has no indexed Videos to export"}
+    assert held(sender) == []
+
+
+async def test_a_playlist_that_is_not_there_has_no_bundle_to_build(
+    sender: Config, transcripts: FakeTranscriptSource
+) -> None:
+    sharpening(transcripts)
+    async with running(app_on(sender, transcripts)) as client:
+        picks = await add_playlist(client, "PL-sharpening")
+        await sync_playlist(client, picks)
+
+        missing = await client.post(f"/api/playlists/{picks['id'] + 1}/bundles")
+
+    assert (missing.status_code, missing.json()) == (404, {"detail": f"Playlist {picks['id'] + 1} not found"})
     assert held(sender) == []

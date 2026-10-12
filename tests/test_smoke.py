@@ -1063,3 +1063,68 @@ async def test_exporting_a_channel_from_its_page_downloads_its_bundle_under_the_
     assert errors == ["Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"]
     # Nothing of the Bundle stays on the server once the browser has it.
     assert list(config.temporary_dir.iterdir()) == []
+
+
+async def test_exporting_a_playlist_from_its_page_downloads_its_bundle_under_the_playlists_name(
+    transcripts: FakeTranscriptSource,
+    embedder: FakeEmbedder,
+    reranker: FakeReranker,
+    engine: FakeChatEngine,
+    bundle: Path,
+    tmp_path: Path,
+) -> None:
+    config = bundle_config(tmp_path / "data")
+    fake_channel(transcripts, "UC-wright").videos.append(
+        fake_video("v-chisels", "Chisels", cues=said("Sharpen the chisel on a fine stone"))
+    )
+    fake_channel(transcripts, "UC-rex").videos.append(
+        fake_video("v-knives", "Knives", cues=said("Strop the knife on leather"))
+    )
+    transcripts.playlists["PL-picks"] = FakePlaylist(
+        "Hand tool picks", [("UC-wright", "v-chisels"), ("UC-rex", "v-knives")]
+    )
+    transcripts.playlists["PL-other"] = FakePlaylist("Other picks", [("UC-rex", "v-knives")])
+    app = create_app(config, transcripts, embedder, reranker, engine, static_dir=bundle)
+
+    async with serving(app) as base_url:
+        async with httpx.AsyncClient(base_url=base_url) as seed:
+            picks = await add_playlist(seed, "PL-picks")
+            await start_playlist_sync(seed, picks["id"])
+            await wait_for_syncs(seed)
+            # Added and never synced, so it has nothing to export.
+            await add_playlist(seed, "PL-other")
+
+        async with browsing(base_url) as (page, errors):
+            await page.goto(base_url)
+            main = page.get_by_role("main")
+            await page.get_by_role("navigation", name="Sections").get_by_role("button", name="Library").click()
+            library = page.get_by_role("complementary", name="Library")
+            await library.get_by_role("tab", name="Playlists").click()
+            await expect(library.get_by_role("button", name="Export")).to_have_count(0)
+            await library.get_by_role("button").filter(has_text="Hand tool picks").click()
+
+            # The dialog a Channel's page opens, without the line about a Channel's Playlist filter.
+            await main.get_by_role("button", name="Export").click()
+            dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Export Hand tool picks"))
+            await expect(dialog).to_contain_text("2 indexed Videos")
+            await expect(dialog).to_contain_text(
+                "The file contains the creators’ full Transcripts, so choose who you share it with."
+            )
+            await expect(dialog).not_to_contain_text("Playlist filter")
+
+            async with page.expect_download() as downloading:
+                await dialog.get_by_role("button", name="Export").click()
+            download = await downloading.value
+            assert download.suggested_filename == "Hand tool picks.seek"
+            assert await download.failure() is None
+            await expect(dialog).to_be_hidden()
+            await expect(main.get_by_role("heading", name="Hand tool picks")).to_be_visible()
+
+            await library.get_by_role("button").filter(has_text="Other picks").click()
+            export = main.get_by_role("button", name="Export")
+            await expect(export).to_be_disabled()
+            await export.hover(force=True)
+            await expect(page.get_by_role("tooltip")).to_have_text("No indexed Videos to export yet.")
+
+    assert errors == []
+    assert list(config.temporary_dir.iterdir()) == []

@@ -354,6 +354,7 @@ export const api = {
   setPlaylistChecks: (id: number, check_every_hours: CheckHours | null) =>
     request<Playlist>(`playlists/${id}`, { method: "PATCH", body: { check_every_hours } }),
   deletePlaylist: (id: number) => request<void>(`playlists/${id}`, { method: "DELETE" }),
+  buildPlaylistBundle: (id: number) => request<BuiltBundle>(`playlists/${id}/bundles`, { method: "POST" }),
   startPlaylistSync: (playlistId: number) => request<Sync>(`playlists/${playlistId}/syncs`, { method: "POST" }),
   retryFailed: (channelId: number) => request<Sync>(`channels/${channelId}/retry-failed`, { method: "POST" }),
   retryPlaylistFailed: (playlistId: number) =>

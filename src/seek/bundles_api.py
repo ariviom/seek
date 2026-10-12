@@ -1,6 +1,8 @@
-"""Bundles in the web UI: a Channel's Bundle is built on the server, then collected once as a download.
+"""Bundles in the web UI: a Channel's or a Playlist's Bundle is built on the server, then collected once as a
+download.
 
-The Bundle itself is `bundles.export_channel`'s, the function `seek export` calls; nothing here writes one.
+The Bundle itself is `bundles.export_channel`'s or `bundles.export_playlist`'s, the functions `seek export` calls;
+nothing here writes one.
 """
 
 import asyncio
@@ -17,8 +19,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
-from seek import channels
-from seek.bundles import EXTENSION, ExportReport, export_channel
+from seek import channels, playlists
+from seek.bundles import EXTENSION, ExportReport, export_channel, export_playlist
 from seek.config import Config
 from seek.db import Database
 from seek.errors import NotFound
@@ -147,6 +149,12 @@ def bundles_router(config: Config, database: Database, area: TemporaryArea) -> A
         channel = await database.run(lambda conn: channels.get_channel(conn, channel_id))
         # By its YouTube id: Channel names are not unique, and export refuses a name two Channels share.
         return await build(lambda path: export_channel(config, channel.youtube_channel_id, path, called=CALLED))
+
+    @router.post("/playlists/{playlist_id}/bundles", status_code=status.HTTP_201_CREATED)
+    async def build_playlist_bundle(playlist_id: int) -> BuiltBundle:
+        playlist = await database.run(lambda conn: playlists.get_playlist(conn, playlist_id))
+        # By its YouTube playlist id, as a Channel is by its own.
+        return await build(lambda path: export_playlist(config, playlist.youtube_playlist_id, path, called=CALLED))
 
     @router.get("/bundles/{bundle_id}")
     async def collect_bundle(bundle_id: str) -> FileResponse:

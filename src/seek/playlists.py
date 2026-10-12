@@ -113,6 +113,13 @@ def list_playlists(conn: sqlite3.Connection) -> list[Playlist]:
     return _select(conn)
 
 
+def get_playlist(conn: sqlite3.Connection, playlist_id: int) -> Playlist:
+    found = _select(conn, playlist_id)
+    if not found:
+        raise NotFound(f"Playlist {playlist_id} not found")
+    return found[0]
+
+
 @dataclass(frozen=True)
 class PlaylistSummary:
     id: int
