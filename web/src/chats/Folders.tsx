@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ChevronDown, MoreHorizontal, Plus } from "lucide-react";
 import {
   api,
@@ -144,6 +144,8 @@ export function NewChatMenu({
   onNewChat: (scope: Scope) => void;
 }) {
   const folders = foldersOf([], groups ?? [], channels ?? [], playlists ?? []);
+  // A chosen chat takes the focus for its question box; only a dismissed menu hands it back to the button.
+  const chose = useRef(false);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -151,7 +153,14 @@ export function NewChatMenu({
           <Plus />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
+      <DropdownMenuContent
+        align="end"
+        className="w-60"
+        onCloseAutoFocus={(e) => {
+          if (chose.current) e.preventDefault();
+          chose.current = false;
+        }}
+      >
         <DropdownMenuLabel>New chat in</DropdownMenuLabel>
         {groups === null || channels === null || playlists === null ? (
           <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
@@ -161,7 +170,14 @@ export function NewChatMenu({
           )
         )}
         {folders.map((folder) => (
-          <DropdownMenuItem key={folder.key} onSelect={() => folder.scope !== null && onNewChat(folder.scope)}>
+          <DropdownMenuItem
+            key={folder.key}
+            onSelect={() => {
+              if (folder.scope === null) return;
+              chose.current = true;
+              onNewChat(folder.scope);
+            }}
+          >
             <FolderAvatar folder={folder} ringClassName="ring-popover" />
             <span className="truncate">{folder.name}</span>
           </DropdownMenuItem>

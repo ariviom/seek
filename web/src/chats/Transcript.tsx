@@ -98,7 +98,7 @@ export function Transcript({
       {entries.map((entry, index) => (
         <li key={index}>
           {entry.role === "user" ? (
-            <p className="ml-auto w-fit max-w-[80%] rounded-lg bg-muted px-3.5 py-2 text-sm leading-6 whitespace-pre-wrap">
+            <p className="ml-auto w-fit max-w-[80%] rounded-lg bg-muted px-3.5 py-2 text-base leading-7 whitespace-pre-wrap">
               {entry.text}
             </p>
           ) : (

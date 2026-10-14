@@ -1,8 +1,11 @@
 import type { ReactNode } from "react";
+import { cn } from "cn";
 import type { Citation } from "@/lib/api";
 import { playOnPlainClick } from "@/lib/playback";
 
-const linkClass = "font-medium underline decoration-muted-foreground/50 underline-offset-4 hover:decoration-foreground";
+// Answers are link-heavy, so links stay in the text colour and only take Seek's accent under the pointer.
+const linkClass =
+  "font-medium text-foreground underline decoration-foreground/40 underline-offset-4 transition-colors hover:text-brand hover:decoration-brand";
 
 // Enough inline Markdown for grounded answers: links, bare URLs, bold, italics, and inline code. Everything else shows
 // as written. A bare URL leaves off sentence punctuation that follows it; an underscore inside a word isn't italics.
@@ -30,9 +33,25 @@ export function citationOf(href: string, citations: Citation[]): Citation | unde
 const bulletItem = /^\s*[-*+]\s+(.*)$/;
 const numberedItem = /^\s*(\d+)[.)]\s+(.*)$/;
 const headingLine = /^(#{1,6})\s+(.*)$/;
+const tableRow = /^\s*\|.*\|\s*$/;
+const tableDivider = /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?\s*)?\s*$/;
+
+// A table starts at a row of cells with a `|---|` divider under it.
+function startsTable(line: string, next: string | undefined): boolean {
+  return tableRow.test(line) && next !== undefined && tableDivider.test(next);
+}
+
+function cellsOf(row: string): string[] {
+  return row
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/(?<!\\)\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replaceAll("\\|", "|"));
+}
 
 function startsBlock(line: string): boolean {
-  return headingLine.test(line) || bulletItem.test(line) || numberedItem.test(line);
+  return headingLine.test(line) || bulletItem.test(line) || numberedItem.test(line) || tableRow.test(line);
 }
 
 export function Markdown({
@@ -44,10 +63,10 @@ export function Markdown({
   citations: Citation[];
   onPlay: (citation: Citation) => void;
 }) {
-  return <div className="space-y-3 text-sm leading-6">{renderMarkdown(text, citations, onPlay)}</div>;
+  return <div className="space-y-4 text-base leading-7">{renderMarkdown(text, citations, onPlay)}</div>;
 }
 
-// Block Markdown: headings, bullet and numbered lists, and paragraphs split by blank lines. Lines within a paragraph
+// Block Markdown: headings, bullet and numbered lists, tables, and paragraphs split by blank lines. Lines within a paragraph
 // keep their breaks, and an indented line continues the list item above it.
 function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: Citation) => void): ReactNode {
   const lines = text.split("\n");
@@ -69,9 +88,37 @@ function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: 
     } else if (heading !== null) {
       i++;
       blocks.push(
-        <h4 key={key} className={heading[1]?.length === 1 ? "text-base font-semibold" : "font-semibold"}>
+        <h4 key={key} className={cn("font-semibold not-first:pt-2", (heading[1]?.length ?? 0) <= 2 && "text-lg")}>
           {inlineOf(heading[2] ?? "")}
         </h4>,
+      );
+    } else if (startsTable(line, lines[i + 1])) {
+      const [head = [], , ...body] = take((row) => tableRow.test(row)).map(cellsOf);
+      blocks.push(
+        <div key={key} className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-sm leading-6">
+            <thead className="bg-muted/50">
+              <tr>
+                {head.map((cell, c) => (
+                  <th key={c} className="px-3 py-2 text-left align-top font-semibold">
+                    {inlineOf(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y border-t">
+              {body.map((row, r) => (
+                <tr key={r}>
+                  {head.map((_, c) => (
+                    <td key={c} className="px-3 py-2 align-top">
+                      {inlineOf(row[c] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
       );
     } else if (numbered !== null || bulletItem.test(line)) {
       const item = numbered === null ? bulletItem : numberedItem;
@@ -88,17 +135,19 @@ function renderMarkdown(text: string, citations: Citation[], onPlay: (citation: 
       ));
       blocks.push(
         numbered === null ? (
-          <ul key={key} className="list-disc space-y-1 pl-6">
+          <ul key={key} className="list-disc space-y-2 pl-6 marker:text-muted-foreground">
             {children}
           </ul>
         ) : (
-          <ol key={key} start={Number(numbered[1])} className="list-decimal space-y-1 pl-6">
+          <ol key={key} start={Number(numbered[1])} className="list-decimal space-y-2 pl-6 marker:text-muted-foreground">
             {children}
           </ol>
         ),
       );
     } else {
-      const paragraph = take((next) => next.trim() !== "" && !startsBlock(next));
+      // Its first line is taken whatever it is: a row with no divider under it is text.
+      i++;
+      const paragraph = [line, ...take((next) => next.trim() !== "" && !startsBlock(next))];
       blocks.push(
         <p key={key} className="whitespace-pre-line">
           {inlineOf(paragraph.join("\n"))}
@@ -143,7 +192,7 @@ function renderInline(text: string, citations: Citation[], onPlay: (citation: Ci
       parts.push(<em key={key}>{renderInline(starred ?? underscored ?? "", citations, onPlay)}</em>);
     } else {
       parts.push(
-        <code key={key} className="rounded-sm bg-muted px-1 font-mono text-[13px]">
+        <code key={key} className="rounded-sm bg-muted px-1 font-mono text-[0.875em]">
           {code}
         </code>,
       );

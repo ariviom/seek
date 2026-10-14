@@ -102,14 +102,6 @@ export function ConversationView({
     };
   }, [initialId]);
 
-  // A prefilled question is ready to finish typing.
-  useEffect(() => {
-    const box = questionBox.current;
-    if (box === null || initialDraft === "") return;
-    box.focus();
-    box.setSelectionRange(box.value.length, box.value.length);
-  }, [initialDraft]);
-
   // Follows the answer as it streams.
   useEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
@@ -252,6 +244,21 @@ export function ConversationView({
   }
 
   const canAsk = !deleted && !loading && !loadFailed && live !== null && (!isNew || live.unavailable === null);
+
+  // A new chat is ready to type into, and a prefilled question to finish, once the question box shows. The menu or
+  // Sheet it was chosen from holds the focus until it has finished closing, so the box asks again each frame until then.
+  useEffect(() => {
+    const box = questionBox.current;
+    if (box === null || initialId !== null) return;
+    let frame = 0;
+    const focus = () => {
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+      if (document.activeElement?.closest("[role=menu], [role=dialog]")) frame = requestAnimationFrame(focus);
+    };
+    focus();
+    return () => cancelAnimationFrame(frame);
+  }, [initialId, canAsk]);
   // What the server would refuse, worked out before a question is typed rather than after it is sent. Nothing is
   // blocked while the engines' standing is still unknown.
   const engine = chat?.active ?? null;
